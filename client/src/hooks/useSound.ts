@@ -1,7 +1,8 @@
 /**
  * useSound — React glue for the per-theme WebAudio engine.
  *
- * `useSoundSync()` mounts once at the Dashboard root. It:
+ * `useSoundSync()` mounts once in the app shell (`ShellEffects` in
+ * app/AppShell.tsx), so it runs on both Home and the editor. It:
  *   - mirrors the `soundEnabled` Zustand slice into `Sounds.setEnabled()`
  *   - reads `--sound-pack` from `:root` after every theme change and
  *     calls `Sounds.setPack(...)` so the active pack tracks the active
@@ -78,7 +79,7 @@ function patchToast(): void {
   }) as typeof originalError;
 }
 
-/** Mount once at the Dashboard root. */
+/** Mount once, in the app shell (`ShellEffects` in app/AppShell.tsx). */
 export function useSoundSync(): void {
   const { theme } = useTheme();
   const enabled = useAppStore((s) => s.soundEnabled);

@@ -173,9 +173,12 @@
    * `:root[data-theme="..."]`; these `@theme inline` aliases give
    * Tailwind classes that resolve against whichever theme is active.
    *
-   * Note: full-colour values (not HSL triplets), so `bg-bg-app/50`
-   * alpha composition does NOT work — use `--bg-overlay` or the
-   * shadcn alias (`bg-background/50`) when you need alpha. */
+   * Note: full-colour values (not HSL triplets), so `/opacity` does
+   * compile here too: `bg-bg-app/50` becomes
+   * `color-mix(in oklab, var(--bg-app) 50%, transparent)` behind an
+   * `@supports` guard. Opacity arithmetic at call sites is still
+   * forbidden by the frontend rules — use `--bg-overlay` or a named
+   * `-soft` / `-tint` token when you need alpha. */
   --color-bg-app:      var(--bg-app);
   --color-bg-panel:    var(--bg-panel);
   --color-bg-canvas:   var(--bg-canvas);

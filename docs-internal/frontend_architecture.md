@@ -9,7 +9,7 @@ Post-migration (2026-04-14). Single source of truth for the current frontend.
 - **React 19 + Vite 7**, type-checked by **TypeScript 7** (the native Go compiler, exact-pinned `7.0.2` in the **root** `devDependencies`). The client keeps `typescript@^5.9.3` only because typescript-eslint's peer range excludes 6/7 — it is not the gate. With the **React Compiler** (`babel-plugin-react-compiler@1.0.0`, `target: '19'`, scoped to all of `src/` except `components/ui/`).
 - **Tailwind v4** via `@tailwindcss/vite` + `@import "tailwindcss"` in [src/index.css](../client/src/index.css). Tokens defined in the same CSS file via `@theme inline` (no `tailwind.config.js` colors block).
 - **shadcn/ui** via the canonical CLI (`bun x shadcn@latest add` — bun's `npx` equivalent; npm is not part of the toolchain). All primitives live under [client/src/components/ui/](../client/src/components/ui/) as first-class repo files we can edit.
-- **Radix UI** is the primitive engine shadcn uses (Dialog, Accordion, Select, Switch, Tabs, Tooltip, Popover, Dropdown, AlertDialog, Collapsible, Progress, Slider, Label, Checkbox).
+- **Radix UI** is the primitive engine shadcn uses (Dialog, Accordion, Select, Switch, Tabs, Tooltip, Dropdown, AlertDialog, Collapsible, Progress, Slider, Label, Checkbox, Toggle, ToggleGroup). There is no Popover primitive; add one with the CLI if a surface needs it.
 - **Forms**: react-hook-form + zod via shadcn's `Form` composition. Per-form schemas live colocated with the form (e.g. `credentials/panels/schemas/email.ts`); tiny forms use inline zod.
 - **Toasts**: `sonner` imported directly at call-sites. The shadcn `<Toaster />` wrapper (at [components/ui/sonner.tsx](../client/src/components/ui/sonner.tsx)) is patched to read our `ThemeContext` instead of `next-themes`. Normal mode has a second toaster, one bottom-centre pill at a time (`pillToast()` in [features/home/ui/pillToast.tsx](../client/src/features/home/ui/pillToast.tsx)).
 - **Two screens**: Normal mode (Home, [features/home/](../client/src/features/home/)) and Dev mode (the workflow editor, `Dashboard.tsx`), both lazy chunks switched by the app shell in [app/](../client/src/app/). See [Normal Mode](./normal_mode.md).
@@ -308,10 +308,11 @@ All under [components/ui/](../client/src/components/ui/). Editable — add varia
 
 | Concern | Primitive | Notes |
 |---|---|---|
-| Button | `Button` (CVA) | Variants: `default | secondary | ghost | outline | destructive | link`. Sizes: `default | xs | sm | lg | icon | icon-xs | icon-sm | icon-lg` |
+| Button | `Button` (CVA) | Variants: `default | secondary | ghost | outline | destructive | link` + Normal-mode `invert | quiet | chip` (ours). Sizes: `default | xs | sm | lg | icon | icon-xs | icon-sm | icon-lg` + `pill | chip` (ours) |
 | Badge | `Badge` | + `success | warning | info` (ours) |
 | Alert | `Alert + AlertTitle + AlertDescription` | + `success | warning | info` (ours) |
-| Overlay | `Dialog`, `AlertDialog`, `Popover`, `Tooltip`, `DropdownMenu` | Radix |
+| Overlay | `Dialog`, `AlertDialog`, `Tooltip`, `DropdownMenu` | Radix |
+| Toggle | `Toggle`, `ToggleGroup + ToggleGroupItem` | Radix. Variants `default | segmented | chips` (ours) |
 | Disclosure | `Accordion`, `Collapsible`, `Tabs` | Radix |
 | Inputs | `Input`, `Textarea`, `Select`, `Switch`, `Checkbox`, `Slider`, `Label` | Radix (Select/Switch/Checkbox/Slider) |
 | Cards | `Card + CardHeader/Title/Description/Content/Footer` | Layout primitive |

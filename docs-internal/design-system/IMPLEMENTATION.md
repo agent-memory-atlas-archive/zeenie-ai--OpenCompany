@@ -80,7 +80,7 @@ color: var(--action-run-ink);          /* readable accent */
 ```
 
 ### Type
-`--font-sans: 'Geist'` (display = body) · `--font-mono: 'JetBrains Mono'` (counts, state, timestamps — the "machine voice").
+`--font-sans: 'Geist'` (display = body) · `--font-mono` (counts, state, timestamps — the "machine voice"): the live light / dark themes use the system mono stack `ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Monaco, Consolas, monospace` (`client/src/themes/light.css`, `dark.css`); JetBrains Mono is only a skin mono (Cyber, Edo, Rot). This bundle's `tokens/typography.css` still leads with `'JetBrains Mono'` — the live theme files win.
 Scale (14px base, dense desktop): `--text-2xs 11` `--text-xs 12` `--text-sm 13` `--text-base 14` `--text-md 16` `--text-lg 18` `--text-xl 24` `--text-2xl 32` `--text-3xl 44`.
 Weights: 400 body / 500 UI labels / 600 headings & buttons. Sentence case; uppercase + `--tracking-label .04em` only in the status bar and micro-labels.
 

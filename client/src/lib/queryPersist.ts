@@ -9,10 +9,12 @@
  * compile-time constant (see vite.config.js). Bumping the version
  * automatically purges stale persisted entries on next load.
  *
- * Filter: only queries declaring staleTime: STALE_TIME.FOREVER are
- * persisted. Those carry data that only changes with a backend deploy
- * (NodeSpec catalogue, node groups). High-frequency / per-session
- * queries (status, parameters) are not persisted.
+ * Filter: only successfully resolved queries whose key starts with a
+ * prefix in PERSISTED_KEY_PREFIXES (nodeSpec, node groups) are persisted.
+ * Those carry data that only changes with a backend deploy. High-frequency
+ * / per-session queries (status, parameters) are not persisted. Each
+ * persisted prefix also needs a FOREVER setQueryDefaults in queryClient.ts,
+ * because hydration applies the client's default options.
  *
  * References:
  *   https://tanstack.com/query/latest/docs/framework/react/plugins/persistQueryClient
@@ -56,14 +58,12 @@ export const queryBuster = APP_VERSION;
 export const queryPersistMaxAge = 24 * 60 * 60 * 1000;
 
 /**
- * Filter predicate: only persist queries that declare
- * `staleTime: Infinity`. That is our project-wide marker for
- * "data only changes with a backend deploy" (catalogues, node specs,
- * node groups). High-frequency or per-session data stays in memory.
- *
- * The key is a defensive string-prefix match in addition to staleTime
- * so a future regression to the staleTime config does not silently
- * start persisting noisy keys.
+ * Filter predicate: persist a query only when its key's first element is
+ * in this allowlist AND it resolved successfully. The allowlist names the
+ * data that only changes with a backend deploy (node specs, node groups);
+ * high-frequency or per-session data stays in memory. The predicate does
+ * not read staleTime, so a new prefix here must be paired with a
+ * setQueryDefaults entry in queryClient.ts.
  */
 const PERSISTED_KEY_PREFIXES = [
   'nodeSpec',

@@ -47,11 +47,12 @@ queryClient.setQueryDefaults(['nodeGroups'], {
   gcTime: GC_TIME.FOREVER,
 });
 
-// Credential values are persisted via PersistQueryClient (see
-// queryPersist.ts whitelist). Same hydration trap as nodeSpec: the
-// per-call FOREVER staleTime did not prevent gcTime: 5min eviction, so
-// credential panel form fields silently went blank after idle. Anchor
-// the contract at the prefix root.
+// Credential values are NOT persisted (removed from the queryPersist.ts
+// whitelist: they hold decrypted API keys, which must never reach
+// localStorage). The in-memory entry still needs FOREVER: the per-call
+// FOREVER staleTime did not prevent gcTime: 5min eviction, so credential
+// panel form fields silently went blank after idle. Anchor the contract
+// at the prefix root.
 queryClient.setQueryDefaults(['credentialValues'], {
   staleTime: STALE_TIME.FOREVER,
   gcTime: GC_TIME.FOREVER,

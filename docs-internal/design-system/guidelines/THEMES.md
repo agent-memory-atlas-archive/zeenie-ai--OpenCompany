@@ -1,6 +1,6 @@
 # OpenCompany theming architecture — analysis
 
-Source: `client/src/themes/*.css` + `client/src/index.css` in https://github.com/zeenie-ai/OpenCompany (full copies in `reference/themes/`). The app ships **12 themes**: 2 canonical (light, dark) + 10 "skins" (Renaissance, Greek, Edo, Steampunk, Atomic, Cyber, Wasteland, Rot, Plague, Surveillance).
+Source: `client/src/themes/*.css` + `client/src/index.css` in https://github.com/zeenie-ai/OpenCompany (the live files are authoritative; the `reference/themes/` snapshots were retired — see its README). The app ships **12 themes**: 2 canonical (light, dark) + 10 "skins" (Renaissance, Greek, Edo, Steampunk, Atomic, Cyber, Wasteland, Rot, Plague, Surveillance).
 
 ## 1. How it works — a four-layer contract
 
@@ -28,10 +28,10 @@ Beyond color: **typeface trio, base font size (13–15px), letter case, tracking
 | **Edo** | washi + sumi-e | rice paper | vermillion #b41e1e · sumi ink · bamboo · sakura | Shippori Mincho ×2 / JetBrains | none·.06em | all 0 | 90/220/520 organic | ink | vermillion |
 | **Steampunk** | Verne submarine | oiled leather | brass #d8a848 · copper #b8602a · rust | IM Fell English SC / IM Fell / Special Elite | UPPER·.10em | 2/4/8 | 110/240/480 mechanical | clockwork | copper |
 | **Atomic** | 1962 Eames | cream cardstock | atomic orange #e85a26 · turquoise #3a9aa0 · mustard | Bevan / Lato / Space Mono | UPPER·.06em | 0/2/4 (pill 999) | 100/200/380 bouncy (1.6 overshoot) | vibraphone | turquoise |
-| **Cyber** | Neuromancer market | void #050010 | neon magenta #f51eb6 · cyan #1dd9e5 · green · yellow | Major Mono Display / JetBrains ×2 (13px) | UPPER·.18em | all 0 | 60/120/240 `steps()` glitch | terminal | neon cyan |
+| **Cyber** | Neuromancer market | void #050010 | neon magenta #f51eb6 · cyan #1dd9e5 · green · yellow | Space Mono / JetBrains ×2 (13px) | UPPER·.18em | all 0 | 60/120/240 `steps()` glitch | terminal | neon cyan |
 | **Wasteland** | Mad Max scrap | irradiated dust | ochre #e88a28 · rust #8a3a18 · rad-yellow #c8d038 · bone | Special Elite ×2 / VT323 | UPPER·.10em | all 0 | 60/180/320 jittery | scrap | rad yellow |
 | **Rot** | mossy crypt | charcoal green | moss #78c878 · candle #e8a838 · bone · crypt brown | Pirata One / EB Garamond / JetBrains | none·.04em | 1/2/4 | 140/320/680 drift (slowest) | crypt | moss phosphor |
-| **Plague** | 1349 quarantine notice | bleached linen | dried blood #783c28 · bile #98a838 · crow black | UnifrakturCook / EB Garamond / Special Elite | UPPER·.06em | all 0 | 100/220/460 stiff | bell | bile red |
+| **Plague** | 1349 quarantine notice | bleached linen | dried blood #783c28 · bile #98a838 · crow black | Cinzel / EB Garamond / Special Elite | UPPER·.06em | all 0 | 100/220/460 stiff | bell | bile red |
 | **Surveillance** | 1970s panopticon | institutional grey | REC red #e82626 · phosphor #6acc6a · amber | Anonymous Pro / IBM Plex Mono ×2 (13px) | UPPER·.10em | all 0 | 60/140/240 `linear` scanline | telex | REC red |
 
 Special hardware: **Cyber** ships custom crosshair + bracket cursors and full-frame CRT flicker/roll keyframes; **Surveillance** ships a REC-red reticle cursor and a 1920×1080 CCTV crosshair canvas overlay; **Renaissance** ships a quill cursor, fleur-de-lis canvas tile and the only non-`none` `--ornament-frame` (triple gilded inset); **Steampunk** draws bolt-pattern canvas tiles and rivets nodes with pseudo-elements.
@@ -46,4 +46,4 @@ Special hardware: **Cyber** ships custom crosshair + bracket cursors and full-fr
 
 ## 5. Status in THIS design system
 
-`tokens/colors.css` encodes the two canonical themes (light `:root`, dark `.dark`). The 10 skins are **documented + sourced** (`reference/themes/`) but not yet expressed as token scopes here. To port one: copy its layer-2 block into a `[data-theme="X"]` scope in `tokens/`, map its accents onto the action/node role triplets, and load its Google Fonts (all skin fonts are on Google Fonts — same delivery as production). Visual comparison: `guidelines/theme-matrix.html`.
+`tokens/colors.css` encodes the two canonical themes (light `:root`, dark `.dark`). The 10 skins are **documented** here and sourced from the live `client/src/themes/` files, but not yet expressed as token scopes here. (Cyber and Plague display faces are the legibility substitutions Space Mono and Cinzel; the handoff's Major Mono Display and UnifrakturCook are not shipped.) To port one: copy its layer-2 block into a `[data-theme="X"]` scope in `tokens/`, map its accents onto the action/node role triplets, and load its Google Fonts (all skin fonts are on Google Fonts — same delivery as production). Visual comparison: `guidelines/theme-matrix.html`.

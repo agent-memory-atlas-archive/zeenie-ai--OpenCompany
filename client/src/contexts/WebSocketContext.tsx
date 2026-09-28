@@ -836,7 +836,8 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   // without limit; retries normally arrive close together.
   const processedCloudEventsRef = useRef<Set<string>>(new Set());
   // Pending-send queue for backpressure + replay across reconnects.
-  // Drained inside `ws.onopen` after the init burst. Source of truth
+  // Drained inside `ws.onopen` by `drainPendingSends`, immediately before
+  // `setIsReady(true)` (Wave 32 removed the init burst). Source of truth
   // for currentWorkflowId is `useAppStore.getState().currentWorkflow?.id`
   // (read via Zustand's documented escape hatch in non-React listeners).
   const pendingSendQueueRef = useRef<Array<QueuedSend>>([]);
@@ -2140,7 +2141,8 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         // `['openai', 'anthropic', 'gemini', 'google_maps', 'android_remote']`.
         // Those probes were redundant — credential state has TWO authoritative
         // sources already:
-        //   1. The backend's `initial_status` broadcast (handled at line ~638)
+        //   1. The backend's `initial_status` broadcast (the `initial_status`
+        //      case in `handleMessage`)
         //      pushes the full `api_keys` map on every reconnect.
         //   2. The catalogue (TanStack Query `useCatalogueQuery`) carries the
         //      `provider.stored` flag for every provider; refetched via the
