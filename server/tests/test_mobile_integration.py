@@ -32,7 +32,7 @@ async def test_connector_uses_saved_model_and_only_selected_key(monkeypatch):
     monkeypatch.setattr(registry, "get_node_class", lambda _: SimpleNamespace(component_kind="model"))
     monkeypatch.setattr(constants, "detect_ai_provider", lambda *_: "gemini")
     config = await _node.resolve_model(context())
-    assert config == {"provider": "google", "model": "chosen-model", "model_env": {"GOOGLE_API_KEY": "resolved-secret"}}
+    assert config == {"provider": "google", "model": "chosen-model", "model_env": {"GOOGLE_API_KEY": "resolved-secret", "GOOGLE_GENAI_USE_VERTEXAI": "false"}}
     auth.get_api_key.assert_awaited_once_with("gemini", "default")
 
 

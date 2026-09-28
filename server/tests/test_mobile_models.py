@@ -33,7 +33,7 @@ async def test_global_selection_is_read_fresh_and_ignores_drag_defaults(models):
     db, auth = models
     params = MobileParams(provider="openrouter", model="old-drag-default")
     result = await resolve_model(context(), params)
-    assert result == {"provider": "google", "model": "global-vision", "model_env": {"GOOGLE_API_KEY": "selected-key"}}
+    assert result == {"provider": "google", "model": "global-vision", "model_env": {"GOOGLE_API_KEY": "selected-key", "GOOGLE_GENAI_USE_VERTEXAI": "false"}}
     db.get_user_settings.assert_awaited_once_with("default")
     auth.get_api_key.assert_awaited_once_with("gemini", "default")
     db.get_user_settings.return_value = {"default_llm_provider": "openai", "default_llm_model": "new-global"}
@@ -86,3 +86,24 @@ async def test_missing_key_is_actionable(models):
 async def test_blank_custom_model_uses_provider_default(models):
     result = await resolve_model(context(), MobileParams(model_source="custom", provider="openai"))
     assert result["model"] == "provider-default"
+
+
+@pytest.mark.parametrize("key,mode", [("AQ.synthetic-express-key", "true"), ("AIza-synthetic-developer-key", "false")])
+@pytest.mark.parametrize("source", ["global", "custom", "connected"])
+async def test_gemini_backend_matches_saved_key_type(models, monkeypatch, key, mode, source):
+    import constants
+    db, auth = models
+    auth.get_api_key.return_value = key
+    ctx = context()
+    params = MobileParams()
+    if source == "custom":
+        params = MobileParams(model_source="custom", provider="gemini", model="chosen-model")
+    elif source == "connected":
+        monkeypatch.setattr(constants, "detect_ai_provider", lambda *_: "gemini")
+        db.get_node_parameters.return_value = {"model": "chosen-model"}
+        ctx.nodes = [{"id": "model", "type": "geminiChatModel"}]
+        ctx.edges = [{"source": "model", "target": "phone", "targetHandle": "input-model"}]
+    monkeypatch.setenv("GOOGLE_GENAI_USE_VERTEXAI", "false" if mode == "true" else "true")
+    result = await resolve_model(ctx, params)
+    assert result["provider"] == "google"
+    assert result["model_env"] == {"GOOGLE_API_KEY": key, "GOOGLE_GENAI_USE_VERTEXAI": mode}

@@ -104,7 +104,13 @@ async def resolve_model(ctx: NodeContext, params: MobileParams | None = None) ->
         raise NodeUserError("Connect the selected model provider in Settings before running Mobile")
     model = selected_model or await get_default_model_async(provider_ref, database)
     provider, variable = adapters[provider_ref]
-    return {"provider": provider, "model": model, "model_env": {variable: key}}
+    model_env = {variable: key}
+    if provider_ref == "gemini":
+        from services.llm.vertex import is_vertex_express_key
+
+        # Match native Gemini routing; do not inherit a host's backend mode.
+        model_env["GOOGLE_GENAI_USE_VERTEXAI"] = "true" if is_vertex_express_key(key) else "false"
+    return {"provider": provider, "model": model, "model_env": model_env}
 
 
 class MobileUseAgent(ActionNode):

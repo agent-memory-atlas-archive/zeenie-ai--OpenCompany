@@ -21,6 +21,13 @@ def test_android_is_discoverable_as_a_tool():
         AndroidTaskInput(prompt="Open settings", workflow_id="other")
 
 
+def test_android_tool_failure_is_not_reported_as_success():
+    result = {"error": "The model provider denied access. (HTTP 403)"}
+    assert AndroidTool.interpret_result(result) == (False, result, result["error"])
+    success = {"response": "Done", "run_id": "run", "outcome": "completed"}
+    assert AndroidTool.interpret_result(success) == (True, success, None)
+
+
 async def test_tool_uses_saved_limits_and_existing_mobile_pipeline(monkeypatch):
     runtime = SimpleNamespace(run=AsyncMock(return_value={"response": "Done", "run_id": "test", "outcome": "completed"}),
                               ensure_broker=AsyncMock(return_value="http://127.0.0.1/private"))

@@ -39,6 +39,14 @@ class AndroidTool(ToolNode):
     ToolInput = AndroidTaskInput
     Output = MobileOutput
 
+    @classmethod
+    def interpret_result(cls, result):
+        # Agent tool invocation flattens failures to {"error": ...}. Do not
+        # report a rejected Android task as a successful Temporal activity.
+        if isinstance(result, dict) and "success" not in result and result.get("error"):
+            return False, result, str(result["error"])
+        return super().interpret_result(result)
+
     @Operation("execute")
     async def execute_op(self, ctx: NodeContext, params: AndroidTaskInput | MobileParams) -> dict:
         config = ctx.raw.get("_tool_config")

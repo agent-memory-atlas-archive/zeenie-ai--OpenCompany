@@ -614,6 +614,8 @@ class MobileRuntime:
         scope = {"run_id": (self.active or {}).get("run_id"), "workflow_id": (self.active or {}).get("workflow_id"),
                  "node_id": (self.active or {}).get("node_id"), "execution_id": (self.active or {}).get("execution_id"),
                  "provider": config.get("provider"), "model": config.get("model")}
+        if config.get("provider") == "google":
+            scope["model_backend"] = "vertex_express" if config.get("model_env", {}).get("GOOGLE_GENAI_USE_VERTEXAI") == "true" else "gemini_developer"
         event("engine_starting", **scope)
 
         async def read():

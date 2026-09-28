@@ -15,7 +15,7 @@ _logger = logging.Logger("opencompany.mobile.diagnostics")
 _logger.setLevel(logging.INFO)
 _logger.propagate = False
 _fields = {"operation", "duration_ms", "error_type", "code", "serial", "run_id", "node_id", "workflow_id", "state",
-           "execution_id", "provider", "model", "stage", "http_status", "provider_status", "steps", "exit_code", "engine_trace"}
+           "execution_id", "provider", "model", "model_backend", "stage", "http_status", "provider_status", "steps", "exit_code", "engine_trace"}
 
 
 def event(name: str, *, failed: bool = False, **fields) -> None:
