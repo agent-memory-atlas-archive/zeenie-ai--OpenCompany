@@ -3,7 +3,8 @@
 > **Source:** [code.claude.com/docs/en/permission-modes](https://code.claude.com/docs/en/permission-modes)
 > **Fetched:** 2026-05-11
 > **Why this lives in-repo:** OpenCompany's claude_code_agent defaults to
-> `--permission-mode acceptEdits` and exposes the full enum
+> `--permission-mode dontAsk` (`default_permission_mode` in
+> `server/config/ai_cli_providers.json`) and exposes the full enum
 > (`default`, `acceptEdits`, `plan`, `auto`, `dontAsk`,
 > `bypassPermissions`) on `ClaudeTaskSpec.permission_mode`. See
 > `services/cli_agent/types.py` and
@@ -283,8 +284,8 @@ Writes to a small set of paths are never auto-approved, in every mode except `by
 
 | Mode | Where | Notes |
 |---|---|---|
-| `acceptEdits` | Default on `ClaudeTaskSpec.permission_mode` | Auto-approves file edits + safe filesystem commands inside cwd. cwd is `repo_root` for memory-bound runs (so claude can edit the actual repo) and the per-task worktree otherwise (isolated). |
+| `dontAsk` | Default (`ClaudeTaskSpec.permission_mode` and `default_permission_mode` in `ai_cli_providers.json`) | No prompts. Pre-approval comes from the `--allowedTools` list `interactive_argv` builds; anything else is denied, except read-only Bash commands (see "Allow only pre-approved tools with `dontAsk` mode" above). The other built-ins stay visible to the model. |
+| `acceptEdits` | User-selectable per task | Auto-approves file edits + safe filesystem commands inside cwd. cwd is a git worktree under the workflow workspace (`<workspace>/<node>/wt_session` for bound runs), never the repo root. Prompts for anything else, which hangs a headless run. |
 | `plan` | User-selectable per task | When the user wants research without edits. |
 | `bypassPermissions` | Available but not default | For sandboxed CI scenarios. Not recommended on a user's real repo. |
-| `dontAsk` | Available but not default | For locked-down CI; agent must have `permissions.allow` rules pre-configured. |
 | `auto` | Available but not default | Requires Sonnet 4.6 / Opus 4.6+ and Anthropic API plan; classifier model + token cost overhead. |

@@ -187,16 +187,16 @@ Quick cross-reference for the OpenCompany `claude_code_agent` integration:
 | `--output-format stream-json` | always | NDJSON event stream consumed by `_pool.py` |
 | `--input-format stream-json` | always | prompts are written to the long-lived subprocess over stdin |
 | `--verbose` | always | include complete stream-json event detail |
-| `--ide` | always | discover the per-process IDE lockfile used for MCP connectivity |
+| `--ide` | always | matches the VSCode extension's argv; OpenCompany writes no IDE lockfile and sets no `CLAUDE_IDE_LOCK`, so the MCP connection comes only from `--mcp-config` |
 | `--model <id>` | always | from `ClaudeTaskSpec.model` / config default |
-| `--permission-mode <mode>` | normally | defaults to `dontAsk` so the explicit allowlist remains authoritative without interactive prompts |
-| `--allowedTools <csv>` | always | connected workflow tools plus OpenCompany MCP infrastructure tools; Claude built-ins are opt-in, except `Skill` when a skill is connected |
+| `--permission-mode <mode>` | normally | defaults to `dontAsk`: a call that is not pre-approved is denied instead of prompting (read-only Bash commands still run) |
+| `--allowedTools <csv>` | always | pre-approves connected workflow tools plus OpenCompany MCP infrastructure tools; Claude built-ins are opt-in, except `Skill` when a skill is connected. Pre-approval only: per the table above it does not restrict which tools the model sees (that is `--tools`, not emitted) |
 | `--mcp-config <json>` | when MCP wired | inline JSON with `{mcpServers: {opencompany: {type: http, url, headers, alwaysLoad: true}}}` |
 | `--strict-mcp-config` | when MCP wired | blocks user-level `~/.claude.json` MCP entries |
 | `--append-system-prompt <text>` | when `system_prompt` is set | append the task prompt to Claude Code's built-in system prompt |
 | `--session-id <UUID>` | cold spawn with no continuity flag | host-minted `uuid4` so the session UUID is known before the first event (must be a valid UUID; rejected if already in use) |
-| `--resume <UUID>` | memory-bound runs (`last_session_id` from the memory node) and pooled-process crash or reap recovery | resume by UUID; works from any directory since 2.1.223 |
-| `--continue` | never set by the node | the reference says it skips sessions created non-interactively (`-p` / stream-json), i.e. every session the pool creates; kept on `ClaudeTaskSpec` for explicit callers only |
+| `--resume <UUID>` | memory-bound runs (`last_session_id` from the memory node) and pooled-process crash recovery | resume by UUID; works from any directory since 2.1.223. An idle reap or LRU eviction drops the pool entry and its UUID, so it is not resumed from the pool |
+| `--continue` | not set by the node's continuity logic; emitted when a task sets `continue_session: true` | the reference says it skips sessions created non-interactively (`-p` / stream-json), i.e. every session the pool creates |
 | `--effort <level>` | optional per-task override | reasoning effort |
 | `--add-dir <path>*` | optional per-task override | grant extra working dirs |
 | `--disallowedTools <csv>` | optional per-task override | remove tools from context |

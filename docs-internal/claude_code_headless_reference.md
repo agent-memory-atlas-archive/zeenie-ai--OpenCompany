@@ -2,12 +2,14 @@
 
 > **Source:** [code.claude.com/docs/en/headless](https://code.claude.com/docs/en/headless)
 > **Fetched:** 2026-05-11
-> **Why this lives in-repo:** OpenCompany spawns `claude -p` via
-> `services/cli_agent/`. The argv flags this doc describes
-> (`--output-format stream-json`, `--include-partial-messages`,
-> `--include-hook-events`, `--max-budget-usd`, `--max-turns`,
-> `--bare`) and the stream-json event schema it documents are
-> load-bearing for our session parser.
+> **Why this lives in-repo:** OpenCompany no longer spawns `claude -p`.
+> `ClaudeSessionPool` runs `claude --output-format stream-json
+> --input-format stream-json --verbose --ide ...` over stdio pipes (see
+> [claude_code_interactive_mode.md](./claude_code_interactive_mode.md)).
+> The stream-json event schema this doc documents is still the contract
+> the pool parses; the print-mode-only flags it describes
+> (`--include-partial-messages`, `--max-budget-usd`, `--max-turns`) are
+> not emitted.
 
 ---
 
@@ -265,27 +267,27 @@ claude -p "Continue that review" --resume "$session_id"
 
 ## What OpenCompany reads from this stream
 
-`services/cli_agent/session.py:_consume_stdout` parses every line of
-`--output-format stream-json` output. The event types we touch:
+The stdout reader started in `ClaudeSessionPool._spawn`
+([`nodes/agent/claude_code_agent/_pool.py`](../server/nodes/agent/claude_code_agent/_pool.py))
+parses every line of `--output-format stream-json` output and hands it to
+`_handle_stream_event`:
 
 | Event | What we do with it |
 |---|---|
-| `type: "system"` `subtype: "init"` | Log tools count + mcp_servers list. First evidence the spawn is healthy. |
-| `type: "assistant"` `content: [text]` | Log a 300-char preview as `[CC-Agent stream] assistant.text`. |
-| `type: "assistant"` `content: [tool_use]` | Log tool name + input keys as `assistant->tool_use`. |
-| `type: "tool_use"` (top-level) | Log name + input keys. |
-| `type: "tool_result"` | Log `is_error` + 300-char content preview. |
-| `type: "hook"` | Log hook event name (requires `--include-hook-events`). |
-| `type: "result"` | Final summary — drives `SessionResult` (`session_id`, `total_cost_usd`, `duration_ms`, `num_turns`, `usage`). |
+| any event with `session_id` | Seeds the pooled session's UUID if it is still empty (a `--continue` spawn; otherwise the UUID is known from `--session-id` / `--resume`). |
+| every event | Appended to the turn's event buffer, which `AnthropicClaudeProvider.event_to_session_result` turns into the `SessionResult`. |
+| `type: "result"` | Ends the turn — drives `SessionResult` (`session_id`, `total_cost_usd`, `duration_ms`, `num_turns`, `usage`) and the `claude.session.usage` CloudEvent. |
+| `type: "system"` `subtype: "compact_boundary"` | Forwarded to `CompactionService.record(...)`. |
 
-`--include-partial-messages` surfaces deltas to the Terminal panel via
-`broadcast_terminal_log`; we don't aggregate them into messages
-because the `result` event carries the final response anyway.
+The per-event log previews (`assistant.text`, tool calls, tool results)
+and Terminal-panel lines are produced only by the generic
+`AICliSession` (`services/cli_agent/session.py`), which Claude no
+longer uses.
 
-`--max-budget-usd` is set from `ClaudeTaskSpec.max_budget_usd` (default
-`5.0` USD) so we cap per-task spend.
-
-`--max-turns` is set from `ClaudeTaskSpec.max_turns` (default `10`).
+`--include-partial-messages`, `--max-budget-usd` and `--max-turns` are
+not emitted: they are print-mode only. `ClaudeTaskSpec` keeps
+`max_budget_usd` and `max_turns` for back-compat, but nothing caps
+per-task spend or turns today.
 
 We do NOT use `--bare` — auto-discovery of hooks/skills/MCP/auto-memory
 is what makes the workflow-tool bridge work. CI use cases that want

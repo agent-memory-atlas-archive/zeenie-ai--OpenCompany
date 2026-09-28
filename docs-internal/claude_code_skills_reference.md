@@ -3,9 +3,10 @@
 > **Source:** [code.claude.com/docs/en/skills](https://code.claude.com/docs/en/skills)
 > **Fetched:** 2026-05-11
 > **Why this lives in-repo:** OpenCompany materialises connected skills
-> into `<cwd>/.claude/skills/<name>/SKILL.md` on `_pre_spawn` so claude
-> auto-discovers them — see [`cli_agent_framework.md` → Memory bridge](./cli_agent_framework.md#memory-bridge--simplememory--claude_code_agent)
-> and [`cli_agent_canonical_patterns_rfc.md` §5 R1](./cli_agent_canonical_patterns_rfc.md).
+> into `<workspace_dir>/.claude/skills/<name>/SKILL.md` before the pool
+> spawns claude, and claude finds them through `--add-dir <workspace_dir>`
+> — see [`claude_code_interactive_mode.md` → Tools and skills](./claude_code_interactive_mode.md#tools-and-skills)
+> and [`cli_agent_canonical_patterns_rfc.md` §6 R1](./cli_agent_canonical_patterns_rfc.md).
 > This is the spec we materialise against.
 
 ---
@@ -229,21 +230,29 @@ To raise the budget, set the `skillListingBudgetFraction` setting (e.g. `0.02` =
 
 ## How OpenCompany materialises skills for `claude_code_agent`
 
-[`services/cli_agent/session.py:_materialise_skills`](../server/services/cli_agent/session.py)
+`materialise_skills` in
+[`nodes/agent/claude_code_agent/_skills.py`](../server/nodes/agent/claude_code_agent/_skills.py)
 walks `connected_skill_names` (collected by edge_walker from the
 agent's `input-skill` handle) and writes each connected skill to
-`<cwd>/.claude/skills/<name>/SKILL.md`:
+`<workspace_dir>/.claude/skills/<name>/SKILL.md`, where
+`<workspace_dir>` is the workflow's workspace, passed to claude with
+`--add-dir`. `ClaudeSessionPool._spawn` calls it before a cold spawn and
+`_prepare_warm_reuse` calls it on every warm reuse with the previous
+set, so only the difference is written or removed:
 
 - **Filesystem-origin skills:** `shutil.copytree(skill.metadata.path, dest, dirs_exist_ok=True)` — preserves `SKILL.md` + supporting `scripts/`, `references/`, `templates/`, etc.
 - **DB-origin user skills:** synthesise the `SKILL.md` from `Skill.metadata` (`name`, `description`, `allowed-tools`, `metadata`) + `Skill.instructions` (the body) using `yaml.safe_dump` for the frontmatter.
 
-For memory-bound runs (`memory_bound=True`), cwd is `repo_root`, so
-skills land at `<repo_root>/.claude/skills/<name>/`. For non-memory
-runs the cwd is the per-task worktree.
+The cwd is a git worktree under the workspace (`<workspace>/<node>/wt_session`
+for bound runs, one per task otherwise), never the repo root, so
+skills never land in the user's repository.
 
 Per *Live change detection* above, claude picks the skills up
-mid-session without a restart — but our spawn is fresh each task
-anyway, so we don't rely on that.
+mid-session without a restart. The pool relies on that: a warm process
+is reused across runs, and the warm-reuse diff adds or removes skill
+folders under it. (Whether the `Skill` tool itself is pre-approved is
+fixed at spawn; see
+[claude_code_interactive_mode.md → Known gaps](./claude_code_interactive_mode.md#known-gaps).)
 
 `allowed-tools` in OpenCompany-shipped SKILL.md files uses the same
 syntax as upstream (`Bash(git diff *) Read` etc.) and is honoured by

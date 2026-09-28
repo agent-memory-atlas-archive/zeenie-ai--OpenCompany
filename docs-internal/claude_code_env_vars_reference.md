@@ -119,7 +119,7 @@ sets or relies on.
 
 | Variable | Purpose |
 |---|---|
-| `CLAUDE_CONFIG_DIR` | Override the root config directory. Defaults to `~/.claude/`. **OpenCompany sets this** to `<DATA_DIR>/claude/` (= `~/.opencompany/claude/` by default) so credentials are project-local and isolated from the user's own `~/.claude/` session — see `nodes/agent/claude_code_agent/_oauth.py:OPENCOMPANY_CLAUDE_DIR` (`= data_path("claude")`). This is the directory under which claude's session JSONL lives at `<CLAUDE_CONFIG_DIR>/projects/<project_key>/<session_id>.jsonl`. The npm-installed CLI binary is separate, in the shared tree at `<DATA_DIR>/packages/node_modules/.bin/claude[.cmd]`. |
+| `CLAUDE_CONFIG_DIR` | Override the root config directory. Defaults to `~/.claude/`. **OpenCompany sets this** to `<DATA_DIR>/claude/` (= `~/.opencompany/claude/` by default) so credentials are project-local and isolated from the user's own `~/.claude/` session — see `nodes/agent/claude_code_agent/_oauth.py:OPENCOMPANY_CLAUDE_DIR` (`= data_path("claude")`). This is the directory under which claude's session JSONL lives at `<CLAUDE_CONFIG_DIR>/projects/<project_key>/<session_id>.jsonl`. The CLI itself is separate: `bun add`ed into the shared tree, with its shim at `<DATA_DIR>/packages/node_modules/.bin/claude` (`claude.exe` on Windows). |
 | `CLAUDE_REMOTE_CONTROL_SESSION_NAME_PREFIX` | Default prefix for auto-generated Remote Control session names. |
 
 ## Timeouts
@@ -139,11 +139,20 @@ sets or relies on.
 
 ## Env vars OpenCompany explicitly sets on the spawn env
 
-From [`services/cli_agent/session.py:env()`](../server/services/cli_agent/session.py):
+For Claude, the pooled spawn env is built in `AICliService._run_pooled_turn`
+([`services/cli_agent/service.py`](../server/services/cli_agent/service.py)).
+It starts from the backend's whole `os.environ`, removes nothing, and adds:
 
 | Variable | Set to | Reason |
 |---|---|---|
 | `PYTHONUNBUFFERED` | `1` | Line-buffered output (we parse stream-json line by line). |
-| `CLAUDE_CONFIG_DIR` | `OPENCOMPANY_CLAUDE_DIR` (claude provider only) | Project-local credential isolation; also where claude writes its session JSONL — load-bearing for the memory bridge (`<key>/projects/<cwd-encoded>/<session_id>.jsonl`). |
-| `<provider.ide_lock_env_var>` | path to per-spawn lockfile | VSCode-style IDE auto-discovery. |
-| `OPENCOMPANY_PARENT_RUN_ID` | `<workflow_id>:<node_id>:<batch_token[:8]>` | Composio-style parent-run-id for MCP correlation. |
+| `CLAUDE_CONFIG_DIR` | `OPENCOMPANY_CLAUDE_DIR` | Project-local credential isolation; also where claude writes its session JSONL — load-bearing for the memory bridge (`<key>/projects/<cwd-encoded>/<session_id>.jsonl`). |
+| `OPENCOMPANY_PARENT_RUN_ID` (and the legacy `MACHINA_PARENT_RUN_ID`) | `<workflow_id>:<session_key>:<batch_token[:8]>` | Composio-style parent-run-id for MCP correlation. |
+
+No IDE-lock variable is set on this path. The generic `AICliSession.env()`
+in [`services/cli_agent/session.py`](../server/services/cli_agent/session.py)
+(not used for Claude) also sets `<provider.ide_lock_env_var>` to the
+lockfile it wrote. Because the whole backend environment is inherited,
+variables from the shell that started the backend (an editor's
+IDE-integration variables, for example) reach the CLI; see
+[claude_code_interactive_mode.md → Known gaps](./claude_code_interactive_mode.md#known-gaps).
