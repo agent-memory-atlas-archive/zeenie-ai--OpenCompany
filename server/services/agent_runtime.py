@@ -432,7 +432,8 @@ async def run_native_agent_loop(
         role="assistant",
         content=(
             f"[Recursion limit reached: {max_iterations} iterations. "
-            "Adjust agent.recursion_limit in llm_defaults.json or simplify the task.]"
+            "Raise AI Agent Max Steps in Settings (env AGENT_RECURSION_LIMIT "
+            "is used only when no settings are saved) or simplify the task.]"
         ),
     )
     messages.append(terminal)

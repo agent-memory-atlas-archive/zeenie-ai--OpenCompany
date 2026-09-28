@@ -90,7 +90,7 @@ Result broadcast via WebSocket
 | `server/services/plugin/edge_walker.py` | `collect_agent_connections()` (the renamed `_collect_agent_connections`), `format_task_context()` |
 | `server/nodes/agent/_inline.py` | `prepare_agent_call()` — task-context injection + auto-prompt fallback + teammate collection; calls `collect_agent_connections` then `ai_service.execute_[chat_]agent` |
 | `server/nodes/agent/<plugin>/__init__.py` | Per-plugin `execute_op()` (Wave 11 replaced `handle_ai_agent` / `handle_chat_agent`) |
-| `server/services/ai.py` | `AIService` facade -- skill injection (`_build_skill_system_prompt`, line 273), tool building, context/memory and execution-boundary handling |
+| `server/services/ai.py` | `AIService` facade -- skill injection (`_build_skill_system_prompt`), tool building, context/memory and execution-boundary handling |
 | `server/services/skill_prompt.py` | `build_skill_system_prompt` -- the only skill-to-system-message path (personality bodies only) |
 | `server/services/agent_runtime.py` | `AgentToolSpec`, `run_native_llm_step`, and `run_native_agent_loop` |
 | `server/services/llm/` | `ChatUnifier`, provider-neutral messages/tool definitions, and native provider SDK adapters |
@@ -123,6 +123,8 @@ is involved — each iteration:
    dispatch it through `tool_executor`, and append a native
    `Message(role="tool", tool_call_id=...)`. Malformed arguments become a
    deterministic tool error containing `raw_arguments` rather than crashing.
+   An external tool's result text is cut to `tool_output_limit` characters
+   before it is appended (see Signature below).
    Results containing workflow `operations` are passed to
    `rebind_from_operations`; returned `AgentToolSpec` values extend
    `current_tools` for the next request.
@@ -155,16 +157,24 @@ async def run_native_agent_loop(
         Callable[[int, LLMResponse, List[Message]], Awaitable[Optional[List[Message]]]]
     ] = None,
     conversation_saver: Optional[Callable[[List[Message]], Awaitable[None]]] = None,
+    tool_output_limit: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Returns messages, iteration, thinking, truncation, usage, and response."""
 ```
 
-(`services/agent_runtime.py:190-216`.) The three trailing keywords are the
-RFC-0002 hooks: `context_management` is forwarded to the provider step (the
-Anthropic compaction edit), `compaction_pause_callback` lets the caller swap
-the message list after a provider-side compaction pause, and
-`conversation_saver` persists the full transcript after every turn through
-the plain conversation store (see [agent_context_flow.md](agent_context_flow.md)).
+(`run_native_agent_loop` in `services/agent_runtime.py`.) `context_management`,
+`compaction_pause_callback` and `conversation_saver` are the RFC-0002 hooks:
+`context_management` is forwarded to the provider step (the Anthropic
+compaction edit), `compaction_pause_callback` lets the caller swap the
+message list after a provider-side compaction pause, and `conversation_saver`
+persists the full transcript after every turn through the plain conversation
+store (see [agent_context_flow.md](agent_context_flow.md)).
+`tool_output_limit` caps, in characters, what one external tool result adds
+to `messages` (`bound_tool_output` in `services/tool_output.py`; `None` or `0`
+keeps results whole). Delegated-agent answers, skill loads and Task Manager
+results are exempt (`tool_output_is_capped`). `execute_agent` /
+`execute_chat_agent` pass the resolved Tool Result Limit; see
+[agent_context_flow.md → Transcript size](agent_context_flow.md).
 
 There is no mutable model binding step. Each native LLM request derives its
 provider-facing declarations from the current `AgentToolSpec.definition`
@@ -177,6 +187,7 @@ next iteration.
 | Trigger | What happens |
 |---|---|
 | LLM emits no `tool_calls` | Return with `truncated: False`. This is the normal exit. |
+| `finish_reason == "compaction"` with no `tool_calls` | **Not** an exit. Anthropic's durability pause returns only a compaction block; it has already been saved, so the loop calls `compaction_pause_callback` (when given, its non-`None` return replaces `messages`) and continues to the next iteration. |
 | `tool_executor` is `None` but LLM emits tool calls | WARN + return (treat as final). |
 | `iteration` reaches `max_iterations` | Append a synthetic native assistant `Message` + return with `truncated: True`. |
 
@@ -378,14 +389,14 @@ metadata:
 ### 5. System Message Injection
 
 The only path from `skill_data` to the system message is
-`_build_skill_system_prompt` (`server/services/ai.py:273`), a thin wrapper
-that imports and calls `services/skill_prompt.py::build_skill_system_prompt`.
-It is called from `execute_agent` (`ai.py:917`), `execute_chat_agent`
-(`ai.py:1633`), the RLM service (`services/rlm/service.py:74-77`) and the
-Temporal `agent.prepare_payload` activity (`agent_activities.py:971-973`):
+`_build_skill_system_prompt` (module-level in `server/services/ai.py`), a thin
+wrapper that imports and calls `services/skill_prompt.py::build_skill_system_prompt`.
+It is called from `execute_agent`, `execute_chat_agent`, the RLM service
+(`services/rlm/service.py`) and the Temporal `agent.prepare_payload` activity
+(`services/temporal/agent_activities.py`):
 
 ```python
-# server/services/ai.py:273
+# server/services/ai.py
 def _build_skill_system_prompt(skill_data, log_prefix="[Agent]") -> tuple:
     from services.skill_prompt import build_skill_system_prompt
     return build_skill_system_prompt(skill_data, log_prefix)
@@ -463,15 +474,18 @@ full transcript, and nothing else about the request changes because a Context
 node is attached.
 
 `simpleMemory` ("Memory") is **not** conversation history: it is a `ToolNode`
-on `input-tools` that the agent calls explicitly (`remember` / `recall` /
-`update` / `forget`). The `input-memory` handle is retired — no agent declares
+on `input-tools` that the agent calls explicitly (its `operation` argument
+takes the `MemoryOperation` values in `server/nodes/tool/simple_memory/`:
+`remember` / `recall` / `list` / `get` / `update` / `forget`). The
+`input-memory` handle is retired — no agent declares
 it; `normalize_workflow_graph` rewrites legacy `simpleMemory -> input-memory`
 edges into a Context node plus an ordinary tool edge. The legacy markdown
 memory path (`memory_data`, `parse_memory_markdown`,
 `append_to_memory_markdown`, `trim_markdown_window`, the vector store) is
 reached only for `input-memory` graphs: `execute_agent` passes the tuple's
 first element as `context_data` to `_prepare_context` and sets `memory_data =
-None` whenever a Context runtime resolves (`ai.py:969-980`). Token tracking
+None` whenever a Context runtime resolves (the `context_runtime is not None`
+branch right after the `_prepare_context` call). Token tracking
 and compaction thresholds are in [memory_compaction.md](memory_compaction.md).
 
 ---

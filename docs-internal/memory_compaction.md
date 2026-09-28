@@ -408,13 +408,13 @@ usage = final_state["usage"]
 ### In-Process Persistence Point
 
 In `server/services/ai.py`, the in-process path calls the service only when a
-legacy memory session id was resolved earlier in the run (`session_id` is set
-from `memory_data["session_id"]` at `ai.py:1006`; it stays `None` once a
-Context runtime resolves, because `execute_agent` nulls `memory_data` in that
-case):
+legacy memory session id was resolved earlier in the run (`execute_agent`
+sets `session_id` from `memory_data["session_id"]` while building the initial
+messages; it stays `None` once a Context runtime resolves, because
+`execute_agent` nulls `memory_data` in that case):
 
 ```python
-# ai.py:1430-1446 — after native agent-loop execution, before memory save
+# execute_agent in ai.py — after native agent-loop execution, before memory save
 if session_id and ai_response:
     compaction_result = await self._track_token_usage(
         session_id=session_id,
@@ -442,7 +442,7 @@ if session_id and ai_response:
 | `server/core/database.py` | CRUD methods for metrics and events |
 | `server/core/config.py` | Environment variable configuration |
 | `server/core/container.py` | Dependency injection setup |
-| `server/services/settings/handlers.py` | WebSocket handlers `get_compaction_stats` (line 215) and `configure_compaction` (line 233); registered into `MESSAGE_HANDLERS` by `routers/websocket.py` |
+| `server/services/settings/handlers.py` | WebSocket handlers `get_compaction_stats` (`handle_get_compaction_stats`) and `configure_compaction` (`handle_configure_compaction`); registered into `MESSAGE_HANDLERS` by `routers/websocket.py` |
 | `server/main.py` | Service initialization on startup |
 
 ## Design Decisions

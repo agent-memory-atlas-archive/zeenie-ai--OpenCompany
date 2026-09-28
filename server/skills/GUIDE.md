@@ -24,6 +24,7 @@ server/skills/
 ├── coding_agent/             # Code execution skills
 │     python-skill, javascript-skill, monty-skill, file-read-skill,
 │     file-modify-skill, fs-search-skill
+├── employee/                 # Home Settings > Skills catalogue (see "The `employee` folder" below)
 ├── gcloud/                   # gcloud-skill (Google Cloud CLI)
 ├── github/                   # github-skill (gh CLI)
 ├── language_agent/           # speech-skill, translation-skill
@@ -128,7 +129,7 @@ The skill resolver (`SkillLoader._parse_skill_metadata`) takes each `allowed-too
 
 ## Optional Supporting Files
 
-Skills can include additional files that are loaded alongside the main instructions:
+Skills can include additional files that the model reads on demand after loading the skill:
 
 ```
 server/skills/assistant/my-new-skill/
@@ -142,8 +143,13 @@ server/skills/assistant/my-new-skill/
     └── examples.txt
 ```
 
-- **scripts/**: All files loaded as text, available to the AI as code context
-- **references/**: Only `.md`, `.txt`, `.json` files loaded as reference material
+- **scripts/**: Every top-level file is read as text and declared as a resource
+- **references/**: Only top-level `.md`, `.txt`, `.json` files are read and declared as resources
+
+Nothing here is executed or put into the prompt up front. `Skill.load` returns
+the instructions plus a manifest of these resources (`references/<file>`,
+`scripts/<file>`); the model then pulls their text through the same tool's
+`read_resource` / `search_resource` actions (`server/services/skill_runtime.py`).
 
 ## Creating a New Folder Group
 
@@ -186,9 +192,9 @@ Discover.
 
 1. **Master Skill Node**: Select a folder from the dropdown. Enable/disable individual skills with checkboxes. Edit instructions inline.
 
-2. **Individual Skill Nodes**: Each built-in skill also has a dedicated node in the Component Palette (e.g. WhatsApp Skill, Memory Skill). These connect directly to an AI Agent's skill handle.
+2. **No per-skill nodes**: Master Skill is the only skill node (`SKILL_NODE_TYPES` in `server/constants.py`); it connects to an agent's `input-skill` handle. There are no dedicated palette nodes per built-in skill.
 
-3. **At Execution Time**: When the AI Agent runs, enabled skills' instructions are injected into the system prompt, giving the AI context about its available capabilities.
+3. **At Execution Time**: Only personality skills (names ending in `-personality`) are injected eagerly: their full instructions are appended to the system prompt (`server/services/skill_prompt.py`). Every other enabled skill uses progressive disclosure through the bound `Skill` tool (`server/services/skill_runtime.py`): the tool description carries a bounded name/description catalogue, `load` returns a skill's instructions and resource manifest, and `read_resource` / `search_resource` read its declared files. The system prompt is not changed for these skills.
 
 ## Skill Content Lifecycle
 

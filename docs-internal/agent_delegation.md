@@ -66,7 +66,7 @@ Parent continues reasoning            Child runs independently
                                          |  Finds child's own memory/skills/tools/task
                                          |
                                     AIService.execute_agent() / execute_chat_agent()
-                                         |  Uses child's provider/model/system_message
+                                         |  Uses child's provider/model
                                          |  Uses child's memory (isolated session)
                                          |  Uses child's skills + tools
                                          |  system_message = delegated task,
@@ -93,7 +93,7 @@ for tool_info in tool_data:
 
 For agent node types, the method:
 
-1. Resolves the tool name via `_resolve_default_tool_name_description(node_type)` — a closure inside `_build_tool_from_node()` that reads the plugin class's `tool_name` ClassVar (each agent plugin declares `tool_name = "delegate_to_<x>"`). There is no central `DEFAULT_TOOL_NAMES` dict; the name comes from the plugin class via `services.node_registry.get_node_class`. The delegation branch is gated by `_get_tool_schema()`'s `_AGENT_DELEGATION_TYPES` tuple (`services/ai.py:2509-2528`) — **18 agents**: the 15 standard delegatable agents (`aiAgent`, `chatAgent`, `android_agent`, `coding_agent`, `web_agent`, `task_agent`, `social_agent`, `travel_agent`, `tool_agent`, `productivity_agent`, `payments_agent`, `consumer_agent`, `autonomous_agent`, `orchestrator_agent`, `ai_employee`), the two bypass-loop agents `rlm_agent` and `claude_code_agent`, and the bridged cloud agent `vertex_managed_agent`. (`AI_AGENT_TYPES` in `server/constants.py:32-53` mirrors this same 18-entry set; `codex_agent` is not currently in it. The `tool_name = f"delegate_to_{cls.type}"` default is stamped by `BaseNode.__init_subclass__`, `services/plugin/base.py:257`, so only `aiAgent`, `chatAgent` and `vertex_managed_agent` declare it explicitly.)
+1. Resolves the tool name via `_resolve_default_tool_name_description(node_type)` — a closure inside `_build_tool_from_node()` that reads the plugin class's `tool_name` ClassVar (each agent plugin declares `tool_name = "delegate_to_<x>"`). There is no central `DEFAULT_TOOL_NAMES` dict; the name comes from the plugin class via `services.node_registry.get_node_class`. The delegation branch is gated by `_get_tool_schema()`'s `_AGENT_DELEGATION_TYPES` tuple (local to that method in `services/ai.py`) — **18 agents**: the 15 standard delegatable agents (`aiAgent`, `chatAgent`, `android_agent`, `coding_agent`, `web_agent`, `task_agent`, `social_agent`, `travel_agent`, `tool_agent`, `productivity_agent`, `payments_agent`, `consumer_agent`, `autonomous_agent`, `orchestrator_agent`, `ai_employee`), the two bypass-loop agents `rlm_agent` and `claude_code_agent`, and the bridged cloud agent `vertex_managed_agent`. (the `AI_AGENT_TYPES` frozenset in `server/constants.py` mirrors this same 18-entry set; `codex_agent` is not currently in it. The `tool_name = f"delegate_to_{cls.type}"` default is stamped by `BaseNode.__init_subclass__` in `services/plugin/base.py`, so only `aiAgent`, `chatAgent` and `vertex_managed_agent` declare it explicitly.)
 
 2. Creates a `DelegateToAgentSchema` Pydantic model in `_get_tool_schema()` with two fields (`task` -> the child's mission directive / system message, `context` -> the child's input data / prompt):
    ```python
@@ -198,7 +198,7 @@ A `(parent_node_id, node_id, task_hash)` duplicate guard (`_active_delegations`)
 child_params = await database.get_node_parameters(node_id) or {}
 ```
 
-The child's stored parameters (provider, model, system message, etc.) come from the database -- whatever the user configured in the child node's parameter panel. They are NOT inherited from the parent.
+The child's stored parameters (provider, model, temperature, etc.) come from the database -- whatever the user configured in the child node's parameter panel. They are NOT inherited from the parent. The stored `system_message` and `prompt` are loaded here too, but step 4e overwrites both with the delegated `task` / `context`.
 
 **4c. Inject API key if missing:**
 ```python
@@ -327,8 +327,8 @@ The child now executes with:
 
 | Resource | Source |
 |----------|--------|
-| Prompt | Delegated task from parent's LLM |
-| System message | Child's own (from its DB params) |
+| Prompt | Delegated `context` from parent's LLM (falls back to `task`) |
+| System message | Delegated `task` from parent's LLM (replaces the child's stored system message) |
 | Provider / model | Child's own (from its DB params) |
 | API key | Injected from credential store based on child's provider |
 | Temperature / max tokens | Child's own (from its DB params) |
@@ -368,8 +368,8 @@ If the child has **no memory node connected**, it has no conversation history an
 
 | Parameter | How it arrives |
 |-----------|---------------|
-| `task` (string) | Parent's LLM generates it via `DelegateToAgentSchema` tool call |
-| `context` (optional string) | Parent's LLM generates it via `DelegateToAgentSchema` tool call |
+| `task` (string) | Parent's LLM generates it via `DelegateToAgentSchema` tool call; becomes the child's `system_message` |
+| `context` (optional string) | Parent's LLM generates it via `DelegateToAgentSchema` tool call; becomes the child's `prompt` (falls back to `task`) |
 | `workflow_id` | Injected by tool_executor callback from parent's execution context |
 | `nodes` / `edges` | Injected by tool_executor callback -- ALL workflow nodes and edges |
 | `ai_service` / `database` | Injected by tool_executor callback -- shared instances (by reference) |
@@ -380,7 +380,6 @@ If the child has **no memory node connected**, it has no conversation history an
 |-----------|--------|
 | `provider` | Child's DB params (e.g., `'openai'`, `'anthropic'`) |
 | `model` | Child's DB params (e.g., `'gpt-4o'`), or first stored model as fallback |
-| `systemMessage` | Child's DB params |
 | `temperature` | Child's DB params |
 | `max_tokens` / `maxTokens` | Child's DB params |
 | `thinkingEnabled` / `thinkingBudget` | Child's DB params |
@@ -391,7 +390,8 @@ If the child has **no memory node connected**, it has no conversation history an
 
 ### What the parent does NOT pass
 
-- Provider, model, temperature, max tokens, system message
+- Provider, model, temperature, max tokens
+- The parent's own system message (the child's stored one is replaced by the delegated `task` instead)
 - Memory or conversation history
 - Skills or skill instructions
 - Tool configurations
@@ -529,7 +529,7 @@ Every delegated agent broadcasts status at key phases via WebSocket:
 |-------|------|-------------|
 | `delegated_task` | Child starts executing | Child's node ID |
 | `initializing` | Creating LLM model | Child's node ID |
-| `loading_memory` | Parsing markdown history | Child's node ID |
+| `loading_memory` | Parsing markdown history (legacy `input-memory` graphs only; not emitted when a Context node resolves) | Child's node ID |
 | `building_tools` | Converting tool nodes to `AgentToolSpec` values | Child's node ID |
 | `invoking_llm` | Calling model | Child's node ID |
 | `executing_tool` | Running a tool called by child's LLM | Tool node ID |
