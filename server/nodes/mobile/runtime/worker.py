@@ -11,6 +11,12 @@ import urllib.request
 import uuid
 from io import BytesIO
 
+try:
+    from .errors import describe_error
+except ImportError:  # Executed by path in the isolated engine environment.
+    from errors import describe_error
+
+STAGE = "bootstrap"
 WIRE = sys.stdout
 
 
@@ -127,6 +133,8 @@ class Controller:
 
 
 async def main(config: dict) -> None:
+    global STAGE
+    emit("diagnostic", stage=STAGE)
     sys.stdout = sys.stderr  # upstream diagnostics can never corrupt the protocol
     os.environ.update(config.pop("model_env"))
     os.environ["MOBILE_USE_TELEMETRY_ENABLED"] = "false"
@@ -146,7 +154,11 @@ async def main(config: dict) -> None:
             if isinstance(step, int):
                 emit("progress", steps=step + 1)
 
+        def on_chat_model_start(self, serialized, messages, **kwargs):
+            emit("diagnostic", stage="model_request")
+
         def on_llm_end(self, response, **kwargs):
+            emit("diagnostic", stage="model_response")
             output = response.llm_output or {}
             usage = output.get("token_usage") or output.get("usage") or {}
             if usage:
@@ -181,31 +193,36 @@ async def main(config: dict) -> None:
         device_height=config["height"],
     )
     agent = Agent(config=agent_config)
-    await agent.init()
-    emit("ready")
+    task_failed = False
     try:
+        STAGE = "engine_initialization"
+        emit("diagnostic", stage=STAGE)
+        await agent.init()
+        emit("ready")
+        STAGE = "task_execution"
+        emit("diagnostic", stage=STAGE)
         result = await asyncio.wait_for(
             agent.run_task(request=TaskRequest(goal=config["prompt"], max_steps=config["max_steps"], record_trace=False)),
             config["timeout_s"],
         )
         emit("completed", result=result)
+    except BaseException:
+        task_failed = True
+        raise
     finally:
-        await agent.clean()
+        try:
+            await agent.clean()
+        except Exception as cleanup_error:
+            if not task_failed:
+                STAGE = "engine_cleanup"
+                raise
+            # Preserve the original provider/device failure if cleanup fails.
+            emit("diagnostic", stage="cleanup_failed", error_type=type(cleanup_error).__name__)
 
 
 if __name__ == "__main__":
     try:
         asyncio.run(main(json.loads(sys.stdin.readline())))
     except BaseException as exc:
-        # Provider errors may echo credentials; expose only an actionable category.
-        # Prompts/screenshots in upstream stderr are not persisted.
-        kind = type(exc).__name__
-        message = {
-            "AuthenticationError": "The selected model rejected its credentials.",
-            "RateLimitError": "The selected model is rate limited. Try again later.",
-            "TimeoutError": "The mobile task exceeded its active time budget.",
-            "GraphRecursionError": "The mobile task exhausted its step budget.",
-            "HTTPError": "Device control changed or the device connection failed.",
-        }.get(kind, f"Mobile engine failed ({kind}).")
-        emit("failed", error=message)
+        emit("failed", **describe_error(exc, STAGE))
         sys.exit(1)

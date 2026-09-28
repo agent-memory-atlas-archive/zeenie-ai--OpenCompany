@@ -140,6 +140,7 @@ async def test_takeover_stops_worker_then_resumes_with_fresh_capability(runtime,
     human = await runtime.takeover("browser")
     assert first.terminated.is_set()
     assert not runtime.capabilities
+
     assert human.owner == "viewer:browser"
     assert runtime.active["status"] == "awaiting_user"
     runtime.release("browser", resume=True)
@@ -268,3 +269,32 @@ async def test_stop_preserves_epoch_monotonicity_and_clears_viewer(runtime):
     assert not runtime.resume_event.is_set()
     next_lease = await runtime.control.claim("viewer:browser")
     assert next_lease.epoch > lease.epoch
+
+
+async def test_worker_failure_reaches_diagnostics_and_keeps_provider_code(runtime, monkeypatch):
+    import nodes.mobile._runtime as module
+    from unittest.mock import Mock
+    from nodes.mobile._control import MobileError
+
+    proc = FakeProcess()
+    proc.stdout.feed_data(b'{"type":"diagnostic","stage":"model_request"}\n')
+    proc.stdout.feed_data(b'{"type":"failed","error":"Model not found (HTTP 404)","code":"model_not_found","http_status":404,"error_type":"ClientError","stage":"task_execution"}\n')
+    proc.returncode = 1
+    proc.stdout.feed_eof()
+    proc.terminated.set()
+    async def spawn(*_args, **_kwargs):
+        return proc
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
+    log = Mock()
+    monkeypatch.setattr(module, "event", log)
+    args = run_args()
+    args.update(execution_id="execution-2", model={"provider": "google", "model": "selected-model"})
+    with pytest.raises(MobileError) as failure:
+        await runtime.run(**args)
+    assert failure.value.code == "model_not_found"
+    recorded = [call.kwargs for call in log.call_args_list if call.args == ("engine_failed",)]
+    assert len(recorded) == 1
+    assert recorded[0]["http_status"] == 404
+    assert recorded[0]["execution_id"] == "execution-2"
+    assert recorded[0]["node_id"] == "agent"
+    assert recorded[0]["model"] == "selected-model"

@@ -154,6 +154,7 @@ class MobileUseAgent(ActionNode):
                 workflow_id=ctx.workflow_id,
                 node_id=ctx.node_id,
                 run_id=task_identity(ctx),
+                execution_id=ctx.execution_id,
                 params=config,
                 model=model,
                 broker_url=await runtime.ensure_broker(),

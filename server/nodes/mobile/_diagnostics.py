@@ -14,7 +14,8 @@ _recent: deque = deque(maxlen=40)
 _logger = logging.Logger("opencompany.mobile.diagnostics")
 _logger.setLevel(logging.INFO)
 _logger.propagate = False
-_fields = {"operation", "duration_ms", "error_type", "code", "serial", "run_id", "node_id", "workflow_id", "state"}
+_fields = {"operation", "duration_ms", "error_type", "code", "serial", "run_id", "node_id", "workflow_id", "state",
+           "execution_id", "provider", "model", "stage", "http_status", "provider_status", "steps", "exit_code", "engine_trace"}
 
 
 def event(name: str, *, failed: bool = False, **fields) -> None:
@@ -25,6 +26,16 @@ def event(name: str, *, failed: bool = False, **fields) -> None:
         record["trace"] = [f"{Path(frame.filename).name}:{frame.lineno}:{frame.name}"
                            for frame in traceback.extract_tb(sys.exc_info()[2])[-12:]]
     _recent.append(record)
+    # Use the application's configured pipeline as well as the bounded mobile
+    # file. This feeds both the supervisor console and WebSocket Terminal.
+    try:
+        from core.logging import get_logger
+        logger = get_logger("nodes.mobile")
+        getattr(logger, "error" if failed else "info")(
+            "Android: " + name, **{k: v for k, v in record.items() if k not in {"event", "level", "at"}}
+        )
+    except Exception:
+        pass  # Logging cannot break device operations during startup/shutdown.
     try:
         path = mobile_root() / "mobile.log"
         if not _logger.handlers or _logger.handlers[0].baseFilename != str(path.resolve()):

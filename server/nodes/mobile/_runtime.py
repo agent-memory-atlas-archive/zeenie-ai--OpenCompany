@@ -481,12 +481,12 @@ class MobileRuntime:
             self.resume_event.set()
             await self._stop_worker()
 
-    async def run(self, *, principal: str, workflow_id: str, node_id: str, run_id: str, params: dict, model: dict, broker_url: str) -> dict:
+    async def run(self, *, principal: str, workflow_id: str, node_id: str, run_id: str, params: dict, model: dict, broker_url: str, execution_id: str | None = None) -> dict:
         if len(self.queue) >= 32:
             raise MobileError("queue_full", "The shared device queue is full")
         if any(q["run_id"] == run_id for q in self.queue) or (self.active and self.active["run_id"] == run_id):
             raise MobileError("duplicate_run", "This task is already admitted")
-        entry = {"run_id": run_id, "workflow_id": workflow_id, "node_id": node_id, "status": "queued"}
+        entry = {"run_id": run_id, "workflow_id": workflow_id, "node_id": node_id, "execution_id": execution_id, "status": "queued"}
         self.queue.append(entry)
         event("task_queued", run_id=run_id, workflow_id=workflow_id, node_id=node_id)
         try:
@@ -568,7 +568,7 @@ class MobileRuntime:
                                 raise MobileError("budget_exhausted", "Task exhausted its time or step budget")
                             continue
                         if not result.get("success"):
-                            raise MobileError("agent_failed", result.get("error", "Mobile agent failed"))
+                            raise MobileError(result.get("code", "agent_failed"), result.get("error", "Mobile agent failed"))
                         event("task_completed", run_id=run_id)
                         return {"response": result.get("result"), "outcome": "completed", "run_id": run_id, "artifacts": []}
                 finally:
@@ -611,19 +611,34 @@ class MobileRuntime:
         await proc.stdin.drain()
         proc.stdin.close()
 
+        scope = {"run_id": (self.active or {}).get("run_id"), "workflow_id": (self.active or {}).get("workflow_id"),
+                 "node_id": (self.active or {}).get("node_id"), "execution_id": (self.active or {}).get("execution_id"),
+                 "provider": config.get("provider"), "model": config.get("model")}
+        event("engine_starting", **scope)
+
         async def read():
             result = {"success": False, "error": "Mobile worker exited before completing the task"}
             while line := await proc.stdout.readline():
-                event = json.loads(line)
-                if event.get("type") == "completed":
-                    result = {"success": True, "result": event.get("result")}
-                elif event.get("type") == "failed":
-                    result = {"success": False, "error": event.get("error", "Worker failed")}
-                elif event.get("type") == "usage" and self.active:
-                    self.active["usage"] = event.get("usage")
-                elif event.get("type") == "progress" and self.active:
-                    self.active["attempt_steps"] = max(self.active.get("attempt_steps", 0), int(event.get("steps", 0)))
+                message = json.loads(line)
+                if message.get("type") == "completed":
+                    result = {"success": True, "result": message.get("result")}
+                elif message.get("type") == "failed":
+                    result = {"success": False, "error": message.get("error", "Worker failed"), "code": message.get("code", "engine_failed")}
+                    event("engine_failed", failed=True, **scope, engine_trace=message.get("trace", []),
+                          **{key: message.get(key) for key in ("error_type", "code", "stage", "http_status", "provider_status")})
+                elif message.get("type") == "diagnostic":
+                    event("engine_stage", **scope, stage=message.get("stage"), error_type=message.get("error_type"))
+                elif message.get("type") == "ready":
+                    event("engine_ready", **scope)
+                elif message.get("type") == "usage" and self.active:
+                    self.active["usage"] = message.get("usage")
+                elif message.get("type") == "progress" and self.active:
+                    steps = max(self.active.get("attempt_steps", 0), int(message.get("steps", 0)))
+                    if steps != self.active.get("attempt_steps", 0):
+                        event("task_progress", **scope, steps=steps)
+                    self.active["attempt_steps"] = steps
             await proc.wait()
+            event("engine_exited", failed=proc.returncode not in (0, None), **scope, exit_code=proc.returncode)
             return result
 
         return await asyncio.wait_for(read(), max(1, timeout) + 15)
