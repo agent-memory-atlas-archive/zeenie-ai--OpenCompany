@@ -75,7 +75,7 @@ class SpecializedAgentBase(ActionNode, abstract=True):
 | `credentials` | Sequence of `Credential` subclasses the node uses. More than one is supported — see [Multi-credential nodes](#multi-credential-nodes). |
 | `Params` | Pydantic `BaseModel` — user-facing parameters. Used for both UI rendering and AI tool schemas. |
 | `Output` | Pydantic `BaseModel` — runtime output shape. |
-| `usable_as_tool` | `ActionNode` flag — mints a ToolNode adapter for AI invocation. Combined with `component_kind != "model"`, makes the plugin visible to `agentBuilder.add_tool` (catalogue + rebind paths). **Side effect:** setting it auto-sets `hide_input_handle` / `hide_output_handle` to `True` unless the class declares them ([base.py:243-246](../server/services/plugin/base.py#L243)), so a dual-purpose node that must remain wirable on the canvas has to declare both `False` explicitly. |
+| `usable_as_tool` | `ActionNode` flag — mints a ToolNode adapter for AI invocation. Combined with `component_kind != "model"`, makes the plugin visible to `agentBuilder.add_tool` (catalogue + rebind paths). **Side effect:** setting it auto-sets `hide_input_handle` / `hide_output_handle` to `True` unless the class declares them (`BaseNode.__init_subclass__` in [base.py](../server/services/plugin/base.py), which does the same for `component_kind == "tool"`), so a dual-purpose node that must remain wirable on the canvas has to declare both `False` explicitly. |
 | `needs_canvas` | `ClassVar[bool]` — when `True`, the F4.B `AgentWorkflow` tool-dispatch forwards the parent workflow's `nodes`/`edges` into the per-tool activity payload. Today only `AgentBuilderNode` opts in (walks edges to resolve its calling agent). |
 | `task_queue` | Temporal worker pool. See `TaskQueue` constants. |
 | `retry_policy` | `RetryPolicy` dataclass (mirrors `temporalio.common.RetryPolicy`). |
@@ -287,8 +287,8 @@ plus a CloudEvents broadcast, so the Credentials modal lights up the right
 provider.
 
 **A multi-credential node MUST use imperative operations.** The declarative
-`routing=` path resolves `self.credentials[0]`
-([base.py:769](../server/services/plugin/base.py#L769)), so a routed op would
+`routing=` path resolves `self.credentials[0]` (`BaseNode._run_operation` in
+[base.py](../server/services/plugin/base.py)), so a routed op would
 authenticate every provider with the first key in the tuple regardless of what
 the user picked. `test_plugin_contract.py` only asserts the tuple is non-empty,
 so nothing else catches it. `nodes/speech/` has a test asserting neither of its
@@ -553,20 +553,24 @@ themselves** into those registries from their package `__init__.py`.
 
 ```
 server/nodes/telegram/
-├── __init__.py          # imports + register_* calls covering seven of the generic registries (no logic)
+├── __init__.py          # imports + one register_* call per concern (no logic)
 ├── _credentials.py      # TelegramCredential (ApiKeyCredential)
 ├── _service.py          # TelegramService singleton (bot lifecycle)
 ├── _handlers.py         # WebSocket handlers + WS_HANDLERS dict
 ├── _filters.py          # build_telegram_filter (event_waiter filter)
 ├── _refresh.py          # refresh_telegram_status + precheck_telegram_trigger
 ├── _events.py           # typed CloudEvents factory + broadcast_telegram_status
-├── telegram_send.py     # ActionNode + AI tool
-└── telegram_receive.py  # TriggerNode
+├── _send.py             # perform_send / resolve_chat_id, shared by the node and the WS send command
+├── telegram_send.py     # ActionNode (workflow-only; not usable_as_tool)
+├── telegram_receive.py  # TriggerNode
+├── icon.svg             # node icon for every node type in the folder
+├── telegram.svg         # credential brand icon (Credential.get_icon_path)
+└── meta.json            # palette colour
 ```
 
 Underscore-prefixed files are package-private; the `nodes` walker
-skips them. The two non-underscore files are the plugin classes (one
-per node type) — same pattern as every other folder.
+skips them. The two non-underscore `.py` files are the plugin classes
+(one per node type) — same pattern as every other folder.
 
 ### Cross-cutting registries (19 at time of writing, hand-curated below; `grep -rn '^def register_' server/services server/core` also lists the node / group / provider / session-pool registration internals) — use only what your plugin needs
 
@@ -603,9 +607,11 @@ hook" rule.
 ### Telegram `__init__.py` (canonical wiring)
 
 ```python
-# server/nodes/telegram/__init__.py
+# server/nodes/telegram/__init__.py (abridged: docstring, re-exports and __all__ omitted)
+from services.deployment.canary_registry import register_canary_trigger_type
 from services.event_waiter import register_filter_builder, register_trigger_precheck
 from services.node_output_schemas import register_output_schema
+from services.plugin.shutdown_hooks import register_shutdown_hook
 from services.status_broadcaster import register_service_refresh
 from services.ws_handler_registry import register_ws_handlers
 
@@ -626,6 +632,17 @@ register_trigger_precheck("telegramReceive", precheck_telegram_trigger)
 register_service_refresh(refresh_telegram_status)
 register_output_schema("telegramReceive", TelegramReceiveOutput)
 register_output_schema("telegramSend", TelegramSendOutput)
+register_canary_trigger_type(TelegramReceiveNode.type, "com.opencompany.telegram.message.received")
+
+
+async def _shutdown_telegram() -> None:
+    # Release the single getUpdates slot before the process exits.
+    service = get_telegram_service()
+    if service.connected:
+        await service.disconnect()
+
+
+register_shutdown_hook("telegram", _shutdown_telegram)
 ```
 
 That's the entire wiring. Adding telegram-style cross-cutting code to

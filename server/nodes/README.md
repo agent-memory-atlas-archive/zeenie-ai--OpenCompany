@@ -116,12 +116,16 @@ model/       — LLM chat models (openai, anthropic, gemini, …, and openai_com
                a user-named endpoint); also owns the LLM provider dropdown loaders
 android/     — Android device services
 google/      — Google Workspace (gmail / calendar / drive / sheets / …)
+microsoft/   — Microsoft Graph (Outlook mail / calendar / mail receive; OAuth2, Work/School accounts)
 twitter/     — Twitter/X (send / search / user / receive)
 telegram/    — Telegram bot (send / receive)
 discord/     — Discord bot (send / action / receive / interaction).
                Multi-account: _accounts.py maps an account id onto the
                session_id credential scope; nothing else knows about it.
 whatsapp/    — WhatsApp (send / db / receive)
+whatsapp_business/ — Official Meta WhatsApp Business Cloud API (send / media / receive / status).
+               Distinct from whatsapp/ (personal account over the Go bridge): no shared
+               node type, credential or palette group.
 social/      — Unified social (send / receive). Names no platform: each
                plugin registers a _social.py adapter and owns the mapping
                onto its own parameter shape.
@@ -141,10 +145,13 @@ chat/        — chatSend / chatHistory
 text/        — textGenerator / fileHandler
 scheduler/   — timer / cron_scheduler
 trigger/     — Generic triggers (webhook / task / chat)
-tool/        — calculatorTool / currentTimeTool / writeTodos / taskManager
+tool/        — calculatorTool / currentTimeTool / writeTodos / taskManager / simpleMemory
+               ("Memory") / agentBuilder / canvas / dataSource
+vision/      — visionAnalyze (vision-delegate AI tool; palette group "tool")
+context/     — context (RFC-0002 conversation-store opt-in + viewing panel; palette group "memory")
 utility/     — console / httpRequest / webhookResponse / processManager / team_monitor
 workflow/    — start
-skill/       — simpleMemory / masterSkill
+skill/       — masterSkill (skill/simple_memory is only an import shim for tool/simple_memory)
 browser/     — browser (installed Chrome/Edge/Chromium + browser-use CLI; Chrome for Testing opt-in, profiles, live view and user takeover)
 stripe/      — Stripe (CLI passthrough action + signed-webhook trigger)
 vercel/      — Vercel (CLI deploy / inspect / list / custom passthrough)
@@ -276,15 +283,19 @@ similar plugin.
 
 ```
 server/nodes/telegram/
-├── __init__.py          # imports + register_* calls covering seven registries (zero logic)
+├── __init__.py          # imports + one register_* call per concern (zero logic)
 ├── _credentials.py      # TelegramCredential subclass
 ├── _service.py          # singleton bot lifecycle (connect / send / poll)
 ├── _handlers.py         # WS_HANDLERS dict (telegram_connect, …)
 ├── _filters.py          # build_telegram_filter (event_waiter filter)
 ├── _refresh.py          # WS-connect refresh + trigger precheck
 ├── _events.py           # typed CloudEvents factory + broadcast_telegram_status
-├── telegram_send.py     # ActionNode + AI tool
-└── telegram_receive.py  # TriggerNode
+├── _send.py             # perform_send / resolve_chat_id, shared by the node and the WS send command
+├── telegram_send.py     # ActionNode (workflow-only; not usable_as_tool)
+├── telegram_receive.py  # TriggerNode
+├── icon.svg             # node icon for every node type in the folder
+├── telegram.svg         # credential brand icon (Credential.get_icon_path)
+└── meta.json            # palette colour
 ```
 
 ### Variant: one node, many vendors
