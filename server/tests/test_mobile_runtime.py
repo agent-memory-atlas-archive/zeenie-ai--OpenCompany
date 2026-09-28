@@ -8,6 +8,58 @@ import pytest
 from nodes.mobile._runtime import MobileRuntime
 
 
+async def test_driver_initialization_serializes_concurrent_command(monkeypatch, tmp_path):
+    import nodes.mobile._runtime as module
+
+    value = MobileRuntime()
+    value.serial = "emulator-test"
+    proc = FakeProcess()
+    waiting = asyncio.Event()
+    original_readline = proc.stdout.readline
+
+    async def readline():
+        waiting.set()
+        return await original_readline()
+
+    async def spawn(*_args, **_kwargs):
+        return proc
+
+    monkeypatch.setattr(module, "mobile_root", lambda: tmp_path)
+    monkeypatch.setattr(value, "driver_env", lambda: {})
+    monkeypatch.setattr(proc.stdout, "readline", readline)
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
+    starting = asyncio.create_task(value._start_driver())
+    await waiting.wait()
+    command = asyncio.create_task(value.driver_call("geometry"))
+    await asyncio.sleep(0)
+    assert not command.done()
+    assert b'"operation"' not in proc.stdin.data
+    proc.stdout.feed_data(b'{"success":true,"result":{"width":1080,"height":2400}}\n')
+    await starting
+    proc.stdout.feed_data(b'{"success":true,"result":{"width":2400,"height":1080}}\n')
+    assert await command == {"width": 2400, "height": 1080}
+    assert not proc.terminated.is_set()
+
+
+async def test_status_during_startup_does_not_query_driver(monkeypatch, tmp_path):
+    from unittest.mock import AsyncMock
+    import nodes.mobile._runtime as module
+    from nodes.mobile._router import status
+
+    value = MobileRuntime()
+    value.serial = "emulator-test"
+    value.process = FakeProcess()
+    monkeypatch.setattr(module, "mobile_root", lambda: tmp_path)
+    monkeypatch.setattr(module, "get_runtime", lambda: value)
+    query = AsyncMock()
+    monkeypatch.setattr(value, "driver_call", query)
+    async with value.lifecycle_lock:
+        result = await status(principal="owner")
+    assert result["starting"] is True
+    assert result["running"] is False
+    query.assert_not_awaited()
+
+
 class FakeStdin:
     def __init__(self):
         self.data = b""

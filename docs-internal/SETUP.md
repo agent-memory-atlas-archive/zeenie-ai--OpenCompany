@@ -2,6 +2,8 @@
 
 ## Project Structure
 
+For the optional local Android emulator, see [Mobile Workspace setup](../docs/mobile-workspace.md). It requires Windows x64, working virtualization, one backend process with embedded workers, and explicit SDK license acceptance. Add **Mobile Agent** or the **Android** tool, save the workflow, then open **Workspace → Mobile**. After backend/plugin changes, restart the backend and refresh the frontend. See the guide's runtime-file notes before moving or deleting an existing phone installation.
+
 ```
 OpenCompany/
 ├── client/                 # React frontend (Vite dev server on VITE_CLIENT_PORT, proxying the backend; production build served by uvicorn on PYTHON_BACKEND_PORT)

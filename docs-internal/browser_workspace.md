@@ -11,14 +11,27 @@ installed Chrome dynamically and keeps it selected even when another browser
 has a newer version; no machine-specific executable path is needed.
 
 Normal mode and Dev mode share `components/workspace/WorkspaceTabs.tsx`
-(Browser, Canvas, Android) and `components/browser/BrowserWorkspace.tsx`.
+(Browser, Canvas, Mobile) and `components/browser/BrowserWorkspace.tsx`.
 The Dev toolbar's Workspace button opens the existing resizable dock;
 Canvas boards, push notifications and temporary file previews still use
 `canvasDockStore`. Its selected tab is persisted. A Canvas push does not
 switch an already-open Browser tab; explicitly opening a file preview does
-switch to Canvas. Android currently has an explanatory panel, not a live mirror.
+switch to Canvas. Mobile renders the local Android phone through
+`MobileWorkspace`; see [Mobile Workspace](../docs/mobile-workspace.md).
 The Browser node's parameter panel (`MiddleSection`, `isBrowserPanel`) shows
 the same viewer above the node's settings.
+
+## Full view
+
+Click **Full view** above the browser to fill the screen. Navigation, address,
+control and exit buttons remain outside the page image. **Exit full view** or
+**Esc** returns to the previous layout. The same mounted canvas and stream stay
+active, so entering or leaving does not reopen the session. The shared
+`components/workspace/FullView.tsx` boundary handles native fullscreen changes
+and restores focus to its button on exit. Mobile uses the same boundary, hiding
+its task form and technical panels while enlarged. Full view does not grant
+manual control; use the existing control button separately. If fullscreen is
+unavailable, the UI explains how to use the Workspace expand button instead.
 
 ## Discovery and identity
 

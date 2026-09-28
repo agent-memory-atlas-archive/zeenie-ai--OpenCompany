@@ -1,3 +1,4 @@
+import { FullView } from '../workspace/FullView';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { PointerEvent } from 'react';
 import { ArrowLeft, Home, Play, RotateCw, Smartphone, Square } from 'lucide-react';
@@ -16,7 +17,7 @@ export default function MobileWorkspace({ workflowId, nodes, visible = true }: {
   const [selected, setSelected] = useState('');
   const nodeId = nodes.some((node) => node.node_id === selected) ? selected : nodes[0]?.node_id;
   if (!workflowId || workflowId === 'new') return <Empty message="Save this workflow before opening its mobile workspace." />;
-  if (!nodeId) return <Empty message="Add a Mobile Agent node to this workflow to use its phone here." />;
+  if (!nodeId) return <Empty message="Add a Mobile Agent or Android tool to this workflow to use its phone here." />;
   return <div className="flex min-h-0 flex-1 flex-col gap-2">
     {nodes.length > 1 && <select className={fieldClass} aria-label="Mobile agent" value={nodeId} onChange={(event) => setSelected(event.target.value)}>
       {nodes.map((node) => <option key={node.node_id} value={node.node_id}>{node.label}</option>)}
@@ -35,6 +36,7 @@ function MobileSession({ workflowId, nodeId, visible }: { workflowId: string; no
   const [status, setStatus] = useState<MobileStatus | null>(null);
   const [doctor, setDoctor] = useState<Doctor | null>(null);
   const [error, setError] = useState('');
+  const [connectionError, setConnectionError] = useState('');
   const [busy, setBusy] = useState('');
   const [accepted, setAccepted] = useState(false);
   const [prompt, setPrompt] = useState('');
@@ -63,7 +65,7 @@ function MobileSession({ workflowId, nodeId, visible }: { workflowId: string; no
   const running = status?.running === true;
   const refresh = useCallback(async (signal?: AbortSignal) => {
     const next = await mobileRequest<MobileStatus>(`${path}/status`, undefined, signal);
-    if (active.current) setStatus(next);
+    if (active.current) { setStatus(next); setConnectionError(''); }
   }, [path]);
 
   useEffect(() => {
@@ -78,7 +80,7 @@ function MobileSession({ workflowId, nodeId, visible }: { workflowId: string; no
     let timer: ReturnType<typeof setTimeout>;
     const poll = async () => {
       try { await refresh(controller.signal); }
-      catch (cause) { if (!controller.signal.aborted && active.current) setError(describe(cause instanceof Error ? cause.message : cause)); }
+      catch { if (!controller.signal.aborted && active.current) setConnectionError('Connection to the phone was lost. Retrying automatically…'); }
       if (!controller.signal.aborted) timer = setTimeout(() => void poll(), 2000);
     };
     void poll();
@@ -179,45 +181,47 @@ function MobileSession({ workflowId, nodeId, visible }: { workflowId: string; no
   });
   const installed = doctor?.adb && doctor?.emulator && doctor?.image && doctor?.engine && doctor?.video;
   const setupActive = typeof status?.setup === 'string' && status.setup.startsWith('installing_');
-  return <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
+  const setupFailed = status?.setup === 'error' || status?.setup === 'interrupted' || !!status?.setup_error;
+  return <FullView label="Phone"><div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto group-data-[full-view=true]/fullview:overflow-hidden">
     <div className="flex flex-wrap items-center gap-2">
       <Smartphone aria-hidden className="size-4" />
-      <span className="flex-1 text-sm font-medium">Shared phone</span>
-      <span role="status" className="text-xs text-fg-muted">{busy ? `${busy}…` : running ? status.control_state : status ? 'Stopped' : 'Connecting…'}</span>
+      <span className="flex-1 text-sm font-medium">Android phone</span>
+      <span role="status" className="text-xs text-fg-muted">{setupActive ? 'Setting up' : status?.starting ? 'Starting phone…' : busy ? `${busy}…` : running ? (held ? 'You’re using the phone' : status.active?.status === 'running' ? 'AI is working' : status.control_state === 'recovering' ? 'Reconnecting…' : 'Ready') : status ? 'Phone is off' : 'Connecting…'}</span>
       <Button size="icon-sm" variant="ghost" aria-label="Refresh mobile status" onClick={() => void perform('refresh', async () => { setDoctor(await mobileRequest(`${path}/doctor`)); })}><RotateCw /></Button>
     </div>
-    {error && <p role="alert" className="m-0 rounded border border-destructive/30 bg-destructive/10 p-2 text-sm text-destructive">{error}</p>}
-    {status?.setup_error && <p role="alert" className="m-0 text-sm text-destructive">{status.setup_error}</p>}
+    {connectionError && <p role="status" className="m-0 text-sm text-fg-muted">{connectionError}</p>}
+    {error && <p role="alert" className="m-0 rounded border border-destructive/30 bg-destructive/10 p-2 text-sm text-destructive"><span>{error}</span><button type="button" aria-label="Dismiss message" className="ml-3 underline" onClick={() => setError('')}>Dismiss</button></p>}
+    {setupFailed && <p role="alert" className="m-0 text-sm text-destructive">{status?.setup_error || (status?.setup === 'interrupted' ? 'Setup was interrupted. Retry to finish preparing the phone.' : 'Setup failed. Review the details below and retry.')}</p>}
     {doctor?.supported === false && <p className="m-0 text-sm text-fg-muted">This host cannot run the mobile runtime. Android setup currently requires Windows x64 with virtualization available.</p>}
-    {doctor && !installed && !running && <section aria-label="Mobile setup" className="space-y-2 rounded border border-border-default bg-bg-panel p-3">
-      <h3 className="m-0 text-sm font-semibold">Set up your shared Android phone</h3>
-      <p className="m-0 text-xs text-fg-muted">Download the Android tools, emulator image and mobile agent runtime. Apps and sign-ins stay on this phone between tasks.</p>
-      <ul className="m-0 list-none space-y-1 p-0 text-xs text-fg-muted">{(['adb', 'emulator', 'image', 'engine', 'video'] as const).map((key) => <li key={key}>{key === 'adb' ? 'Android tools' : key === 'engine' ? 'Agent runtime' : key === 'video' ? 'Live video' : key === 'image' ? 'Android image' : 'Emulator'}: {doctor[key] ? 'Ready' : 'Needed'}</li>)}</ul>
+    {((doctor && !installed && !running) || setupActive || setupFailed) && <section aria-label="Mobile setup" className="space-y-2 rounded border border-border-default bg-bg-panel p-3">
+      <h3 className="m-0 text-sm font-semibold">Set up your Android phone</h3>
+      <p className="m-0 text-xs text-fg-muted">One-time setup downloads everything your phone needs. This may take several minutes. Your apps and sign-ins are saved.</p>
+      <details><summary className="cursor-pointer text-xs text-fg-muted">Download details</summary><ul className="m-0 list-none space-y-1 p-0 text-xs text-fg-muted">{(['adb', 'emulator', 'image', 'engine', 'video'] as const).map((key) => <li key={key}>{key === 'adb' ? 'Android tools' : key === 'engine' ? 'Agent runtime' : key === 'video' ? 'Live video' : key === 'image' ? 'Android image' : 'Emulator'}: {doctor?.[key] ? 'Ready' : 'Needed'}</li>)}</ul></details>
       <label className="flex items-start gap-2 text-xs"><input type="checkbox" checked={accepted} onChange={(event) => setAccepted(event.target.checked)} aria-label="Accept Android SDK license terms" />
         <span>I accept the <a className="underline" href="https://developer.android.com/studio/terms" target="_blank" rel="noreferrer">Android SDK license terms</a> and want to download the required components.</span></label>
-      <Button size="sm" disabled={!accepted || !!busy || setupActive || doctor.supported === false} onClick={() => void perform('setup', async () => {
+      <Button size="sm" disabled={!accepted || !!busy || setupActive || doctor?.supported === false} onClick={() => void perform('setup', async () => {
         await mobileRequest(`${path}/setup`, { licenses_accepted: true }); setDoctor(await mobileRequest(`${path}/doctor`));
-      })}>Set up phone</Button>
-      {setupActive && <p role="status" className="m-0 break-words text-xs text-fg-muted">{status?.setup === 'installing_engine' ? 'Installing the agent runtime…' : 'Installing Android tools and preparing your phone…'}</p>}
+      })}>{setupFailed ? 'Retry setup' : 'Set up phone'}</Button>
+      {(setupActive || setupFailed || status?.setup_progress) && <SetupProgress status={status} ticking={visible && pageVisible} />}
     </section>}
-    {doctor?.acceleration && <details className="rounded border border-border-default px-3 py-2 text-xs text-fg-muted">
-      <summary className="cursor-pointer font-medium">Host readiness: hardware acceleration</summary>
-      <p className="mb-0 mt-2 whitespace-pre-wrap break-words">{doctor.acceleration}</p>
-      <p className="mb-0 mt-2">If acceleration is unavailable on Windows, enable virtualization in your computer�s firmware and Windows Hypervisor Platform in Windows Features, then restart Windows and refresh mobile status.</p>
+    {status?.setup === 'ready' && installed && !setupFailed && status.setup_progress && <details aria-label="Completed mobile setup" className="group-data-[full-view=true]/fullview:hidden rounded border border-border-default p-3 text-xs text-fg-muted"><summary className="cursor-pointer">Setup finished · View details</summary>
+      <SetupProgress status={status} ticking={visible && pageVisible} />
     </details>}
+    {!running && !status?.starting && installed && <p className="m-0 text-sm text-fg-muted">Your phone is ready to turn on. Click Start phone to use it.</p>}
     <div className="flex flex-wrap gap-2">
-      <Button size="sm" variant="outline" disabled={!!busy || setupActive || !status || doctor?.supported === false || (!running && !installed)} onClick={() => void perform(running ? 'stopping' : 'starting', async () => { await mobileRequest(`${path}/${running ? 'stop' : 'start'}`, {}); setEpoch(null); })}>
+      <Button size="sm" variant="outline" disabled={!!busy || setupActive || status?.starting || !status || doctor?.supported === false || (!running && !installed)} onClick={() => void perform(running ? 'stopping' : 'starting', async () => { await mobileRequest(`${path}/${running ? 'stop' : 'start'}`, {}); setEpoch(null); })}>
         {running ? <Square className="size-3.5" /> : <Play className="size-3.5" />}{running ? 'Stop phone' : 'Start phone'}
       </Button>
       {running && (held ? <>
-        <Button size="sm" onClick={() => void perform('releasing', async () => { await mobileRequest(`${path}/release`, { viewer_id: viewerId, epoch, resume: true }); leaseEpoch.current = null; setEpoch(null); })} disabled={!!busy}>Hand back & resume</Button>
-        <Button size="sm" variant="outline" onClick={() => void perform('releasing', async () => { await mobileRequest(`${path}/release`, { viewer_id: viewerId, epoch, resume: false }); leaseEpoch.current = null; setEpoch(null); })} disabled={!!busy}>Release control</Button>
+        <Button size="sm" onClick={() => void perform('releasing', async () => { await mobileRequest(`${path}/release`, { viewer_id: viewerId, epoch, resume: true }); leaseEpoch.current = null; setEpoch(null); })} disabled={!!busy}>Let AI continue</Button>
+        <Button size="sm" variant="outline" onClick={() => void perform('releasing', async () => { await mobileRequest(`${path}/release`, { viewer_id: viewerId, epoch, resume: false }); leaseEpoch.current = null; setEpoch(null); })} disabled={!!busy}>Finish using phone</Button>
       </> : <Button size="sm" variant="outline" disabled={!!busy} onClick={() => void perform('taking control', async () => { const claim = await mobileRequest<{ epoch: number; owner: string }>(`${path}/takeover`, { viewer_id: viewerId });
           if (!active.current || !viewActive.current) { await mobileRequest(`${path}/release`, { viewer_id: viewerId, epoch: claim.epoch, resume: false }); return; }
-          leaseEpoch.current = claim.epoch; setEpoch(claim.epoch); setLeaseOwner(claim.owner); })}>Take control</Button>)}
+          leaseEpoch.current = claim.epoch; setEpoch(claim.epoch); setLeaseOwner(claim.owner); })}>Use phone</Button>)}
     </div>
     {running && <>
-      <div ref={surface} className={`relative flex min-h-64 flex-1 touch-none items-center justify-center overflow-hidden rounded border border-border-default bg-bg-canvas ${held ? 'cursor-crosshair' : ''}`} onPointerDown={down} onPointerUp={up} onPointerCancel={() => { pointer.current = null; }} aria-label={held ? 'Phone screen: tap or drag to interact' : 'Phone screen, view only'}>
+      <p className="m-0 text-xs text-fg-muted">{held ? 'Tap or swipe the screen, just like a phone. Finish when you want the AI to use it.' : 'Watch your phone here. Choose Use phone to tap and type yourself.'}</p>
+      <div ref={surface} className={`relative flex h-[min(60vh,680px)] min-h-80 shrink-0 group-data-[full-view=true]/fullview:h-auto group-data-[full-view=true]/fullview:min-h-0 group-data-[full-view=true]/fullview:flex-1 touch-none items-center justify-center overflow-hidden rounded border border-border-default bg-slate-950 ${held ? 'cursor-crosshair' : ''}`} onPointerDown={down} onPointerUp={up} onPointerCancel={() => { pointer.current = null; }} aria-label={held ? 'Phone screen: tap or drag to interact' : 'Phone screen, view only'}>
         <canvas ref={canvas} className="absolute h-full w-full object-contain" />
         {!live && !videoError && <p className="pointer-events-none z-10 text-sm text-fg-muted">Connecting live view…</p>}
       </div>
@@ -228,7 +232,7 @@ function MobileSession({ workflowId, nodeId, visible }: { workflowId: string; no
         <input className={`${fieldClass} flex-1`} aria-label="Text to type on phone" value={text} onChange={(event) => setText(event.target.value)} placeholder="Type on phone" />
         <Button size="sm" variant="outline" disabled={!text || !!busy} onClick={() => void perform('input', async () => { await input('text', { text }); setText(''); })}>Type</Button>
       </div>}
-      {held && <label className="flex items-center gap-2 text-xs text-fg-muted">Install APK (up to 256 MB)
+      {held && <label className="flex items-center gap-2 text-xs text-fg-muted">Install an app file (.apk, up to 256 MB)
         <input type="file" accept=".apk" aria-label="Install APK" disabled={!!busy} className="min-w-0 flex-1 text-xs" onChange={(event) => {
           const file = event.target.files?.[0]; event.target.value = '';
           if (!file) return;
@@ -241,16 +245,56 @@ function MobileSession({ workflowId, nodeId, visible }: { workflowId: string; no
         }} />
       </label>}
     </>}
-    <form className="mt-auto flex shrink-0 flex-col gap-2 border-t border-border-default pt-3" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
-      <label htmlFor={`task-${nodeId}`} className="text-sm font-medium">Give this mobile agent a task</label>
-      <textarea id={`task-${nodeId}`} className={`${fieldClass} resize-y`} rows={2} maxLength={12000} value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="What should it do on the phone?" />
-      <p className="m-0 text-xs text-fg-muted">Runs in this workflow. The phone is shared; tasks wait while another employee or person controls it.</p>
-      <div className="flex items-center gap-2"><Button size="sm" type="submit" disabled={!prompt.trim() || !!busy || hasTask}>Run task</Button>
+    <form className="mt-auto flex shrink-0 flex-col group-data-[full-view=true]/fullview:hidden gap-2 border-t border-border-default pt-3" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
+      <label htmlFor={`task-${nodeId}`} className="text-sm font-medium">Ask AI to use the phone</label>
+      <textarea id={`task-${nodeId}`} className={`${fieldClass} resize-y`} rows={2} maxLength={12000} value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="For example: Open Settings and turn on dark mode" />
+      <p className="m-0 text-xs text-fg-muted">Tell the AI what you want done. Only one person or AI can use this phone at a time.</p>
+      <div className="flex items-center gap-2"><Button size="sm" type="submit" disabled={!running || !prompt.trim() || !!busy || hasTask}>Run task</Button>
         {hasTask && <Button size="sm" type="button" variant="outline" disabled={!!busy} onClick={() => void perform('cancelling', async () => { setTask(await mobileRequest(`${path}/tasks/${encodeURIComponent(submission!)}/cancel`, {})); })}>Cancel task</Button>}
-        {task && <span role="status" className="text-xs text-fg-muted">{taskState(task) || 'Submitted'}</span>}
+        {task && <span role="status" className="text-xs text-fg-muted">{({queued: 'Waiting for the phone', running: 'Working on your request', completed: 'Done', failed: 'Could not finish', cancelled: 'Cancelled', awaiting_user: 'Waiting for you'})[taskState(task)] || 'Request received'}</span>}
       </div>
       {task?.error != null && <p role="alert" className="m-0 break-words text-sm text-destructive">{describe(task.error)}</p>}
       {task?.result != null && <pre className="m-0 max-h-48 overflow-auto whitespace-pre-wrap rounded bg-bg-panel p-2 text-xs">{describe(task.result)}</pre>}
     </form>
+    {doctor?.acceleration && <details className="group-data-[full-view=true]/fullview:hidden rounded border border-border-default px-3 py-2 text-xs text-fg-muted">
+      <summary className="cursor-pointer font-medium">Help &amp; diagnostics</summary>
+      <p className="mb-0 mt-2">If the phone will not start, share the details below when asking for help.</p><pre className="mb-0 mt-2 whitespace-pre-wrap break-words">{doctor.acceleration}</pre>
+      <p className="mb-0 mt-2">If acceleration is unavailable on Windows, enable virtualization in your computer’s firmware and Windows Hypervisor Platform in Windows Features, then restart Windows and refresh mobile status.</p>
+      {!!status?.diagnostics?.length && <details className="mt-2"><summary className="cursor-pointer">Recent phone activity</summary><pre className="max-h-40 overflow-auto whitespace-pre-wrap">{status.diagnostics.map((item) => `${item.at} ${item.level} ${item.event}${item.operation ? ` (${item.operation})` : ''}${item.error_type ? `: ${item.error_type}` : ''}${item.code ? ` [${item.code}]` : ''}`).join('\n')}</pre></details>}
+    </details>}
+  </div></FullView>;
+}
+
+function SetupProgress({ status, ticking }: { status: MobileStatus | null; ticking: boolean }) {
+  const [now, setNow] = useState(() => Date.now() / 1000);
+  useEffect(() => {
+    if (!ticking) return;
+    setNow(Date.now() / 1000);
+    const timer = setInterval(() => setNow(Date.now() / 1000), 1000);
+    return () => clearInterval(timer);
+  }, [ticking]);
+  const progress = status?.setup_progress;
+  const phase = status?.setup === 'installing_engine' ? 'Installing agent runtime'
+    : status?.setup === 'installing_device' ? 'Preparing Android phone'
+    : status?.setup === 'interrupted' ? 'Setup interrupted'
+    : status?.setup === 'error' ? 'Setup failed' : status?.setup === 'ready' ? 'Setup complete' : 'Setup progress';
+  const duration = (seconds: number) => {
+    const value = Math.max(0, Math.floor(seconds));
+    return value < 60 ? `${value}s` : `${Math.floor(value / 60)}m ${value % 60}s`;
+  };
+  const events = progress?.events?.slice(-20) ?? [];
+  return <div className="space-y-1 text-xs text-fg-muted">
+    <p role="status" className="m-0 font-medium">{phase}</p>
+    {progress?.message && <p className="m-0 break-words">{progress.message}</p>}
+    <p className="m-0">
+      {progress?.started_at != null && <span>Elapsed: {duration((progress.finished_at ?? now) - progress.started_at)}</span>}
+      {progress?.started_at != null && progress?.updated_at != null && ' · '}
+      {progress?.updated_at != null && <span>Last update: {duration(now - progress.updated_at)} ago</span>}
+    </p>
+    {events.length > 0 && <details><summary className="cursor-pointer">Recent setup activity</summary>
+      <ol className="my-2 max-h-40 list-none space-y-1 overflow-y-auto p-0">
+        {events.map((event, index) => <li key={`${event.at}:${index}`} className="break-words"><time>{new Date(event.at * 1000).toLocaleTimeString()}</time> — {event.message}</li>)}
+      </ol>
+    </details>}
   </div>;
 }

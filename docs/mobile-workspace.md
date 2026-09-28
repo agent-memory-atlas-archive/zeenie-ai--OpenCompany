@@ -1,6 +1,6 @@
 # Mobile Workspace
 
-Mobile Workspace runs the open-source **mobile-use** agent against one persistent, local Android emulator. The Mobile Agent is a plugin node with a Workspace capability; its task execution uses the saved workflow, node configuration, and authenticated principal. The emulator belongs to the OpenCompany installation and is shared across Mobile nodes and workflows. Tasks queue for this device.
+Mobile Workspace runs the open-source **mobile-use** agent against one persistent, local Android emulator. Mobile Agent and the Android tool are plugin nodes with a Workspace capability; its task execution uses the saved workflow, node configuration, and authenticated principal. The emulator belongs to the OpenCompany installation and is shared across Mobile nodes and workflows. Tasks queue for this device.
 
 ## Supported deployment
 
@@ -13,15 +13,72 @@ The runtime singleton and its leases are process-local. Run one backend process 
 ## Setup and use
 
 1. Install `uv` for the optional Python environment and enable the host virtualization support required by Android Emulator. Setup downloads pinned Android command-line tools and a private Temurin Java runtime when needed. An existing SDK can be selected with `ANDROID_SDK_ROOT` or `ANDROID_HOME`; the standard Windows Android SDK location is also detected.
-2. Add a Mobile Agent node, save the workflow, and open its Mobile Workspace. The setup diagnostics inspect SDK tools, emulator acceleration, the system image, engine, and video server.
+2. Add **Mobile Agent** for direct tasks or employee delegation, or **Android** for an existing AI agent to call as a tool. Save the workflow and open **Workspace → Mobile**. The setup diagnostics inspect SDK tools, emulator acceleration, the system image, engine, and video server.
 3. Review and accept the Android SDK license in setup. Setup installs the optional engine and Android packages and creates the persistent `OpenCompany` AVD using a Pixel 7 device profile. Network access and sufficient disk space are required for these downloads.
-4. Start the shared device. The emulator runs without a separate desktop window; the Workspace shows its video. Device storage persists across stopping and starting the emulator.
-5. Take manual control to sign in to the Play Store, install applications, or upload an APK. APK uploads are limited to 256 MB and require the current manual-control lease. Play Store availability comes from the selected Google Play system image; account sign-in is performed on the device.
-6. Connect a provider in OpenCompany Settings, then connect exactly one AI model node to the Mobile Agent's Model input and save the workflow. The model selected on that connector is used for every mobile-use stage. OpenAI, Anthropic, and Gemini credentials are supported. Choose a model with image input and tool use, then submit a task from Workspace or delegate from an employee.
+4. Click **Start phone** and wait for **Ready**. The emulator runs without a separate desktop window; the Workspace shows its video. Device storage persists across stopping and starting the emulator.
+5. Click **Use phone** to sign in to the Play Store, install applications, or upload an APK. APK uploads are limited to 256 MB and require the current manual-control lease. Play Store availability comes from the selected Google Play system image; account sign-in is performed on the device.
+6. Connect a provider in OpenCompany Settings, then connect exactly one AI model node to the phone node's **Model** input and save the workflow. The model selected on that connector is used for every mobile-use stage. OpenAI, Anthropic, and Gemini credentials are supported. Choose a model with image input and tool use, then enter a request under **Ask AI to use the phone** and click **Run task**, or call the node through its agent connection.
 
 The setup is optional. Ordinary application startup does not install the mobile engine or boot an emulator. Runtime data lives under the configured OpenCompany data directory's `mobile` subdirectory, including the engine environment, AVD, and device resource metadata. Stopping the emulator does not reset its apps or account sessions.
 
+Setup shows the current component, download or SDK output, elapsed time, last update age, and recent activity. Complete compatible SDK packages are reused. Progress is saved in `mobile/setup-status.json`; reopening Workspace retains it. A backend shutdown or restart during setup is shown as interrupted with a retry action, rather than silently returning to idle. Retry reuses completed components; an incomplete download may need to restart. Setup does not continue while the backend is stopped. Timeout failures include the command and its latest output.
+
+## Choosing a node
+
+| Node | Use it for | Connection |
+| --- | --- | --- |
+| **Mobile Agent** (`mobile_use_agent`) | Direct Workspace requests or delegated phone tasks | Exactly one model into **Model**; **Delegate** output for employee delegation |
+| **Android** (`android_tool`) | Giving an existing AI agent a phone tool | **Tool** output into the agent’s **Tools** input, plus exactly one model into Android’s **Model** input |
+
+Both nodes use the same phone. Adding another node does not create another emulator. The existing `android_agent` and relay service nodes are separate integrations; they do not set up this local phone.
+
+## Everyday controls
+
+Choose **Full view** above the phone to fill the screen. The live phone expands to the available height; the task form, completed setup history and technical help are hidden. Phone controls remain outside the picture so they do not cover Android buttons. Use **Exit full view** or **Esc** to return. Entering full view keeps the current connection and does not restart the phone or grant manual control. Browser Workspace has the same full-view control, retaining its address bar and navigation outside the page. If the browser does not support fullscreen, use the existing Workspace expand button instead.
+
+| Label | Meaning |
+| --- | --- |
+| **Phone is off / Start phone** | The phone is installed but needs to be started before tasks can run. |
+| **Starting phone…** | Android and its automation connection are initializing. Wait for **Ready**. |
+| **Ready** | The phone can accept a task or manual control. |
+| **Use phone** | Pause AI control and use the screen yourself. |
+| **Finish using phone** | Release manual control without explicitly resuming a paused task. |
+| **Let AI continue** | Release manual control and resume a waiting task from the current screen. |
+| **AI is working** | An agent is using the shared phone. |
+| **Stop phone** | Shut down the phone while preserving apps and sign-ins. Cancel an active task first. |
+
+Connection warnings clear after a successful status check. Action errors have a **Dismiss** button. Task submission is disabled while the phone is off. Download details, completed setup history, and technical diagnostics are collapsed by default.
+
+## Runtime files and Git
+
+`mobile_root()` currently resolves a relative `DATA_DIR` against the backend process’s working directory. With source development launched from `server/` and `DATA_DIR=.opencompany`, the installed phone is therefore under `server/.opencompany/mobile/`. This differs from the application’s canonical repository-relative data resolver. An absolute `DATA_DIR` avoids this ambiguity. Do not move an existing installation or switch its data directory while the backend is running.
+
+The repository ignores `server/.opencompany/`. Emulator disks, snapshots, downloaded dependencies and logs are runtime data, not source changes; deleting them is not Git cleanup. Preserve `avd/` to retain the phone’s apps and sign-ins. Test fixtures and research checkouts under `.tmp/` can be removed once their checks finish.
+
 ## Control and task lifecycle
+
+### Android tool for AI agents
+
+Add the **Android** tool node (`android_tool`) and connect its **Tool** output to an AI agent's **Tools** input. Connect an OpenAI, Anthropic, or Gemini model node to Android's **Model** input; the same model node can also feed the parent agent. Save the workflow, then set up and start the phone in Workspace → Mobile. The agent calls `android` with one argument, `prompt`, such as “Open Settings and turn on dark mode.” The tool uses the same mobile-use engine, owner checks, task queue, manual takeover, and saved time/step limits as Mobile Agent. It does not install software or accept licenses automatically.
+
+### Troubleshooting and logs
+
+Workspace shows plain-language phone status and clears connection warnings after a successful status check. **Use phone** enables manual interaction; **Let AI continue** returns control to a waiting task. Technical checks and recent events are under **Help & diagnostics**.
+
+Operational events are written to `mobile/mobile.log` relative to the active data directory, rotating at 1 MiB with three backups. They include startup, driver/video failures, task lifecycle and command durations. Errors include exception type, error code where available, and stack locations. Prompts, typed text, screenshots, credentials, and command parameters are excluded. Existing emulator output remains in `mobile/emulator.log`.
+
+| Symptom | Check or recovery |
+| --- | --- |
+| Setup appears slow | Expand download details and recent setup activity; large system images take time. Complete compatible SDK packages are reused. |
+| Setup interrupted after a backend restart | Use **Retry setup** after accepting the SDK terms. Completed components are reused; partial downloads may restart. |
+| Phone will not start | Open **Help & diagnostics** for the acceleration check, then inspect `mobile/mobile.log` and `mobile/emulator.log`. |
+| `readuntil() called while another coroutine is already waiting` during startup | Older code let status polling read the driver’s initialization pipe concurrently. The fix shares `driver_lock` across initialization and commands and skips geometry polling during lifecycle transitions. Restart the backend after updating. |
+| Phone works but an old error remains | Current UI clears recovered connection warnings; dismiss action errors. Refresh the frontend after updating. |
+| New Android node is absent | Restart the backend to register the plugin and refresh the frontend. Search for **Android**, type `android_tool`. |
+| Task asks for a model | Connect exactly one supported model to the phone node’s **Model** input and save the workflow. The parent agent’s model connection alone is insufficient. |
+| Live view cannot connect | Check recent video events. Only one viewer is supported; close another preview and use **Reconnect**. |
+
+`setup-status.json` retains setup progress across backend restarts. Recent diagnostic events in status are bounded to 40 records in memory; `mobile.log` and its rotated backups retain operational history on disk. Logs exclude user content, but still include workflow/run identifiers: review them before sharing. The startup race explains a failed request and phone cleanup; it does not by itself prove a whole-backend crash.
 
 Video is a read-only scrcpy transport. Mouse, touch, text, navigation, rotation, APK installation, and agent mutations go through the server's device-control broker rather than the video socket. The initial preview supports one browser tab at a time.
 
@@ -68,9 +125,11 @@ Minitap's [platform](https://www.minitap.ai/platform#slack-cli-mcp) and [miniTes
 
 Automated tests exercise fencing, successful-operation deduplication, cancellation while draining, takeover and resume with fake subprocesses, queued cancellation, source-patch compatibility, and Python syntax compilation of the patched upstream package. Additional tests use the actual loopback HTTP broker with a fake driver, reject unsafe archives and checksum mismatches, and verify that SDK tools run through Java arguments without a command shell. Patch tests require `.tmp/mobile-use-upstream` or `MOBILE_USE_UPSTREAM_SOURCE` pointing to the pinned checkout; they skip when that fixture is absent.
 
-A local smoke test executed `worker.main` profile construction, SDK initialization, a fake task, and cleanup using the actual pinned dependency environment in `.tmp/engine-smoke` and a fake controller. It made no model request and connected to no emulator.
+An earlier local smoke test executed `worker.main` profile construction, SDK initialization, a fake task, and cleanup using the actual pinned dependency environment in `.tmp/engine-smoke` and a fake controller. It made no model request and connected to no emulator.
 
-These tests do not validate a real emulator, Play Store login, APK execution, model inference, hardware acceleration, or browser video decoding. Validate those on a supported Windows host before treating this as production device automation. Current task results contain a response and run identity; the artifact list is empty, and hosted-style videos or reports are not generated.
+A separate Windows host check confirmed usable WHPX acceleration, a real Android boot, a 1080 × 2400 automation connection, and screenshot/UI inspection, followed by clean shutdown. That sequential check did not cover concurrent Workspace polling; dedicated regression tests now cover the startup race. The temporary smoke-test fixtures were removed after use.
+
+Automated tests also cover the Android tool’s schema and saved execution limits, privacy-filtered bounded diagnostic logging, setup interruption recovery, and connection-warning recovery in the UI. These checks do not establish successful Play Store login, APK execution, live model inference, or a complete browser-video acceptance run. Validate those on a supported Windows host before treating this as production device automation. Current task results contain a response and run identity; the artifact list is empty, and hosted-style videos or reports are not generated.
 
 ## Planned iOS implementation
 

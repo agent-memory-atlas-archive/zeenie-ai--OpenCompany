@@ -3,9 +3,12 @@ import { buildApiUrl } from '@/config/api';
 export interface Geometry { width: number; height: number; rotation?: number; revision?: number; [key: string]: unknown }
 export interface MobileStatus {
   running: boolean;
+  starting?: boolean;
+  diagnostics?: { at: string; event: string; level: string; operation?: string; error_type?: string; code?: string; duration_ms?: number }[];
   geometry?: Geometry | null;
   setup?: string | Record<string, unknown> | null;
   setup_error?: string | null;
+  setup_progress?: { message?: string; started_at?: number | null; updated_at?: number | null; finished_at?: number | null; events?: { at: number; message: string }[] } | null;
   controller?: string | null;
   epoch: number;
   control_state: string;

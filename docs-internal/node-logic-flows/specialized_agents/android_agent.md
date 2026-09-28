@@ -9,6 +9,8 @@
 
 ## Purpose
 
+For the managed local emulator in Workspace → Mobile, use [Mobile Agent](../mobile/mobile_use_agent.md) or the [Android tool](../mobile/android_tool.md). The `android_agent` node below is the existing specialized agent for Android service/relay tools; adding it alone does not create the local emulator.
+
 AI agent pre-configured for Android device control. Users typically connect
 Android service nodes (`batteryMonitor`, `wifiAutomation`, `appLauncher`,
 etc.) directly to `input-tools`, or attach

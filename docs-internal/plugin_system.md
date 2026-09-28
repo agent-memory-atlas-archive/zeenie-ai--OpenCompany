@@ -42,6 +42,8 @@ plus one `@Operation` method, and nothing else.
 
 ## Architecture
 
+The [Mobile plugin](../server/nodes/mobile/__init__.py) is an optional runtime example: **Mobile Agent** (`ActionNode`) and **Android** (`ToolNode`) register together and advertise `ui_hints.workspace.kind="mobile"`. Import only registers the router, schemas and shutdown hook. The Android tool uses a locked, prompt-only `ToolInput`; saved `MobileParams` retain time/step limits. Both nodes share owner checks, model resolution, task queue and broker, without integrating through the legacy Android relay. See [Mobile Workspace](../docs/mobile-workspace.md) and the [Android node contract](node-logic-flows/mobile/android_tool.md).
+
 ### Class hierarchy
 
 ```

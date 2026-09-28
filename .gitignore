@@ -150,6 +150,9 @@ bun.lockb
 # launch by ``services.example_loader``), so it stays tracked.
 /.opencompany/*
 !/.opencompany/workflows/
+# Mobile runtime created by server-relative DATA_DIR resolution in existing
+# installations: SDK, engine environment, AVD disks, snapshots, and downloads.
+/server/.opencompany/
 # Pre-rebrand repo-local state remains readable for upgrades but is never
 # tracked. Do not remove this rule: local databases and deploy state may live
 # here in existing checkouts.

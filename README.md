@@ -133,6 +133,7 @@ Nothing here is a black box. What an employee learns lives in its memory, its no
 - **Models** from OpenAI, Anthropic, Google, xAI, DeepSeek, Kimi, Mistral, Groq, Cerebras, Sarvam, and OpenRouter, or run local models for free with Ollama, LM Studio, or any OpenAI-compatible server such as llama.cpp or vLLM.
 - **A live browser workspace** in Home and Dev mode: watch an employee browse, take control to sign in or help, then hand control back. It opens your installed Chrome, Edge or Chromium in a dedicated OpenCompany profile, keeping sessions between tasks without using your personal profile. [Browser runtime](docs-internal/browser.md) | [Workspace interface](docs-internal/browser_workspace.md).
 - **Speech and translation**, so employees can listen, talk, and work in other languages.
+- **A local Android phone workspace** on Windows x64: set up a persistent emulator, watch it live, use it yourself, or let an AI agent use the **Android** tool. Optional setup requires SDK license acceptance; iOS is not yet supported. [Setup, controls and troubleshooting](docs/mobile-workspace.md).
 - **78 skills** that ship ready to use, and a place to drop your own.
 - **Built to keep running.** Employees survive restarts, pause and resume from Home or the canvas, and catch up on missed schedules. Your API keys are stored encrypted on your machine. Add a login for shared or cloud use; one command deploys to Google Cloud.
 - **A canvas you will want to look at**, with 12 visual themes.

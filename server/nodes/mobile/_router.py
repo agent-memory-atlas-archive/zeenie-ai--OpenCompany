@@ -94,7 +94,9 @@ async def status(principal: str = Depends(authorize)):
     from ._runtime import get_runtime
 
     runtime = get_runtime()
-    if runtime.serial:
+    # During startup/shutdown return lifecycle status without touching the
+    # driver. The serial is assigned before Android and automation are ready.
+    if runtime.serial and not runtime.lifecycle_lock.locked():
         await call(runtime.driver_call("geometry"))
     return runtime.snapshot()
 

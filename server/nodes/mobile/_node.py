@@ -58,11 +58,11 @@ async def resolve_model(ctx: NodeContext) -> dict:
 
     connections = [edge for edge in ctx.edges if edge.get("target") == ctx.node_id and edge_target_handle(edge) == "input-model"]
     if len(connections) != 1:
-        raise NodeUserError("Connect exactly one AI model to Mobile Agent's Model input")
+        raise NodeUserError("Connect exactly one AI model to this phone node's Model input")
     source = next((node for node in ctx.nodes if node.get("id") == connections[0].get("source")), None)
     cls = get_node_class(source.get("type", "")) if source else None
     if cls is None or cls.component_kind != "model" or (source.get("data") or {}).get("disabled"):
-        raise NodeUserError("Connect an enabled AI model node to Mobile Agent")
+        raise NodeUserError("Connect an enabled AI model node to this phone node")
     parameters = await get_database().get_node_parameters(source["id"]) or {}
     provider_ref = detect_ai_provider(source["type"], parameters)
     adapters = {

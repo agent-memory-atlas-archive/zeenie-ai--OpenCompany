@@ -81,3 +81,99 @@ def test_incomplete_environment_is_not_ready(monkeypatch, tmp_path):
     assert _install.engine_ready()
     (tmp_path / "engine-ready.json").write_text(json.dumps({"source": "old", "patch": PATCH_VERSION}))
     assert not _install.engine_ready()
+
+
+def _package(root, package, revision="37.1.11", dependency="35.4.9"):
+    path = root.joinpath(*package.split(";"))
+    path.mkdir(parents=True, exist_ok=True)
+    props = f"Pkg.Revision={revision}\n"
+    if package == install.IMAGE:
+        props += f"AndroidVersion.ApiLevel=36\nSystemImage.Abi=x86_64\nSystemImage.TagId=google_apis_playstore\nPkg.Dependencies=emulator#{dependency}\n"
+        files = ("system.img", "vendor.img", "ramdisk.img", "kernel-ranchu")
+    elif package == "emulator":
+        files = ("emulator.exe", "qemu/windows-x86_64/qemu-system-x86_64.exe")
+    else:
+        files = ("adb.exe", "AdbWinApi.dll", "AdbWinUsbApi.dll")
+    (path / "source.properties").write_text(props)
+    for name in files:
+        target = path / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"installed")
+    return path
+
+
+def test_complete_packages_are_reused_but_incomplete_files_are_not(monkeypatch, tmp_path):
+    monkeypatch.setattr(install, "sdk_root", lambda: tmp_path)
+    for package in ("platform-tools", install.IMAGE, "emulator"):
+        _package(tmp_path, package)
+        assert install.sdk_package_ready(package)
+    (tmp_path / "platform-tools" / "AdbWinApi.dll").unlink()
+    assert not install.sdk_package_ready("platform-tools")
+    image = tmp_path.joinpath(*install.IMAGE.split(";"))
+    (image / "system.img").write_bytes(b"")
+    assert not install.sdk_package_ready(install.IMAGE)
+
+
+def test_emulator_minimum_tracks_installed_image_dependency(monkeypatch, tmp_path):
+    monkeypatch.setattr(install, "sdk_root", lambda: tmp_path)
+    _package(tmp_path, "emulator", revision="35.4.8")
+    assert not install.sdk_package_ready("emulator")
+    _package(tmp_path, "emulator", revision="37.1.11")
+    assert install.sdk_package_ready("emulator")
+    _package(tmp_path, install.IMAGE, dependency="38.0.1")
+    assert not install.sdk_package_ready("emulator")
+
+
+@pytest.mark.parametrize("missing", [None, install.IMAGE])
+async def test_setup_only_installs_missing_packages_and_preserves_avd(monkeypatch, tmp_path, missing):
+    monkeypatch.setattr(install.sys, "platform", "win32")
+    monkeypatch.setattr(install.platform, "machine", lambda: "AMD64")
+    monkeypatch.setattr(install, "mobile_root", lambda: tmp_path)
+    monkeypatch.setattr(install, "sdk_root", lambda: tmp_path / "sdk")
+    tools = AsyncMock()
+    monkeypatch.setattr(install, "install_sdk_tools", tools)
+    ready = {p for p in ("platform-tools", install.IMAGE, "emulator") if p != missing}
+    monkeypatch.setattr(install, "sdk_package_ready", lambda p: p in ready)
+    monkeypatch.setattr(install, "sdk_command", lambda name, *args: [name, *args])
+    avd = tmp_path / "avd"
+    avd.mkdir()
+    (avd / f"{install.AVD_NAME}.ini").write_text("persistent-device")
+
+    async def execute(argv, **kwargs):
+        assert argv[0] == "sdkmanager"
+        assert kwargs["timeout"] == 7200
+        ready.add(argv[-1])
+        kwargs["progress"]("Installing 50%")
+
+    command = AsyncMock(side_effect=execute)
+    monkeypatch.setattr(install, "command", command)
+    events = []
+    await install.create_device(licenses_accepted=True, progress=events.append)
+    assert command.await_count == int(missing is not None)
+    if missing:
+        assert command.await_args.args[0][-1] == missing
+        assert "Installing 50%" in events
+    assert (avd / f"{install.AVD_NAME}.ini").read_text() == "persistent-device"
+    assert events[-1].startswith("Android setup complete")
+    tools.assert_awaited_once_with(progress=events.append)
+
+
+async def test_download_progress_callback_runs_on_event_loop_thread(monkeypatch, tmp_path):
+    import asyncio
+    import threading
+
+    loop_thread = threading.get_ident()
+    worker_threads = []
+    observed = []
+
+    def download(*_, progress, **kwargs):
+        worker_threads.append(threading.get_ident())
+        progress("Downloading 50%")
+
+    monkeypatch.setattr(install, "download", download)
+    await install._download(
+        "https://example.invalid", tmp_path / "artifact", "digest", lambda message: observed.append((threading.get_ident(), message))
+    )
+    await asyncio.sleep(0)
+    assert worker_threads[0] != loop_thread
+    assert observed == [(loop_thread, "Downloading 50%")]

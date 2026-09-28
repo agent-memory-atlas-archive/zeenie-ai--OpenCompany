@@ -20,6 +20,26 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe('Mobile Workspace', () => {
+  it('clears a failed status check when the phone reconnects', async () => {
+    let polls = 0;
+    snapshot.running = true;
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.endsWith('/status') && polls++ === 0) throw new Error('Start the device before using it');
+      return json(url.endsWith('/doctor') ? ready : snapshot);
+    });
+    render(<MobileWorkspace workflowId="flow" nodes={nodes} />);
+    await screen.findByText(/Retrying automatically/);
+    await waitFor(() => expect(screen.queryByText(/Retrying automatically/)).toBeNull(), { timeout: 4000 });
+    expect(screen.getByText('Ready')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('explains how to start and disables AI tasks while the phone is off', async () => {
+    render(<MobileWorkspace workflowId="flow" nodes={nodes} />);
+    await screen.findByText('Phone is off');
+    await userEvent.type(screen.getByRole('textbox', { name: 'Ask AI to use the phone' }), 'Open Settings');
+    expect(screen.getByRole('button', { name: 'Run task' })).toBeDisabled();
+  });
   it('requires a saved workflow and an explicitly discovered Mobile node', () => {
     const view = render(<MobileWorkspace nodes={nodes} />);
     expect(screen.getByText(/Save this workflow/)).toBeInTheDocument();
@@ -33,7 +53,7 @@ describe('Mobile Workspace', () => {
     await screen.findByRole('button', { name: 'Start phone' });
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect(fetchMock.mock.calls.every(([, options]) => options.method === 'GET')).toBe(true);
-    expect(screen.getByText('Host readiness: hardware acceleration')).toBeInTheDocument();
+    expect(screen.getByText('Help & diagnostics')).toBeInTheDocument();
     expect(screen.getByText('WHPX is installed and usable.')).toBeInTheDocument();
   });
 
@@ -47,7 +67,45 @@ describe('Mobile Workspace', () => {
     await waitFor(() => expect(fetchMock.mock.calls.some(([url, options]) => url.endsWith('/setup') && JSON.parse(options.body).licenses_accepted === true)).toBe(true));
   });
 
+  it('shows active setup and bounded activity even when all tools are ready', async () => {
+    const now = Date.now() / 1000;
+    snapshot = { ...snapshot, setup: 'installing_device', setup_progress: {
+      message: 'Downloading Android image', started_at: now - 90, updated_at: now - 10,
+      events: Array.from({ length: 25 }, (_, index) => ({ at: now - 25 + index, message: `Step ${index}` })),
+    } };
+    render(<MobileWorkspace workflowId="flow" nodes={nodes} />);
+    await screen.findByText('Setting up');
+    expect(screen.getByRole('region', { name: 'Mobile setup' })).toBeInTheDocument();
+    expect(screen.getByText('Downloading Android image')).toBeInTheDocument();
+    expect(screen.getByText(/Elapsed: 1m/)).toBeInTheDocument();
+    expect(screen.getByText(/Last update: \d+s/)).toBeInTheDocument();
+    expect(screen.queryByText(/— Step 0$/)).toBeNull();
+    expect(screen.getByText(/Step 24$/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Set up phone' })).toBeDisabled();
+  });
+
+  it('retains completed setup activity without install controls', async () => {
+    const now = Date.now() / 1000;
+    snapshot = { ...snapshot, setup: 'ready', setup_progress: { message: 'Phone is ready', started_at: now - 120, finished_at: now - 30, updated_at: now - 30, events: [{ at: now - 30, message: 'Installation finished' }] } };
+    render(<MobileWorkspace workflowId="flow" nodes={nodes} />);
+    await screen.findByText('Setup complete');
+    expect(screen.getByText('Elapsed: 1m 30s')).toBeInTheDocument();
+    expect(screen.getByText(/Installation finished/)).toBeInTheDocument();
+    expect(screen.queryByRole('checkbox', { name: 'Accept Android SDK license terms' })).toBeNull();
+  });
+
+  it('keeps interrupted setup visible after reopening and offers an explicit retry', async () => {
+    snapshot = { ...snapshot, setup: 'interrupted', setup_error: 'Setup stopped when the host restarted.' };
+    render(<MobileWorkspace workflowId="flow" nodes={nodes} />);
+    await screen.findByText('Setup stopped when the host restarted.');
+    const retry = screen.getByRole('button', { name: 'Retry setup' });
+    expect(retry).toBeDisabled();
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Accept Android SDK license terms' }));
+    expect(retry).toBeEnabled();
+  });
+
   it('submits only to the displayed workflow and retries a lost response with the same id', async () => {
+    snapshot.running = true;
     let attempts = 0;
     fetchMock.mockImplementation(async (url: string, options: RequestInit) => {
       if (url.endsWith('/tasks') && options.method === 'POST') {
@@ -59,11 +117,11 @@ describe('Mobile Workspace', () => {
       return json(url.endsWith('/doctor') ? ready : snapshot);
     });
     render(<MobileWorkspace workflowId="home-flow" nodes={nodes} />);
-    await userEvent.type(screen.getByRole('textbox', { name: 'Give this mobile agent a task' }), 'Open settings');
+    await userEvent.type(screen.getByRole('textbox', { name: 'Ask AI to use the phone' }), 'Open settings');
     await userEvent.click(screen.getByRole('button', { name: 'Run task' }));
     await screen.findByText('Connection dropped');
     await userEvent.click(screen.getByRole('button', { name: 'Run task' }));
-    await screen.findByText('Done');
+    await screen.findByText('Done', { selector: 'pre' });
     const requests = fetchMock.mock.calls.filter(([url, options]) => url.endsWith('/tasks') && options.method === 'POST');
     expect(requests).toHaveLength(2);
     expect(requests[0][0]).toBe('/api/mobile/home-flow/flow%3Amobile_agent%3A1/tasks');
@@ -82,7 +140,7 @@ describe('Mobile Workspace', () => {
     });
     const view = render(<MobileWorkspace workflowId="flow" nodes={nodes} />);
     expect(screen.queryByRole('button', { name: 'Phone Home' })).toBeNull();
-    await userEvent.click(await screen.findByRole('button', { name: 'Take control' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Use phone' }));
     await userEvent.click(await screen.findByRole('button', { name: 'Phone Home' }));
     await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => url.endsWith('/input'))).toBe(true));
     const request = fetchMock.mock.calls.find(([url]) => url.endsWith('/input'))!;

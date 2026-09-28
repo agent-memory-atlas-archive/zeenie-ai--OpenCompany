@@ -178,6 +178,11 @@ that a retired node remains registered.
 - [Outlook Mail (`msMail`)](./microsoft/msMail.md)
 - [Outlook Mail Receive (`msMailReceive`)](./microsoft/msMailReceive.md)
 
+### mobile
+
+- [Android (`android_tool`)](./mobile/android_tool.md)
+- [Mobile Agent (`mobile_use_agent`)](./mobile/mobile_use_agent.md)
+
 ### search
 
 - [Brave Search (`braveSearch`)](./search/braveSearch.md)

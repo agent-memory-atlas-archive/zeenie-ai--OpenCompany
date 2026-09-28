@@ -13,6 +13,7 @@ from ._control import DeviceControl, Lease, MobileError
 from ._install import AVD_NAME, install_engine, create_device, engine_ready, sdk_tool, sdk_root
 from ._paths import mobile_root, runtime_python
 from ._process import command, hidden_options
+from ._diagnostics import event, recent
 
 READS = frozenset({"geometry", "observe", "date", "packages", "foreground"})
 ACTIONS = frozenset({"tap", "swipe", "touch", "text", "erase", "key", "launch", "terminate", "url", "rotate"})
@@ -32,6 +33,9 @@ class MobileRuntime:
         self.setup_task: asyncio.Task | None = None
         self.setup_state = "idle"
         self.setup_error = ""
+        self.setup_progress: dict = {}
+        self._setup_loaded = False
+        self._setup_saved = 0.0
         self.active: dict | None = None
         self.queue: list[dict] = []
         self.capabilities: dict[str, tuple[str, Lease]] = {}
@@ -98,17 +102,76 @@ class MobileRuntime:
             return self.broker_url
 
     def snapshot(self) -> dict:
+        self._load_setup()
         return {
-            "running": self.process is not None and self.process.returncode is None,
+            "running": self.process is not None and self.process.returncode is None
+            and self.driver is not None and self.driver.returncode is None and self.geometry is not None,
+            "starting": self.lifecycle_lock.locked() and self.geometry is None and not self.stopping,
             "serial": self.serial,
             "geometry": self.geometry,
             "device": "Shared Android device",
             "setup": self.setup_state,
             "setup_error": self.setup_error,
+            "setup_progress": self.setup_progress,
+            "diagnostics": recent(),
             "active": {k: v for k, v in (self.active or {}).items() if k not in {"prompt"}},
             "queue": [{k: v for k, v in q.items() if k != "prompt"} for q in self.queue],
             **self.control.snapshot(),
         }
+
+    def _load_setup(self) -> None:
+        if self._setup_loaded:
+            return
+        self._setup_loaded = True
+        try:
+            record = json.loads((mobile_root() / "setup-status.json").read_text(encoding="utf-8"))
+            if not isinstance(record, dict):
+                return
+            if record.get("state") not in {"installing_engine", "installing_device", "ready", "error", "interrupted"}:
+                return
+            if not isinstance(record.get("progress"), dict):
+                return
+            progress = record["progress"]
+            events = progress.get("events", [])
+            if not isinstance(events, list) or any(
+                not isinstance(event, dict) or not isinstance(event.get("message"), str)
+                or not isinstance(event.get("at"), (int, float)) for event in events
+            ):
+                return
+            progress["events"] = events[-80:]
+            self.setup_state = record["state"]
+            self.setup_error = str(record.get("error", ""))[:1500]
+            self.setup_progress = record["progress"]
+            if self.setup_state.startswith("installing_"):
+                self.setup_state = "interrupted"
+                self.setup_error = "Setup was interrupted by a backend restart. Retry setup to reuse completed components."
+                self.setup_progress["finished_at"] = time.time()
+                self._setup_update(self.setup_error, force=True)
+        except (OSError, ValueError, TypeError):
+            pass
+
+    def _setup_update(self, message: str, *, force: bool = False) -> None:
+        now = time.time()
+        message = message.strip()[-1500:]
+        if not message:
+            return
+        self.setup_progress.update(message=message, updated_at=now)
+        events = self.setup_progress.setdefault("events", [])
+        if not events or events[-1]["message"] != message:
+            events.append({"at": now, "message": message})
+            del events[:-80]
+        if not force and time.monotonic() - self._setup_saved < 1:
+            return
+        try:
+            root = mobile_root()
+            root.mkdir(parents=True, exist_ok=True)
+            temp = root / "setup-status.json.tmp"
+            temp.write_text(json.dumps({"state": self.setup_state, "error": self.setup_error, "progress": self.setup_progress}), encoding="utf-8")
+            temp.replace(root / "setup-status.json")
+            self._setup_saved = time.monotonic()
+        except OSError:
+            # Disk failures must not erase the live status or abort installation.
+            pass
 
     def setup(self, accepted: bool) -> None:
         if not accepted:
@@ -118,16 +181,35 @@ class MobileRuntime:
         if self.stopping or self.lifecycle_lock.locked() or self.active or self.serial:
             raise MobileError("device_busy", "Stop the device before changing its runtime")
 
+        self._setup_loaded = True
+        self.setup_error = ""
+        self.setup_state = "installing_engine"
+        self.setup_progress = {"started_at": time.time(), "events": []}
+        self._setup_update("Checking the mobile agent runtime", force=True)
+        event("setup_started")
+
         async def run():
-            self.setup_error = ""
             try:
-                self.setup_state = "installing_engine"
-                await install_engine()
+                await install_engine(progress=self._setup_update)
                 self.setup_state = "installing_device"
-                await create_device(licenses_accepted=True)
+                self._setup_update("Preparing Android tools and the shared phone", force=True)
+                await create_device(licenses_accepted=True, progress=self._setup_update)
                 self.setup_state = "ready"
+                self.setup_progress["finished_at"] = time.time()
+                self._setup_update("Setup complete. Start the phone to connect it.", force=True)
+                event("setup_completed")
+            except asyncio.CancelledError:
+                self.setup_state = "interrupted"
+                self.setup_error = "Setup stopped because the backend shut down. Retry setup to reuse completed components."
+                self.setup_progress["finished_at"] = time.time()
+                self._setup_update(self.setup_error, force=True)
+                event("setup_interrupted", failed=True)
+                raise
             except Exception as exc:
-                self.setup_state, self.setup_error = "error", str(exc)[-1500:]
+                self.setup_state, self.setup_error = "error", str(exc)[-1500:] or f"Setup failed ({type(exc).__name__}). Retry setup."
+                self.setup_progress["finished_at"] = time.time()
+                self._setup_update(self.setup_error, force=True)
+                event("setup_failed", failed=True, error_type=type(exc).__name__)
 
         self.setup_task = asyncio.create_task(run())
 
@@ -162,6 +244,7 @@ class MobileRuntime:
             if port is None:
                 raise MobileError("ports_busy", "No emulator port pair is free")
             root = mobile_root()
+            event("phone_starting")
             root.mkdir(parents=True, exist_ok=True)
             log = (root / "emulator.log").open("ab")
             env = {**os.environ, "ANDROID_AVD_HOME": str(root / "avd"), "ANDROID_SDK_ROOT": str(sdk_root())}
@@ -194,9 +277,11 @@ class MobileRuntime:
                 else:
                     raise MobileError("boot_timeout", "Android did not finish booting within three minutes")
                 await self._start_driver()
+                event("phone_ready", serial=self.serial)
                 self.control.revoke()
                 self.control.state = "idle"
-            except BaseException:
+            except BaseException as exc:
+                event("phone_start_failed", failed=True, error_type=type(exc).__name__, code=getattr(exc, "code", "startup_failed"))
                 await self._stop_owned()
                 raise
             return self.snapshot()
@@ -240,6 +325,18 @@ class MobileRuntime:
         return env
 
     async def _start_driver(self):
+        event("driver_starting")
+        # Initialization consumes the first protocol reply. It must own the
+        # same lock as commands so polling cannot read that reply concurrently.
+        async with self.driver_lock:
+            try:
+                await self._initialize_driver()
+                event("driver_ready")
+            except BaseException:
+                await self._stop_driver()
+                raise
+
+    async def _initialize_driver(self):
         entry = Path(__file__).with_name("runtime") / "device_server.py"
         self.driver = await asyncio.create_subprocess_exec(
             str(runtime_python()),
@@ -267,19 +364,24 @@ class MobileRuntime:
         async with self.driver_lock:
             if not self.driver or self.driver.returncode is not None:
                 raise MobileError("device_offline", "Start the device before using it")
-            self.driver.stdin.write((json.dumps({"operation": operation, "parameters": parameters or {}}) + "\n").encode())
-            await self.driver.stdin.drain()
+            started = time.monotonic()
             try:
+                self.driver.stdin.write((json.dumps({"operation": operation, "parameters": parameters or {}}) + "\n").encode())
+                await self.driver.stdin.drain()
                 line = await asyncio.wait_for(self.driver.stdout.readline(), 30)
                 if not line:
                     raise RuntimeError("Device driver disconnected")
                 result = json.loads(line)
-            except BaseException:
+            except BaseException as exc:
+                event("driver_connection_failed", failed=True, operation=operation, error_type=type(exc).__name__)
                 self.control.state = "recovering"
                 await self._stop_driver()
                 raise
             if not result.get("success"):
+                event("device_action_failed", failed=True, operation=operation, code=result.get("code", "device_action_failed"))
                 raise MobileError(result.get("code", "device_action_failed"), result.get("error", "Device command failed"))
+            if operation not in READS:
+                event("device_action_completed", operation=operation, duration_ms=round((time.monotonic() - started) * 1000))
             if operation == "geometry":
                 self.geometry = result["result"]
             elif operation == "observe":
@@ -318,6 +420,7 @@ class MobileRuntime:
         await self._stop_worker()
         lease = await self.control.claim("viewer:" + viewer, takeover=True)
         self.viewer = viewer
+        event("manual_control_started")
         return lease
 
     def release(self, viewer: str, *, resume: bool = False):
@@ -349,6 +452,7 @@ class MobileRuntime:
             raise MobileError("duplicate_run", "This task is already admitted")
         entry = {"run_id": run_id, "workflow_id": workflow_id, "node_id": node_id, "status": "queued"}
         self.queue.append(entry)
+        event("task_queued", run_id=run_id, workflow_id=workflow_id, node_id=node_id)
         try:
             async with self.task_lock:
                 self.queue.remove(entry)
@@ -386,6 +490,7 @@ class MobileRuntime:
                             entry["status"] = "awaiting_user"
                             continue
                         entry["status"] = "running"
+                        event("task_running", run_id=run_id)
                         config = {
                             **model,
                             "source": str(mobile_root() / "engine"),
@@ -428,6 +533,7 @@ class MobileRuntime:
                             continue
                         if not result.get("success"):
                             raise MobileError("agent_failed", result.get("error", "Mobile agent failed"))
+                        event("task_completed", run_id=run_id)
                         return {"response": result.get("result"), "outcome": "completed", "run_id": run_id, "artifacts": []}
                 finally:
                     self.capabilities.clear()
@@ -437,6 +543,12 @@ class MobileRuntime:
                     async with self.control.lock:
                         pass
                     self.active = None
+        except asyncio.CancelledError:
+            event("task_cancelled", run_id=run_id)
+            raise
+        except Exception as exc:
+            event("task_failed", failed=True, run_id=run_id, error_type=type(exc).__name__, code=getattr(exc, "code", "task_failed"))
+            raise
         finally:
             if entry in self.queue:
                 self.queue.remove(entry)
@@ -498,6 +610,7 @@ class MobileRuntime:
             await proc.wait()
 
     async def _stop_owned(self):
+        event("phone_stopping", serial=self.serial)
         self.control.revoke()
         self.capabilities.clear()
         await self._stop_worker()
@@ -518,6 +631,7 @@ class MobileRuntime:
             self.control.results.clear()
         self.viewer = None
         self.resume_event.clear()
+        event("phone_stopped")
 
     async def stop(self):
         if self.active:

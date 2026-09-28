@@ -1,3 +1,4 @@
+import { FullView } from '../workspace/FullView';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { KeyboardEvent, PointerEvent } from 'react';
 import { ArrowLeft, ArrowRight, Globe, RotateCw } from 'lucide-react';
@@ -312,7 +313,7 @@ function BrowserSessionView({ workflowId, nodeId, visible }: { workflowId: strin
   const statusLabel = phase === 'connecting' ? 'Connecting…' : phase === 'idle' ? 'Browser is stopped' : phase === 'error' ? 'Disconnected' : control ? 'You have control' : state.state === 'agent' ? 'Employee is browsing' : state.state === 'awaiting_user' ? 'Your help is needed' : state.controller === 'other' ? 'Another viewer has control' : 'Live browser';
 
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
+    <FullView label="Browser">
       <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
         <span role="status" className="text-fg-muted">{installing ? 'Installing browser…' : starting ? 'Starting browser…' : statusLabel}</span>
         {phase === 'live' && <Button size="sm" variant="outline" disabled={takingControl} onClick={() => {
@@ -352,6 +353,6 @@ function BrowserSessionView({ workflowId, nodeId, visible }: { workflowId: strin
         <div className="flex gap-2">{[true, false].map((accept) => <Button key={String(accept)} size="sm" variant="outline" disabled={!control} onClick={() => { send({ type: 'dialog_reply', accept, prompt_text: promptText }); setDialog(null); }}>{accept ? 'OK' : 'Cancel'}</Button>)}</div>
         {!control && <span className="text-xs text-fg-muted">Take control to respond.</span>}
       </div>}
-    </div>
+    </FullView>
   );
 }

@@ -55,6 +55,7 @@ def server_arguments(serial: str, scid: str) -> list[str]:
 
 
 async def stream_video(websocket: WebSocket, viewer: str) -> None:
+    from ._diagnostics import event
     from ._runtime import get_runtime
 
     runtime = get_runtime()
@@ -110,6 +111,7 @@ async def stream_video(websocket: WebSocket, viewer: str) -> None:
         if reader is None:
             raise MobileError("video_failed", "The device video stream did not start")
         await websocket.accept()
+        event("video_connected", serial=serial)
         await websocket.send_json({"type": "video", "version": SCRCPY_VERSION, "codec": "h264"})
 
         async def relay():
@@ -134,6 +136,8 @@ async def stream_video(websocket: WebSocket, viewer: str) -> None:
         for job in done:
             job.result()
     except (MobileError, OSError, ValueError, asyncio.TimeoutError, WebSocketDisconnect) as exc:
+        event("video_disconnected" if isinstance(exc, WebSocketDisconnect) else "video_failed",
+              failed=not isinstance(exc, WebSocketDisconnect), error_type=type(exc).__name__)
         with contextlib.suppress(Exception):
             await websocket.close(code=1011, reason=str(exc)[:110])
     finally:
@@ -159,3 +163,4 @@ async def stream_video(websocket: WebSocket, viewer: str) -> None:
         # its exact epoch through the broker; an old stream must never revoke
         # a newer lease held by the same tab.
         _streams.discard(current)
+        event("video_closed")

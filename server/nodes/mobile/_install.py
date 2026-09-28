@@ -6,11 +6,14 @@ import hashlib
 import json
 import os
 import platform
+import re
 import shutil
 import sys
+import time
 import urllib.request
 import zipfile
 from pathlib import Path
+from typing import Callable
 from ._paths import mobile_root, runtime_python
 from ._process import command
 
@@ -20,6 +23,11 @@ SCRCPY_VERSION = "4.1"
 SCRCPY_SHA256 = "deacb991ed2509715160ffdc7907e47b4160eb30d1566217e9047fd5b8850cae"
 IMAGE = "system-images;android-36;google_apis_playstore;x86_64"
 AVD_NAME = "OpenCompany"
+# Minimum required by the pinned API 36 Google Play image. Newer installed
+# image revisions can raise this through source.properties Pkg.Dependencies.
+MIN_EMULATOR_VERSION = (35, 4, 9)
+SDK_INSTALL_TIMEOUT = 2 * 60 * 60
+Progress = Callable[[str], None]
 COMMAND_TOOLS_REVISION = "15859902"
 COMMAND_TOOLS_SHA256 = "90ae805d20434428bffcb699c290860f19bb5f66a67e6b330067e3de801fb04a"
 JAVA_URL = (
@@ -74,24 +82,91 @@ def sdk_command(name: str, *args: str) -> list[str]:
     return [str(path), *args]
 
 
-def download(url: str, target: Path, digest: str, *, limit: int = 512 * 1024 * 1024) -> None:
+def download(url: str, target: Path, digest: str, *, limit: int = 512 * 1024 * 1024, progress: Progress | None = None) -> None:
+    if target.is_file() and hashlib.sha256(target.read_bytes()).hexdigest() == digest:
+        if progress:
+            progress(f"Using verified download: {target.name}")
+        return
     target.parent.mkdir(parents=True, exist_ok=True)
     temp = target.with_suffix(target.suffix + ".part")
     hasher = hashlib.sha256()
     try:
         with urllib.request.urlopen(url, timeout=60) as response, temp.open("wb") as output:
             size = 0
+            total = int(getattr(response, "headers", {}).get("Content-Length", 0) or 0)
+            last_update = 0.0
+            if progress:
+                progress(f"Downloading {target.name}")
             while data := response.read(256 * 1024):
                 size += len(data)
                 if size > limit:
                     raise ValueError("Download exceeds expected size")
                 hasher.update(data)
                 output.write(data)
+                if progress and time.monotonic() - last_update >= 0.5:
+                    suffix = f" / {total / 1024**2:.1f} MiB ({min(100, size * 100 // total)}%)" if total else " MiB"
+                    progress(f"Downloading {target.name}: {size / 1024**2:.1f}{suffix}")
+                    last_update = time.monotonic()
         if hasher.hexdigest() != digest:
             raise ValueError("Runtime download checksum mismatch")
         temp.replace(target)
+        if progress:
+            progress(f"Verified {target.name} ({size / 1024**2:.1f} MiB)")
     finally:
         temp.unlink(missing_ok=True)
+
+
+async def _download(url: str, target: Path, digest: str, progress: Progress | None) -> None:
+    # urllib runs off-loop. All observable installer/runtime state updates
+    # still happen on the owning asyncio loop, never the downloader thread.
+    loop = asyncio.get_running_loop()
+    callback = (lambda message: loop.call_soon_threadsafe(progress, message)) if progress is not None else None
+    await asyncio.to_thread(download, url, target, digest, progress=callback)
+
+
+def _properties(path: Path) -> dict[str, str]:
+    try:
+        return {
+            key.strip(): value.strip()
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if "=" in line and not line.lstrip().startswith("#")
+            for key, value in [line.split("=", 1)]
+        }
+    except (OSError, UnicodeError):
+        return {}
+
+
+def _version(value: str) -> tuple[int, ...]:
+    match = re.match(r"^(\d+)(?:\.(\d+))?(?:\.(\d+))?", value)
+    return tuple(int(part or 0) for part in match.groups()) if match else ()
+
+
+def sdk_package_ready(package: str) -> bool:
+    """Check core package files and revision; never update a complete package blindly."""
+    root = sdk_root() / Path(*package.split(";"))
+    props = _properties(root / "source.properties")
+    if not _version(props.get("Pkg.Revision", "")):
+        return False
+    if package == "platform-tools":
+        files = ("adb.exe", "AdbWinApi.dll", "AdbWinUsbApi.dll")
+    elif package == "emulator":
+        image = _properties(sdk_root() / Path(*IMAGE.split(";")) / "source.properties")
+        dependency = re.search(r"(?:^|[,;\s])emulator#([\d.]+)", image.get("Pkg.Dependencies", ""))
+        minimum = max(MIN_EMULATOR_VERSION, _version(dependency.group(1)) if dependency else MIN_EMULATOR_VERSION)
+        if _version(props["Pkg.Revision"]) < minimum:
+            return False
+        files = ("emulator.exe", "qemu/windows-x86_64/qemu-system-x86_64.exe")
+    elif package == IMAGE:
+        if (
+            props.get("AndroidVersion.ApiLevel") != "36"
+            or props.get("SystemImage.Abi") != "x86_64"
+            or props.get("SystemImage.TagId") != "google_apis_playstore"
+        ):
+            return False
+        files = ("system.img", "vendor.img", "ramdisk.img", "kernel-ranchu")
+    else:
+        raise ValueError("Unsupported managed Android package")
+    return all((root / file).is_file() and (root / file).stat().st_size > 0 for file in files)
 
 
 def extract_zip(archive: Path, destination: Path) -> None:
@@ -106,7 +181,7 @@ def extract_zip(archive: Path, destination: Path) -> None:
         source.extractall(destination)
 
 
-async def install_engine() -> None:
+async def install_engine(progress: Progress | None = None) -> None:
     from .runtime.patch_source import patch
 
     root = mobile_root()
@@ -121,14 +196,18 @@ async def install_engine() -> None:
     ready = engine_ready() and marker.is_file()
     server = root / "scrcpy-server"
     if ready and server.is_file() and hashlib.sha256(server.read_bytes()).hexdigest() == SCRCPY_SHA256:
+        if progress:
+            progress("Mobile engine and video server are already installed")
         return
     uv = os.environ.get("OPENCOMPANY_UV_BIN") or shutil.which("uv")
     if not uv:
         raise ValueError("uv is required for optional mobile runtime setup")
     if not marker.is_file():
         archive = root / "downloads" / f"mobile-use-{UPSTREAM_SHA}.zip"
-        await asyncio.to_thread(download, f"https://codeload.github.com/minitap-ai/mobile-use/zip/{UPSTREAM_SHA}", archive, SOURCE_SHA256)
+        await _download(f"https://codeload.github.com/minitap-ai/mobile-use/zip/{UPSTREAM_SHA}", archive, SOURCE_SHA256, progress)
         staging = root / "source"
+        if progress:
+            progress("Extracting and preparing the mobile engine")
         await asyncio.to_thread(extract_zip, archive, staging)
         extracted = staging / f"mobile-use-{UPSTREAM_SHA}"
         patch(extracted)
@@ -138,15 +217,22 @@ async def install_engine() -> None:
     if not ready:
         env = {**os.environ, "UV_PROJECT_ENVIRONMENT": str(source / ".venv"), "UV_NO_CONFIG": "1"}
         env.pop("VIRTUAL_ENV", None)
-        await command([uv, "sync", "--frozen", "--no-dev", "--python", "3.12", "--project", str(source)], timeout=900, env=env)
+        if progress:
+            progress("Installing the isolated Python runtime and mobile engine dependencies")
+        await command(
+            [uv, "sync", "--frozen", "--no-dev", "--python", "3.12", "--project", str(source)],
+            timeout=SDK_INSTALL_TIMEOUT,
+            env=env,
+            progress=progress,
+        )
         stamp = root / "engine-ready.json.tmp"
         stamp.write_text(json.dumps({"source": UPSTREAM_SHA, "patch": PATCH_VERSION}), encoding="utf-8")
         stamp.replace(root / "engine-ready.json")
-    await asyncio.to_thread(
-        download,
+    await _download(
         f"https://github.com/Genymobile/scrcpy/releases/download/v{SCRCPY_VERSION}/scrcpy-server-v{SCRCPY_VERSION}",
         server,
         SCRCPY_SHA256,
+        progress,
     )
 
 
@@ -175,50 +261,78 @@ async def doctor() -> dict:
     }
 
 
-async def install_sdk_tools() -> None:
+async def install_sdk_tools(progress: Progress | None = None) -> None:
     root = mobile_root()
     if not next((root / "java").glob("*/bin/java.exe"), None):
         archive = root / "downloads" / "temurin-jre.zip"
-        await asyncio.to_thread(download, JAVA_URL, archive, JAVA_SHA256)
+        await _download(JAVA_URL, archive, JAVA_SHA256, progress)
+        if progress:
+            progress("Extracting the private Java runtime")
         await asyncio.to_thread(extract_zip, archive, root / "java")
-    if not sdk_tool("sdkmanager"):
+    manager = sdk_tool("sdkmanager")
+    tools_ready = (
+        manager is not None
+        and _properties(manager.parent.parent / "source.properties")
+        and all((manager.parent.parent / "lib" / name).is_file() for name in ("sdkmanager-classpath.jar", "avdmanager-classpath.jar"))
+    )
+    if not tools_ready:
         archive = root / "downloads" / f"commandlinetools-win-{COMMAND_TOOLS_REVISION}.zip"
-        await asyncio.to_thread(
-            download,
+        await _download(
             f"https://dl.google.com/android/repository/commandlinetools-win-{COMMAND_TOOLS_REVISION}_latest.zip",
             archive,
             COMMAND_TOOLS_SHA256,
+            progress,
         )
         staging = root / "sdk-staging"
+        if progress:
+            progress("Extracting Android SDK command-line tools")
         await asyncio.to_thread(extract_zip, archive, staging)
         target = sdk_root() / "cmdline-tools" / COMMAND_TOOLS_REVISION
         target.parent.mkdir(parents=True, exist_ok=True)
         if target.exists():
             raise ValueError("Incomplete SDK tools exist; remove that incomplete revision before retrying setup")
         (staging / "cmdline-tools").rename(target)
+    elif progress:
+        progress("Android SDK command-line tools are already installed")
 
 
-async def create_device(*, licenses_accepted: bool) -> None:
+async def create_device(*, licenses_accepted: bool, progress: Progress | None = None) -> None:
     if sys.platform != "win32" or platform.machine().lower() not in {"amd64", "x86_64"}:
         raise ValueError("This release supports managed Android setup on Windows x64 only")
     if not licenses_accepted:
         raise ValueError("Accept the Android SDK license in setup before installing packages")
-    await install_sdk_tools()
+    await install_sdk_tools(progress=progress)
     args = [f"--sdk_root={sdk_root()}"]
     # Explicit user acceptance above is the only path allowed to answer these prompts.
     # Accept only the packages selected below, not every unrelated pending SDK
     # license in a shared Android Studio installation.
-    await command(sdk_command("sdkmanager", *args, "platform-tools", "emulator", IMAGE), timeout=1800, input_text="y\n" * 100)
+    # Install the image before checking emulator compatibility: its package
+    # metadata can demand a newer emulator than the baseline minimum.
+    for package in ("platform-tools", IMAGE, "emulator"):
+        if sdk_package_ready(package):
+            if progress:
+                progress(f"Already installed: {package}")
+            continue
+        if progress:
+            progress(f"Installing Android package: {package}. Large images may take a while on slower connections.")
+        await command(sdk_command("sdkmanager", *args, package), timeout=SDK_INSTALL_TIMEOUT, input_text="y\n" * 100, progress=progress)
+        if not sdk_package_ready(package):
+            raise ValueError(f"Android package {package} did not finish installing. Retry setup to repair the incomplete package.")
     avd_home = mobile_root() / "avd"
     avd_home.mkdir(parents=True, exist_ok=True)
     env = {**os.environ, "ANDROID_AVD_HOME": str(avd_home), "ANDROID_SDK_ROOT": str(sdk_root())}
     if not (avd_home / f"{AVD_NAME}.ini").is_file():
+        if progress:
+            progress("Creating the persistent OpenCompany Android device")
         await command(
             sdk_command("avdmanager", "create", "avd", "--name", AVD_NAME, "--package", IMAGE, "--device", "pixel_7"),
-            timeout=120,
+            timeout=600,
             env=env,
             input_text="no\n",
+            progress=progress,
         )
+    elif progress:
+        progress("Reusing the existing Android device, apps, and sign-ins")
     (mobile_root() / "resource.json").write_text(
         json.dumps(
             {
@@ -232,3 +346,5 @@ async def create_device(*, licenses_accepted: bool) -> None:
         ),
         encoding="utf-8",
     )
+    if progress:
+        progress("Android setup complete. The device is ready to start.")

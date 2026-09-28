@@ -4,9 +4,10 @@ from services.ws_handler_registry import register_router
 from services.plugin.shutdown_hooks import register_shutdown_hook
 from services.node_output_schemas import register_output_schema
 from ._node import MobileUseAgent, MobileOutput
+from ._tool import AndroidTool
 from ._router import router
 
-__all__ = ["MobileUseAgent", "MobileOutput"]
+__all__ = ["MobileUseAgent", "MobileOutput", "AndroidTool"]
 
 
 async def shutdown() -> None:
@@ -25,3 +26,4 @@ async def shutdown() -> None:
 register_router(router, name="mobile")
 register_shutdown_hook("mobile", shutdown)
 register_output_schema("mobile_use_agent", MobileOutput)
+register_output_schema("android_tool", MobileOutput)
