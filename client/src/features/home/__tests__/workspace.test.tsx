@@ -161,14 +161,14 @@ describe('WorkspaceDock', () => {
     expect(screen.getByText('Leo’s workspace')).toBeInTheDocument();
   });
 
-  it('mounts the selected employee’s browser nodes and keeps the Android panel available', async () => {
+  it('mounts the selected employee’s browser nodes and preserves the Mobile tab preference', async () => {
     useHomeStore.setState({ workspaceOpen: true, workspaceTab: 'browser' });
     renderWith([employee({ browser_nodes: [{ node_id: 'w1:browser:1', label: 'Research browser' }] })]);
     expect(screen.getByText('Research browser')).toBeInTheDocument();
     expect(screen.getByTestId('browser-workspace')).toHaveAttribute('data-workflow', 'w1');
     expect(screen.getByTestId('browser-workspace')).toHaveAttribute('data-visible', 'true');
-    await userEvent.click(screen.getByRole('tab', { name: 'Android' }));
-    expect(screen.getByText('The Android mirror isn’t available yet')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('tab', { name: 'Mobile' }));
+    expect(screen.getByText('Add a Mobile Agent node to this workflow to use its phone here.')).toBeInTheDocument();
     expect(useHomeStore.getState().workspaceTab).toBe('android');
     expect(screen.queryByTestId('browser-workspace')).toBeNull();
   });

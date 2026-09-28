@@ -17,6 +17,13 @@ from services.node_input_schemas import (
 from services.node_spec import get_node_spec, list_node_types_with_spec
 
 
+def _standalone_workspace_agent(node_type: str) -> bool:
+    """Embedded engines accept a delegated task; their tools live inside that engine."""
+    from services.node_registry import get_node_class
+    cls = get_node_class(node_type)
+    return bool(getattr(cls, "workspace_task", False) and getattr(cls, "supports_delegation", False))
+
+
 def _numeric_constraints(prop: dict) -> dict:
     """Pydantic emits ``Optional[float] = Field(ge=..., le=...)`` as
     ``{anyOf: [{number, minimum, maximum}, {null}]}``. This helper digs
@@ -944,6 +951,7 @@ class TestNodeSpecContractInvariants:
             # browser: live view + take-over above the node's parameters (the
             # Dev side panel and the Home Workspace find browser nodes by it).
             "isBrowserPanel",
+            "workspace",
             # Auto-derived on every node from BaseNode.start_to_close_timeout:
             # how long it may legitimately run. Lets the client size its
             # request budget instead of keeping its own list of slow types.
@@ -1053,6 +1061,8 @@ class TestPluginContractInvariants:
             # inputs — detect those by group.
             if "social" in (spec.get("group") or []):
                 continue
+            if _standalone_workspace_agent(t):
+                continue
             names = {h.get("name") for h in spec.get("handles") or []}
             for required in ("input-skill", "input-tools", "input-context", "input-task"):
                 assert required in names, f"{t}: componentKind=agent missing handle {required!r}; got {sorted(names)}"
@@ -1121,6 +1131,8 @@ class TestWave10GContractInvariants:
             if spec.get("componentKind") != "agent":
                 continue
             if t in self.AGENT_EXEMPT:
+                continue
+            if _standalone_workspace_agent(t):
                 continue
             hints = spec.get("uiHints") or {}
             assert hints.get("hasSkills") is True, f"{t}: componentKind=agent must declare uiHints.hasSkills=True"

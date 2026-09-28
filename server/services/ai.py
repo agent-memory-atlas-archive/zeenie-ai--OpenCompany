@@ -2431,9 +2431,9 @@ class AIService:
 
             # For AI Agent nodes, enhance description with child agent's tool capabilities
             # This allows parent agent to know what the child agent can do
-            from constants import AI_AGENT_TYPES
+            from services.workspace_capabilities import is_registered_agent
 
-            if node_type in AI_AGENT_TYPES:
+            if is_registered_agent(node_type):
                 child_tools = tool_info.get("child_tools", [])
                 if child_tools:
                     # Build capability description from child's connected tools

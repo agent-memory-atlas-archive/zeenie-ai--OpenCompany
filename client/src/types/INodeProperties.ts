@@ -246,6 +246,8 @@ export interface INodeUIHints {
   isCanvasPanel?: boolean;
   /** Live browser view backed by the plugin's browser-session transport. */
   isBrowserPanel?: boolean;
+  /** Plugin-owned Workspace renderer capability; never inferred from node type. */
+  workspace?: { kind: string };
   /** Special-case panel for gmaps_create with map preview. */
   showLocationPanel?: boolean;
   /** ConsolePanel: this node is a chat-message target. */
