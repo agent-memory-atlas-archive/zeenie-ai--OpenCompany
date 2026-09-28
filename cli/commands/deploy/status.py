@@ -16,7 +16,7 @@ from . import _state, _terraform
 def status_command() -> None:
     # Establish the same DATA_DIR context as `deploy up` (load_config sets it)
     # so workdir() resolves to the directory `up` created.
-    preflight()
+    cfg, _ = preflight()
     meta = _state.read_meta()
     if meta is None:
         console.print("[yellow]No OpenCompany deployment found.[/]")
@@ -25,7 +25,7 @@ def status_command() -> None:
     wd = _state.workdir()
     ip = _terraform.tf_output(wd, "external_ip")
     url = _terraform.tf_output(wd, "url") or (
-        f"http://{ip}:{meta.get('port') or load_config().backend_port}" if ip else None
+        f"http://{ip}:{meta.get('port') or cfg.backend_port}" if ip else None
     )
 
     console.print("  Deployment:  OpenCompany")
