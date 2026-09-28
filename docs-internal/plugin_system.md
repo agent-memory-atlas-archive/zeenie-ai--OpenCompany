@@ -584,7 +584,7 @@ skips them. The two non-underscore `.py` files are the plugin classes
 | OAuth callback path (`/api/<provider>/callback`) so `services.oauth_utils.get_redirect_uri` never cross-imports `nodes/<plugin>/_oauth.py` | `services.ws_handler_registry` | `register_oauth_callback_path(provider, path)` |
 | Trigger event-filter builder | `services.event_waiter` | `register_filter_builder(node_type, fn)` |
 | Trigger pre-execution check (e.g. "bot not connected") | `services.event_waiter` | `register_trigger_precheck(node_type, fn)` |
-| Service-status refresh on WebSocket connect | `services.status_broadcaster` | `register_service_refresh(callback)` |
+| Service-status refresh (runs once, in a background task at startup; not on each WebSocket connect) | `services.status_broadcaster` | `register_service_refresh(callback)` |
 | Per-node output schema (when not auto-derivable) | `services.node_output_schemas` | `register_output_schema(node_type, ModelClass)` |
 | Master-Skill expander (how a `masterSkill` node expands into its enabled skills during edge walking) | `services.plugin.edge_walker` | `register_master_skill_expander(fn)` — registered by `nodes.skill` on package import. |
 | Agent Context descriptor (node connected on `input-context`) | `services.plugin.edge_walker` | `register_agent_context_builder(async_fn)` — RFC-0002; the framework walks the edge but owns no knowledge of the descriptor's keys or thread-selection rules. Reference: `nodes/context/_descriptor.py`. |
@@ -912,7 +912,7 @@ All Wave 10 invariants in `test_node_spec.py` still run; Wave 11 invariants in `
   added Wave 11.I),
   `event_waiter.register_filter_builder` (event filters),
   `event_waiter.register_trigger_precheck` (trigger pre-execution
-  checks), `status_broadcaster.register_service_refresh` (WS-connect
+  checks), `status_broadcaster.register_service_refresh` (service-status
   refresh callbacks), `node_output_schemas.register_output_schema`
   (output schemas).
 - Wave 11.I — Eight more plugin domains migrated to the

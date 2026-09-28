@@ -15,6 +15,21 @@ supervision, lifecycle WebSocket handlers, status broadcasts, CLI
 invocation) lives in [`services/events/`](../server/services/events/) —
 this folder contributes only the Stripe-specific shapes.
 
+> **Known gap: `stripeReceive` never fires today.** Deploy skips it: the node
+> is not in `constants.WORKFLOW_TRIGGER_TYPES`, which
+> `TriggerManager.find_trigger_nodes` filters on, and it is not
+> canary-registered, so a deployed workflow starts no listener for it and logs
+> no warning. A canvas Run waits forever: `WebhookTriggerNode.__init_subclass__`
+> keys the waiter on the source type `stripe.webhook`, while
+> `WebhookSource.handle` dispatches the envelope, typed `stripe.<event>`, and
+> `event_waiter.dispatch` matches types exactly. Even with matching keys, the
+> dispatcher hands each filter the envelope's `data`, and
+> `WebhookTriggerNode.build_filter` raises a validation error rebuilding a
+> `WorkflowEvent` from it. The rest of the plugin (`stripeAction`, login, the
+> daemon) does not use this path. The
+> [`stripeReceive` card](./node-logic-flows/stripe/stripeReceive.md) also
+> records a field mismatch in `shape_output`.
+
 ## Architecture
 
 ```
@@ -73,10 +88,12 @@ StripeWebhookSource.handle(request)
    │      → WorkflowEvent(id=evt_…, type="stripe.charge.succeeded",
    │                      source="stripe://acct_…", data=payload["data"])
    │
-   └── event_waiter.dispatch(source.type, event)
+   ├── self.receive(event)             (queues it on the source)
+   │
+   └── event_waiter.dispatch(event)    (the envelope alone; matched on event.type)
           ▼
-   StripeReceiveNode waiters resolved
-   (WebhookTriggerNode.execute returns the shaped event)
+   StripeReceiveNode waiters are keyed "stripe.webhook", so none match
+   (see the Known gap at the top)
 ```
 
 ### Request flow — outgoing CLI action
@@ -168,10 +185,12 @@ WS message: stripe_logout
 handle_stripe_logout()
    ├── get_listen_source().stop()
    ├── run_cli_command([binary, "logout", "--all"])
-   │     (clears ~/.config/stripe/config.toml)
+   │     (clears ~/.config/stripe/config.toml; if this process has not
+   │      resolved the CLI yet, e.g. right after a restart, the handler
+   │      deletes that file directly instead)
    ├── _mark_logged_out()                      ← marker-token clear
    │     auth_service.remove_oauth_tokens("stripe")
-   └── _broadcast_catalogue_updated()
+   └── _broadcast_credential_event("credential.oauth.disconnected")
          (modal flips back to "Not Connected")
 ```
 
@@ -189,7 +208,7 @@ StripeListenSource.start()  (lock-protected, idempotent)
    │       command="<shlex-quoted-binary> listen
    │                --forward-to http://localhost:{port}/webhook/stripe
    │                --print-secret",            # no --api-key
-   │       workflow_id="_stripe_global",
+   │       workflow_id="_stripe",             # the source's workflow_namespace
    │       working_directory=<DATA_DIR>/daemons,   # shared daemons_dir() root
    │       line_handler=self._on_line,           # ← per-line callback
    │   )
@@ -207,23 +226,22 @@ StripeListenSource.start()  (lock-protected, idempotent)
         already runs.)
 
 StripeListenSource.stop()
-   └── ProcessService.stop("stripe-listen", "_stripe_global")
+   └── ProcessService.stop("stripe-listen", "_stripe")
 ```
 
 ## Key Files
 
 | File | Description |
 |---|---|
-| `server/nodes/stripe/__init__.py` | Wiring: 5 `register_*` calls + `make_status_refresh`. |
+| `server/nodes/stripe/__init__.py` | Wiring: `register_ws_handlers`, `register_webhook_source`, `register_service_refresh` (with `make_status_refresh`) and `register_output_schema` for both nodes. There is no `register_canary_trigger_type` call. |
 | `server/nodes/stripe/_credentials.py` | `StripeCredential(Credential)` — thin marker class. The CLI manages auth at `~/.config/stripe/config.toml`; this class only exposes the captured `stripe_webhook_secret` for the framework's signature-verifier path. |
 | `server/nodes/stripe/_install.py` | `ensure_stripe_cli()` — async, idempotent, lock-guarded. Resolves the binary path: in-process cache → system PATH → previously-downloaded copy at `<DATA_DIR>/packages/stripe/bin/stripe[.exe]` (`core.paths.package_dir("stripe") / "bin"`) → fresh download from GitHub releases (pinned `_VERSION = "1.40.9"`) into that same dir. Asset-name map covers Windows AMD64, Linux x86_64/arm64, macOS x86_64/arm64. Subsequent calls hit the cache instantly. |
-| `server/skills/payments_agent/stripe-skill/SKILL.md` | LLM teaching markdown for the `stripe_action` tool. ~10K chars covering customers, charges, payment_intents, refunds, invoices, products/prices, subscriptions, the `trigger` command, common workflows, quoting/escaping, idempotency, test vs live mode, error patterns, and webhook delivery. |
+| `server/skills/payments_agent/stripe-skill/SKILL.md` | LLM teaching markdown for the `stripe_action` tool, covering customers, charges, payment_intents, refunds, invoices, products/prices, subscriptions, the `trigger` command, common workflows, quoting/escaping, idempotency, test vs live mode, error patterns, and webhook delivery. |
 | `server/config/credential_providers.json` | JSON-driven Credentials Modal catalogue. The `payments` category + `stripe` provider entry tell the frontend modal to render a **Login with Stripe** button (no API-key field) wired to the `stripe_login` / `stripe_logout` / `stripe_status` WebSocket handlers. No React file edits required. |
-| `server/nodes/stripe/stripe_action.py` | `tool_name = "stripe_action"` ClassVar (resolved via `services/node_registry.py`) and the matching `tool_description` — what the LLM sees when the action node is wired to an agent's `input-tools` handle. |
 | `server/nodes/stripe/_source.py` | `StripeListenSource(DaemonEventSource)` and `StripeWebhookSource(WebhookSource)` plus their singletons. |
 | `server/nodes/stripe/_handlers.py` | WS handlers via `make_lifecycle_handlers` (`stripe_connect` / `stripe_disconnect` / `stripe_reconnect`) plus the plugin-specific `stripe_login`, `stripe_logout`, `stripe_trigger` (synthetic test events) and `stripe_status` (overrides the factory's status handler to add login state). See [WebSocket handlers](#websocket-handlers). |
-| `server/nodes/stripe/stripe_action.py` | `StripeActionNode` — pass-through over the CLI via `run_cli_command`. |
-| `server/nodes/stripe/stripe_receive.py` | `StripeReceiveNode(WebhookTriggerNode)` — filter overrides + output reshape. |
+| `server/nodes/stripe/stripe_action.py` | `StripeActionNode` — pass-through over the CLI via `run_cli_command`. Its `tool_name = "stripe_action"` and the matching `tool_description` are what the LLM sees when the node is wired to an agent's `input-tools` handle. |
+| `server/nodes/stripe/stripe_receive.py` | `StripeReceiveNode(WebhookTriggerNode)` — filter overrides + output reshape. Never fires today (see the Known gap at the top). |
 | `server/services/events/__init__.py` | Public framework surface — exports every base class + helper. |
 | `server/services/events/daemon.py` | `DaemonEventSource` — supervises subprocess via `ProcessService`. Subscribes to ProcessService's per-line callback (`line_handler`) instead of re-tailing the on-disk log files. Credential gate is `await self.has_credential()` so non-api-key auth (Stripe → `is_logged_in()`) plugs in via subclass override. |
 | `server/services/process_service.py` | Spawns + supervises long-lived subprocesses. Loops `stream.readline()` per stdout/stderr, writes to `.log`, broadcasts to Terminal, and forwards each decoded line to the optional `line_handler` async callback (Wave 12.B addition for typed event-source subscribers — see `DaemonEventSource._on_line`). |
@@ -236,8 +254,8 @@ StripeListenSource.stop()
 | `server/nodes/visuals.json` | `stripeAction` skill map only (`{"skill": "stripe-skill"}`); no `stripeReceive` key. The `asset:stripe` icon and `#635BFF` colour come from `nodes/groups.py` (`payments` group) and `nodes/stripe/meta.json`. |
 | `server/nodes/groups.py` | `payments` palette group. |
 | `server/credentials/icons/stripe.svg` | Stripe credential-tile icon, served at `/api/schemas/credentials/stripe/icon`. |
-| `server/tests/services/test_events.py` | 27 framework tests (envelope, verifiers, polling/daemon lifecycle, WebhookSource). |
-| `server/tests/nodes/test_stripe_plugin.py` | 20 Stripe-specific tests (shape, filter, action passthrough, registrations). |
+| `server/tests/services/test_events.py` | Framework tests (envelope, verifiers, polling/daemon lifecycle, WebhookSource). |
+| `server/tests/nodes/test_stripe_plugin.py` | Stripe-specific tests (shape, filter, action passthrough, registrations). |
 
 ## Plugin classes
 
@@ -292,7 +310,7 @@ plus the per-line callback subscription via `ProcessService`'s
 | `credential = StripeCredential` | Resolved by the framework before `build_command` is called. |
 | `start()` (override) | `await ensure_stripe_cli()` then `super().start()`. Caches the resolved binary path so `build_command` (sync) can pick it up. |
 | `build_command(secrets)` | Returns `<shlex.quote'd-binary> listen --forward-to … --print-secret`. The binary path is `shlex.quote`d so it round-trips through `ProcessService`'s POSIX-mode `shlex.split` unchanged. No `--api-key`: CLI reads its own config file. |
-| `has_credential()` (override) | Returns `is_logged_in()` — a filesystem check on `~/.config/stripe/config.toml`. Consulted by `DaemonEventSource.start` (the credential gate) and by `StripeReceiveNode._check_precondition` at deploy time (the demand-driven start; the status refresh is a passive probe since July 2026). |
+| `has_credential()` (override) | Returns `is_logged_in()` — a filesystem check on `~/.config/stripe/config.toml`. Consulted by `DaemonEventSource.start` (the credential gate) and by `StripeReceiveNode._check_precondition` when the trigger runs (the demand-driven start; only a canvas Run reaches it today, because deploy skips the node). The status refresh is a passive probe since July 2026. |
 | `parse_line(stream, line)` | Invoked once per decoded stdout/stderr line via `ProcessService`'s `line_handler` callback. On `whsec_…` match, persists the secret via `auth_service.store_api_key("stripe_webhook_secret", …)`. The Stripe daemon doesn't emit workflow events itself — they arrive via the webhook receiver. |
 
 ### `StripeWebhookSource(WebhookSource)`
@@ -353,7 +371,7 @@ class StripeReceiveNode(WebhookTriggerNode):
     Output = StripeReceiveOutput
 
     async def _check_precondition(self) -> Optional[str]:
-        # Refuse to register a waiter if the daemon isn't running.
+        # Start the listen daemon on demand; refuse if the CLI is not logged in.
         ...
 
     def _extra_filter(self, params):                 # livemode filter on top of event-type
@@ -429,17 +447,18 @@ resources work without code changes.
 
 The lifecycle factory `make_lifecycle_handlers(prefix="stripe",
 source=…)` auto-generates `stripe_connect/disconnect/reconnect`
-from the source's `start/stop/restart` methods (user-initiated
-daemon lifecycle). The plugin-specific handlers wired into
-the modal's Connect button are `stripe_login` and `stripe_logout`:
+from the source's `start/stop/restart` methods (the daemon lifecycle;
+no button in the modal sends them). The plugin-specific handlers wired
+into the modal's **Login with Stripe** and **Disconnect** buttons are
+`stripe_login` and `stripe_logout`:
 
 | Type | Handler | Purpose |
 |---|---|---|
 | `stripe_login` | `ensure_stripe_cli()` → `stripe login --non-interactive` (sync) → returns `{url, verification_code}` to the frontend; spawns background `_complete_login` task | **Modal "Login with Stripe" button** |
-| `stripe_logout` | stops daemon → `stripe logout --all` → `_mark_logged_out()` → `_broadcast_catalogue_updated()` | **Modal Disconnect button** |
-| `stripe_status` | returns `{logged_in, running, pid, webhook_secret_captured, connected = running ∧ logged_in}` | Optional read-only poll for diagnostics; the modal flips reactively from the catalogue refetch, not from this handler |
+| `stripe_logout` | stops daemon → `stripe logout --all` → `_mark_logged_out()` → `_broadcast_credential_event("credential.oauth.disconnected")` | **Modal Disconnect button** |
+| `stripe_status` | returns `{success, status: {type, running, pid, logged_in, connected}}`, where `connected = running and logged_in` | The modal's **Refresh** button sends it; the connection indicator still comes from the catalogue refetch, not from this reply |
 | `stripe_trigger` | passes `["trigger", event]` to `run_cli_command` (after `ensure_stripe_cli`) | Synthetic test event |
-| `stripe_connect/disconnect/reconnect` | `source.start/stop/restart()` from the lifecycle factory | Daemon-only lifecycle, user-initiated |
+| `stripe_connect/disconnect/reconnect` | `source.start/stop/restart()` from the lifecycle factory | Daemon-only lifecycle. No button in the Credentials modal sends these |
 
 Background `_complete_login(binary, next_step, pre_mtime)` flow:
 
@@ -501,12 +520,9 @@ is the LLM-facing manual for the `stripe_action` tool. It teaches:
   credential automatically), surface Stripe error messages verbatim
   to the user.
 
-The `payments_agent/` folder is a new skill bucket (the 12th,
-alongside `assistant`, `android_agent`, `autonomous`, `coding_agent`,
-`productivity_agent`, `rlm_agent`, `social_agent`, `task_agent`,
-`terminal`, `travel_agent`, `web_agent`). It opens up future
-payments integrations (PayPal CLI, Square, etc.) under the same
-agent type.
+The `payments_agent/` folder is the skill folder for payments,
+alongside the other folders under `server/skills/`. Other payments
+integrations (PayPal CLI, Square, etc.) would go in the same folder.
 
 ## Credentials Modal integration
 
@@ -582,8 +598,10 @@ secret lands.
 
 ## Status broadcasting — marker token + generic catalogue invalidation
 
-There is **no `stripe_status` broadcast type, no Zustand entry, no
-hardcoded case in `WebSocketContext.tsx`**. Stripe rides on two
+The frontend has **no Stripe-specific status handling**: no Zustand
+entry and no `stripe_status` case in `WebSocketContext.tsx`. (The
+backend does broadcast `stripe_status`, from `make_status_refresh`
+below, but no frontend code reads it.) The modal relies on two
 existing generic mechanisms:
 
 ### 1. The catalogue's authoritative `stored` field
@@ -640,15 +658,18 @@ stripe-specific code anywhere on the frontend.**
 
 ### 3. `make_status_refresh` (passive status mirror)
 
-The plugin registers `make_status_refresh` so that on every
-WebSocket-client connect `source.status()` is mirrored into
-`broadcaster._status["stripe"]` for any consumers that read it
-directly. (The modal does not.) Since July 2026 the refresh **never
-starts the daemon** — a stored credential alone is not a reason to
-run `stripe listen`. The demand signals own the starts instead:
-`_complete_login` after a successful login, the user-initiated
-`stripe_connect` command, and `StripeReceiveNode._check_precondition`
-when a workflow with a Stripe trigger deploys.
+The plugin registers `make_status_refresh`. Service refresh callbacks
+run once, in a background task at startup (`_refresh_all_services`,
+scheduled from the `main.py` lifespan), not on each WebSocket connect.
+The callback mirrors `source.status()` (`type`, `running`, `pid`; no
+login state) into `broadcaster._status["stripe"]` and broadcasts it as
+`stripe_status`, which no frontend code handles. Since July 2026 the
+refresh **never starts the daemon** — a stored credential alone is not
+a reason to run `stripe listen`. The demand signals own the starts
+instead: `_complete_login` after a successful login, the
+`stripe_connect` command (no modal button sends it), and
+`StripeReceiveNode._check_precondition` when the trigger runs, which
+today means a canvas Run only.
 
 ### Frontend `connected` derivation (single generic line)
 
@@ -726,21 +747,24 @@ The Stripe panel lives in the Payments category (introduced
 specifically for this plugin in the `payments` palette group). It
 provides:
 
-- **Login with Stripe** button → fires `stripe_login`. The handler
-  returns a `{url, verification_code}` pair; the modal opens the URL
-  in a new tab and shows the verification code so the user can
-  confirm the pairing on the Stripe Dashboard.
-- **Disconnect** button → fires `stripe_logout`, which stops the
-  daemon and runs `stripe logout --all` to clear
+- **Login with Stripe** (shown until connected) → fires `stripe_login`.
+  The handler returns a `{url, verification_code}` pair; the modal
+  opens the URL in a new tab and shows the verification code so the
+  user can confirm the pairing on the Stripe Dashboard.
+- **Disconnect** (shown once connected) → fires `stripe_logout`, which
+  stops the daemon and runs `stripe logout --all` to clear
   `~/.config/stripe/config.toml`.
-- **Status indicator** — derived from the catalogue's `config.stored`
-  (`OAuthPanel.tsx:22`); the `stripe_status` WS handler is a read-only
-  diagnostic poll.
-- **Reconnect** button — issues `stripe_reconnect` for stuck states.
+- **Refresh** → sends `stripe_status` (the provider's `ws.status`).
+- **Status indicator** — `OAuthPanel` computes
+  `const connected = status ? !!status.connected : !!config.stored`.
+  Stripe declares no `status_hook`, so `status` is null and the
+  indicator follows the catalogue's `stored` flag.
 
-No webhook-secret input is needed — the daemon captures it
-automatically. The UI surfaces "secret captured ✓" once the value is
-persisted.
+There is no Reconnect button: the `stripe_reconnect` handler exists, but
+nothing in the modal sends it. No webhook-secret input is needed, since
+the daemon captures the secret automatically, but the modal does not
+show whether it has been captured; the backend logs
+`webhook signing secret persisted` when it is.
 
 ## Operational notes
 
@@ -776,20 +800,25 @@ retried by the CLI the same way.
 
 ### Single global daemon
 
-One Stripe account per OpenCompany install. The daemon is
-singleton-global (`workflow_id="_stripe_global"`). Multi-account
+One Stripe account per OpenCompany install. The daemon is a single
+global process (`ProcessService` key `workflow_id="_stripe"`, the
+source's `workflow_namespace`). Multi-account
 support is deferred to a future revision; the design holds — give
 `StripeListenSource` a `__init__(account_id)` and key the singleton
 by id.
 
 ### No auto-restart on crash
 
-If `stripe listen` exits unexpectedly, the framework surfaces the
-disconnected status and waits for the user to reconnect via the
-Credentials Modal. The per-line `parse_line` callback simply stops
-receiving lines when `ProcessService` reaps the process. There's no exponential-backoff respawn loop
-— that's deliberate to keep failing daemons visible rather than
-hidden behind silent retries.
+If `stripe listen` exits unexpectedly, nothing restarts it, and nothing
+reports it either. The source's `_started` flag is cleared only by
+`stop()`, so `stripe_status` still reports `running: true` and
+`StripeReceiveNode._check_precondition` skips the start; the modal's
+indicator follows the stored login marker, so Stripe still reads as
+connected. The per-line `parse_line` callback simply stops receiving
+lines when `ProcessService` reaps the process. To restart the daemon,
+click Disconnect and then Login with Stripe. There's no
+exponential-backoff respawn loop; that was deliberate, so a failing
+daemon is not hidden behind silent retries.
 
 ## Verification
 
@@ -799,42 +828,48 @@ End-to-end smoke (requires Stripe CLI installed and a Stripe account):
    sends `{"type":"stripe_login"}` → reply contains `{url,
    verification_code}`. Open the URL, confirm the code on Stripe
    Dashboard, click Authorise. Within a few seconds the modal flips
-   to "Connected" and `stripe_status` broadcasts
-   `{logged_in: true, running: true, webhook_secret_captured: true}`.
+   to "Connected"; its **Refresh** button (`stripe_status`) then
+   reports `logged_in: true, running: true, connected: true`.
 2. **Daemon start on login.** After login, confirm:
-   - `process_service.list_processes("_stripe_global")` shows
+   - `process_service.list_processes("_stripe")` shows
      `stripe-listen` running.
    - Within ~3 s the stderr.log contains `whsec_…`.
    - `auth_service.get_api_key("stripe_webhook_secret")` returns the
      secret.
-3. **Synthetic event.** Build a workflow with `StripeReceiveNode`
-   (filter: `charge.*`) → console node. Deploy. WS
-   `{"type":"stripe_trigger","event":"charge.succeeded"}`. Console
-   fires with `event_type="charge.succeeded"`, `event_id` matches the
-   CLI's emitted event.
-4. **Filter rejection.** Set filter to `payment_intent.created`,
-   retrigger `charge.succeeded` — node does NOT fire. Trigger
-   `payment_intent.created` — it does.
+3. **Synthetic event (blocked by the Known gap).** Once `stripeReceive`
+   fires: build a workflow with `StripeReceiveNode` (filter: `charge.*`)
+   → console node, deploy it, and send WS
+   `{"type":"stripe_trigger","event":"charge.succeeded"}`. The console
+   should fire with `event_type="charge.succeeded"` and the CLI's
+   `event_id`. Today the forwarded event is verified and dispatched, but
+   no trigger fires.
+4. **Filter rejection (blocked by the Known gap).** Set filter to
+   `payment_intent.created`, retrigger `charge.succeeded` — node should
+   NOT fire. Trigger `payment_intent.created` — it should.
 5. **Action node.** Configure `StripeActionNode` with
    `command="customers create --email rosy@sparrow.com"`. Run. Output
    contains `id: cus_…`, `email: rosy@sparrow.com`.
 6. **AI tool surface.** From a chat agent, prompt
    "create a Stripe test customer with email rosy@sparrow.com"; the
-   LLM emits a `stripeAction.run` tool call.
+   LLM calls the `stripe_action` tool.
 7. **Signature failure.**
    `curl -X POST -H "Stripe-Signature: t=0,v1=garbage" http://localhost:${PYTHON_BACKEND_PORT}/webhook/stripe -d '{}'`
-   returns 400; no event dispatched.
+   returns 400 once the secret is captured (503 before that); no event
+   dispatched.
 8. **Logout.** Credentials Modal → Disconnect. Confirm
-   `process_service.list_processes("_stripe_global")` is empty AND
+   `process_service.list_processes("_stripe")` is empty AND
    `~/.config/stripe/config.toml` no longer contains an `_api_key`
    line.
-9. **Restart.** Restart OpenCompany. The status refresh does NOT
-   auto-spawn the daemon; start it via the modal's Connect
-   (`stripe_connect`) or by deploying a workflow with a Stripe trigger.
+9. **Restart.** Restart OpenCompany. The status refresh does not start
+   the daemon. The modal still shows Stripe as connected (the login
+   marker survives a restart), so it offers no Login button, and it has
+   no Connect button. The daemon starts again on a canvas Run of
+   `stripeReceive` (its precondition) or a `stripe_connect` WS message;
+   deploy skips Stripe triggers.
 
 Unit tests live in [`server/tests/nodes/test_stripe_plugin.py`](../server/tests/nodes/test_stripe_plugin.py)
-(20 collected cases at time of writing) and [`server/tests/services/test_events.py`](../server/tests/services/test_events.py)
-(27 framework tests; counts via `pytest --collect-only -q`). Run via `pytest server/tests/services/test_events.py
+and [`server/tests/services/test_events.py`](../server/tests/services/test_events.py)
+(count them with `pytest --collect-only -q`). Run via `pytest server/tests/services/test_events.py
 server/tests/nodes/test_stripe_plugin.py -v`.
 
 ## Related Docs

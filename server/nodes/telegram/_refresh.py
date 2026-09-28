@@ -5,8 +5,9 @@ The broadcaster no longer hardcodes a per-service refresh — instead
 plugin packages register their own callback via
 ``status_broadcaster.register_service_refresh``.
 
-The callback runs once per WebSocket client connect (inside the
-``_refresh_all_services`` TaskGroup).  Auth reads + owner restore
+The callback runs inside the ``_refresh_all_services`` TaskGroup, which
+runs once, in a background task at startup (not on each WebSocket client
+connect).  Auth reads + owner restore
 happen inside :class:`TelegramService`; this function just decides
 whether to attempt an auto-reconnect and mirrors the resulting status
 into the broadcaster cache.

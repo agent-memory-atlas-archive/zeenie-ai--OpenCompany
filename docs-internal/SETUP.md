@@ -34,6 +34,10 @@ command provisions the Python side (uv, the venvs, bytecode; a minute or two).
 `curl -fsSL https://opencompany.sh/install.sh | bash` (or `install.ps1` on
 Windows) installs bun, Python and uv first and provisions eagerly.
 
+Provisioning also creates `.env` as a plain copy of `.env.template`, including
+its publicly known placeholder secrets. Replace them before you store any
+credentials; see [Environment Configuration](#environment-configuration).
+
 **Known issue in registry installs (open since 0.2.0; the status line of
 [errors.md #25 and #26](./errors.md) says whether your version is fixed)**: a
 registry install provisions but then `company start` (and `company serve`)
@@ -173,7 +177,15 @@ Copy the example environment file:
 cp .env.template .env
 ```
 
-Alternatively, `company build` scaffolds `.env` from `.env.template` automatically when it is missing (step `[0/6]`) and generates fresh random secrets for `SECRET_KEY` / `JWT_SECRET_KEY` / `API_KEY_ENCRYPTION_KEY` instead of the dev placeholders. An existing `.env` is never modified. If you copy the template by hand and later enable auth (or set `DEPLOYMENT_MODE` to anything other than `local`), the server logs a non-fatal error banner at startup until the placeholder secrets are replaced.
+`company build` also creates `.env` when it is missing (step `[0/6]`), and then generates fresh random values for `SECRET_KEY` / `JWT_SECRET_KEY` / `API_KEY_ENCRYPTION_KEY` instead of the template's `dev-` placeholders. It never modifies an existing `.env`, and most installs already have one by then: `bun install` in a checkout, `company provision` and a global install's first `company` command all create `.env` as a plain copy of the template, placeholders included.
+
+**Replace the placeholder secrets before you store any credentials.** Generate one value per key, set it in `.env` (or the process environment), and restart:
+
+```bash
+python -c "import secrets; print(secrets.token_hex(24))"
+```
+
+The startup warning about placeholder secrets appears only with login on or `DEPLOYMENT_MODE` other than `local`, so a default local install never shows it. Never change `API_KEY_ENCRYPTION_KEY` once credentials are stored: they are encrypted with it, and a new key makes them unreadable, so they would have to be entered again. See [Credentials Encryption → Placeholder secrets](./credentials_encryption.md#placeholder-secrets).
 
 ### Key Settings
 
@@ -200,7 +212,7 @@ Add these to `.env` or configure via the Credentials UI:
 When `VITE_AUTH_ENABLED=false` (the default):
 - Login page is skipped entirely
 - User is set as anonymous with owner privileges
-- Encryption service auto-initializes with `API_KEY_ENCRYPTION_KEY` as the password
+- Credentials are still encrypted with `API_KEY_ENCRYPTION_KEY`, exactly as with login on (the key never comes from a user's password)
 - API keys can be saved/retrieved without user authentication
 - Useful for local development and testing
 

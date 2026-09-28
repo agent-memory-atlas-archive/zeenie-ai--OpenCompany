@@ -660,7 +660,7 @@ The Temporal binary + persistence are managed in-process by the plugin-folder pa
 
 **Worker crash-restart (months-long durability)**: the SDK `Worker` is single-use — a second `run()` on the same instance raises `RuntimeError("Already started")`. Both restart loops therefore REBUILD a fresh worker per attempt: `TemporalWorkerManager._run_worker` via `_build_worker()`, and every `TemporalWorkerPool` queue worker runs under `_run_queue_worker` (previously a bare `worker.run()` task — one crash silently killed the queue's only worker and its activities pended forever). Backoff knobs: `TEMPORAL_WORKER_RESTART_BACKOFF_SECONDS` / `_MAX_SECONDS`. Locked by `tests/temporal/test_worker_restart.py`.
 
-**WS surface**: `_handlers.py` registers `temporal_status` / `temporal_start` / `temporal_stop` via `services.ws_handler_registry.register_ws_handlers`. `_refresh.py` registers a WS-connect callback via `services.status_broadcaster.register_service_refresh` so the FE health indicator stays current.
+**WS surface**: `_handlers.py` registers `temporal_status` / `temporal_start` / `temporal_stop` via `services.ws_handler_registry.register_ws_handlers`. `_refresh.py` registers a status-refresh callback via `services.status_broadcaster.register_service_refresh`, which seeds the FE health indicator once at startup (refresh callbacks run once, in a background task, not on each WebSocket connect).
 
 **Months-long durability contract**: running and paused deployments survive backend restarts, are never auto-terminated, and keep executing for months. None of the mechanisms below carries a `workflow.patched` marker: the lifetime-cap removal and the poll-interval floor apply unconditionally, including when an older history is replayed.
 

@@ -70,11 +70,13 @@ class StripeReceiveNode(WebhookTriggerNode):
         source = get_listen_source()
         if source._started:
             return None
-        # Deploying a stripeReceive workflow IS the demand signal: start the
-        # listen daemon here instead of relying on a credential-triggered
-        # auto-start at boot (the status refresh is a passive probe now).
+        # Running this trigger is the demand signal: start the listen daemon
+        # here instead of relying on a credential-triggered auto-start at boot
+        # (the status refresh is a passive probe now). Only a canvas Run gets
+        # here: deploy skips stripeReceive, which is not in
+        # constants.WORKFLOW_TRIGGER_TYPES.
         if not await source.has_credential():
-            return "Stripe not connected. Add Stripe API key in Credentials and connect."
+            return "Stripe not connected. Log in with Stripe in Credentials."
         result = await source.start()
         if not (result or {}).get("success", False):
             error = (result or {}).get("error") or "unknown error"

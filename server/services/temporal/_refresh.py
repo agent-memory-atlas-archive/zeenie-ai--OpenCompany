@@ -1,9 +1,10 @@
-"""WS-connect status broadcast for the Temporal stack.
+"""Status-refresh broadcast for the Temporal stack.
 
-Registered via ``status_broadcaster.register_service_refresh`` so the
-frontend health indicator stays current — every WebSocket client
-connect triggers ``_refresh_all_services()`` which fans out to every
-registered callback. Same idiom :mod:`nodes.telegram._refresh` uses.
+Registered via ``status_broadcaster.register_service_refresh``, so it runs
+when ``_refresh_all_services()`` fans out to every registered callback.
+That happens once, in a background task the ``main.py`` lifespan
+schedules at startup; WebSocket client connects do not trigger it. Same
+idiom :mod:`nodes.telegram._refresh` uses.
 
 Also exposes :func:`temporal_status_snapshot` — the single source of
 truth for the ``{temporal}`` status shape consumed by both this refresh

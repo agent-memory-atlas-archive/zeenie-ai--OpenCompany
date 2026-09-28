@@ -81,10 +81,11 @@ def make_status_refresh(
 
     The callback is a passive probe: it mirrors the source's status into
     ``broadcaster._status[status_key]`` and emits a ``broadcast_type``
-    broadcast. It never starts the source — a stored credential alone is
-    not a reason to run an optional daemon. Sources start on demand:
-    user-initiated ``{prefix}_connect`` / login handlers, and trigger-node
-    deploy prechecks (e.g. ``StripeReceiveNode._check_precondition``).
+    broadcast. Refresh callbacks run once, in a background task at startup.
+    It never starts the source — a stored credential alone is not a reason
+    to run an optional daemon. Sources start on demand: user-initiated
+    ``{prefix}_connect`` / login handlers, and trigger-node prechecks when
+    the trigger runs (e.g. ``StripeReceiveNode._check_precondition``).
     """
 
     async def refresh(broadcaster: "StatusBroadcaster") -> None:

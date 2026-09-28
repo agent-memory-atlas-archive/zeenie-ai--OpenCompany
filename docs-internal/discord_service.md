@@ -153,7 +153,7 @@ ready" for a bad credential.
 
 The reason is the deploy path: the engine marks a deployed trigger
 `_pre_executed` and passes `_trigger_output` through verbatim
-([models.py:378-392](../server/services/execution/models.py)), so the node body
+(`ExecutionContext.create` in [`services/execution/models.py`](../server/services/execution/models.py)), so the node body
 never runs and a download flag there would work on the canvas and silently do
 nothing once deployed. `whatsappBusinessMedia` exists for the same reason and
 documents it in its own module docstring.
@@ -246,10 +246,12 @@ walker touches. [`nodes/__init__.py`](../server/nodes/__init__.py) swallows
 import errors during discovery, so a failing library import would make the
 whole plugin silently disappear rather than report anything.
 
-**Both trigger frozensets matter.** Omitting a trigger from
-`EVENT_TRIGGER_TYPES` / `WORKFLOW_TRIGGER_TYPES` is a silent failure: deploy
-filters on them and ignores the node with no listener and no warning
-([constants.py:402-406](../server/constants.py)). Tests assert the membership.
+**Both trigger frozensets are asserted.** Omitting a trigger from
+`WORKFLOW_TRIGGER_TYPES` is a silent failure: `TriggerManager.find_trigger_nodes`
+filters on it, so deploy ignores the node with no listener and no warning (see
+the comment inside `WORKFLOW_TRIGGER_TYPES` in [`constants.py`](../server/constants.py);
+`stripeReceive` is missing from it today). `EVENT_TRIGGER_TYPES` has no
+production reader, but the tests assert membership in both.
 
 ## Testing
 

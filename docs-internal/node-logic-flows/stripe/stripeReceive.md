@@ -70,7 +70,7 @@ flowchart TD
   S --> Q[source.receive: internal push queue] --> D[event_waiter.dispatch event]
   D --> M{waiter.event_type == event.type}
   M -- stripe.webhook vs stripe.charge.succeeded --> N[no match: waiter untouched]
-  subgraph canvas Run / legacy deploy
+  subgraph canvas Run only
     P[_check_precondition] -- daemon not started, not logged in --> E1[error Stripe not connected]
     P -- daemon start failed --> E2[error Stripe daemon failed to start]
     P -- ok --> G[event_waiter.register node_type=stripeReceive: event_type=stripe.webhook, filter=build_filter]
@@ -83,13 +83,13 @@ flowchart TD
 - **Precondition** (`_check_precondition`, canvas Run only): if the listen
   source is not `_started`, `has_credential()` (a filesystem sniff for
   `_api_key` in the CLI's `config.toml`) must be true, else the run returns
-  the error "Stripe not connected. Add Stripe API key in Credentials and
-  connect." Then `source.start()` runs: `ensure_stripe_cli()`, the
+  the error "Stripe not connected. Log in with Stripe in Credentials."
+  Then `source.start()` runs: `ensure_stripe_cli()`, the
   `DaemonEventSource` credential gate, and `ProcessService.start(name=
   "stripe-listen", workflow_id="_stripe", working_directory=daemons_dir())`.
-  A failed start returns "Stripe daemon failed to start: <error>". Deploying
-  a Stripe workflow is the demand signal for the daemon; the status refresh
-  never starts it.
+  A failed start returns "Stripe daemon failed to start: <error>". Only a
+  canvas Run reaches this precondition (deploy skips the node, see below),
+  and the status refresh never starts the daemon.
 - **Signature verification fails closed**: no captured secret -> HTTP 503
   with `Retry-After: 5`; missing header, missing `t=` / `v1=`, or no
   matching `v1=` candidate -> HTTP 400. Multiple `v1=` values are accepted
@@ -106,11 +106,20 @@ flowchart TD
   dispatches the envelope, whose `type` is `stripe.<stripe type>`, and
   `event_waiter.dispatch` selects waiters by exact equality
   `w.event_type == event_type`. As written, a real delivery therefore never
-  resolves a `stripeReceive` waiter on either path. The node is NOT
-  registered with `register_canary_trigger_type` (no call in
-  `nodes/stripe/`), so deployment rides the legacy
-  `TriggerManager.setup_event_trigger` collector, which registers through
-  the same `event_waiter.register` and inherits the same key.
+  resolves a `stripeReceive` waiter. Deploy never registers one at all:
+  `stripeReceive` is not in `constants.WORKFLOW_TRIGGER_TYPES`, and
+  `TriggerManager.find_trigger_nodes` filters on that set, so a deployed
+  workflow starts no listener for it and logs no warning. It is not
+  canary-registered either (no `register_canary_trigger_type` call in
+  `nodes/stripe/`).
+- **Filter-input mismatch**: even with matching keys, `event_waiter.dispatch`
+  calls each waiter's filter with the envelope's `data`, not the envelope,
+  and `WebhookTriggerNode.build_filter` rebuilds a `WorkflowEvent` from what
+  it receives. That raises a `ValidationError`, which the dispatcher logs as
+  `[EventWaiter] Filter error`, so the waiter would still not resolve. The
+  regression test `test_dispatch_with_live_waiter_does_not_crash`
+  (`tests/services/test_events.py`) builds its waiter by hand, keyed on the
+  envelope type with an always-true filter, so it covers neither mismatch.
 - **Data-shape mismatch**: `StripeWebhookSource.shape` stores only
   `payload["data"]` (Stripe's `{object, previous_attributes?}`) in
   `WorkflowEvent.data`, but `shape_output` and the livemode predicate read
@@ -135,9 +144,11 @@ flowchart TD
   <whsec_...>, models=[])` whenever a `whsec_` token appears on the daemon's
   stderr (fire-and-forget task).
 - **Broadcasts**: `update_node_status(..., "waiting", {"event_type":
-  "stripe.webhook", "waiter_id": ...})` from the trigger manager / executor;
-  `make_status_refresh` mirrors `source.status()` plus login state into
-  `broadcaster._status["stripe"]` under broadcast type `stripe_status`.
+  "stripe.webhook", "waiter_id": ...})` from the generic trigger handler
+  (`services/handlers/triggers.py`) on a canvas Run; `make_status_refresh`
+  mirrors `source.status()` (`type` / `running` / `pid`, without login state)
+  into `broadcaster._status["stripe"]` once at startup and broadcasts it as
+  `stripe_status`, which no frontend code handles.
 - **HTTP**: `POST /webhook/stripe` answered by the router after
   `handle()`; the source's `receive()` also enqueues the event on its
   internal push queue (nothing consumes that queue for this source).
@@ -167,10 +178,11 @@ flowchart TD
 - Secret race: events forwarded before the `whsec_` line is captured get a
   503 and are retried by Stripe / the CLI.
 - One account per install; the daemon is a single global process.
-- No auto-restart on daemon crash - status shows disconnected until the user
-  reconnects.
-- The `stripe_service.md` request-flow diagram documents `data=payload`
-  (the full event); the code stores `payload["data"]`.
+- No auto-restart on daemon crash, and nothing reports it: the source's
+  `_started` flag is cleared only by `stop()`, so `stripe_status` still says
+  `running: true`, the precondition skips the start, and the Credentials modal
+  still shows Stripe as connected. Disconnect, then Login with Stripe,
+  restarts it.
 
 ## Related
 

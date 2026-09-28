@@ -74,10 +74,11 @@ class User(SQLModel, table=True):
 
 **`UserAuthService` never initialises, derives or clears the encryption key.**
 The container injects `EncryptionService` and `CredentialsDatabase` into it,
-but the only use of either is the read-only `is_encryption_initialized()`
-(a pass-through to `EncryptionService.is_initialized()`); `credentials_db` is
-held and unused. Earlier revisions of this document described `login()`
-calling `_initialize_encryption(password)` and `logout()` calling
+and neither is used: the only reference to the encryption service is
+`is_encryption_initialized()` (a pass-through to
+`EncryptionService.is_initialized()`), which nothing calls, and
+`credentials_db` is held and never read. Earlier revisions of this document
+described `login()` calling `_initialize_encryption(password)` and `logout()` calling
 `self.encryption.clear()`. Neither method has ever existed. The Fernet key is
 **server-scoped**: initialised once during startup in `main.py` from
 `API_KEY_ENCRYPTION_KEY`, never derived from a user password and never
@@ -276,8 +277,11 @@ Recorded explicitly because each of these is easy to assume is handled.
 and `dev_secret_offenders()`: server startup (lifespan) logs a non-fatal error
 banner when `SECRET_KEY` / `JWT_SECRET_KEY` / `API_KEY_ENCRYPTION_KEY` still
 carry the dev template placeholders while auth is enabled or `DEPLOYMENT_MODE`
-is not `local`. A `company build`-scaffolded `.env` avoids this by generating
-fresh `secrets.token_hex(24)` values at scaffold time.
+is not `local`. Only a `.env` that `company build` creates itself gets fresh
+`secrets.token_hex(24)` values; `bun install` in a checkout and
+`company provision` copy the template as-is, and with login off in a local
+install nothing warns. See
+[Credentials Encryption → Placeholder secrets](./credentials_encryption.md#placeholder-secrets).
 
 ## Race Condition Handling (TanStack Query bootstrap)
 The frontend starts before the backend is ready during cold launch, so the
@@ -367,7 +371,7 @@ useEffect(() => {
 | `client/src/components/auth/LoginPage.tsx` | Login UI |
 | `client/src/components/auth/ProtectedRoute.tsx` | Route guard |
 | `server/models/auth.py` | User SQLModel with bcrypt |
-| `server/services/user_auth.py` | `UserAuthService`: register / login / JWT mint + verify / `get_current_user`. Holds the encryption service only for the read-only `is_encryption_initialized()` check (see the note under Auth Service) |
+| `server/services/user_auth.py` | `UserAuthService`: register / login / JWT mint + verify / `get_current_user`. Holds the encryption service and credentials database but uses neither; its `is_encryption_initialized()` has no callers (see the note under Auth Service) |
 | `server/routers/auth.py` | REST endpoints |
 | `server/middleware/auth.py` | Route protection (`PUBLIC_PATHS` / `PUBLIC_PREFIXES`) |
 | `server/core/config.py` | Settings with `vite_auth_enabled` field |

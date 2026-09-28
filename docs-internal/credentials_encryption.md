@@ -78,7 +78,9 @@ Routers call AuthService.get_api_key() / get_oauth_tokens() ...
                EncryptionService.clear()
 ```
 
-`EncryptionService.is_initialized()` is checked before any encrypt/decrypt call. If the server key is misconfigured, the service raises at startup rather than returning unusable ciphertext later.
+`encrypt()` and `decrypt()` raise `RuntimeError` if the cipher was never initialized, and the lifespan checks `is_initialized()` once before deriving the key.
+
+Only a missing or short key is caught at startup. `API_KEY_ENCRYPTION_KEY` is a required `Settings` field with `min_length=32`, so `Settings()` fails before anything else runs. A key that is present but differs from the one the credentials were stored with is not detected: PBKDF2 derives a valid Fernet key from any string, so startup succeeds, and every later lookup of a stored credential fails instead. `decrypt()` raises `ValueError`, and `CredentialsDatabase.get_api_key` / `get_oauth_tokens` log `Failed to decrypt ...` at ERROR and return `None`, so the app behaves as if nothing were stored. `AuthService.get_api_key` does not cache a miss, so the error repeats on every lookup.
 
 ## Two Separate Credential Systems
 
@@ -128,13 +130,13 @@ How the pieces are wired:
 - `AuthService` maintains the memory-only decryption cache.
 - `CredentialsDatabase` is a DI singleton (`container.credentials_database()`). The container injects it into `AuthService` and into `UserAuthService` (which holds it but never uses it), and `main.py` resolves it at startup to create tables and read the salt. The container does not stop anything else from resolving it, so "routers and services go through `AuthService`" is a rule to follow, not something DI enforces.
 
-The in-memory cache is important: decrypting on every request would be slow, and writing decrypted values to Redis would defeat the encryption. Each `AuthService` instance caches decrypted credentials in process memory only, and `AuthService.clear_cache()` flushes them on demand (used by the logout handler).
+The in-memory cache is important: decrypting on every request would be slow, and writing decrypted values to Redis would defeat the encryption. Each `AuthService` instance caches decrypted credentials in process memory only, and `AuthService.clear_cache()` flushes them on demand (`POST /api/auth/logout` calls it).
 
 ## Multi-Backend Abstraction
 
 For deployment flexibility, `credential_backends.py` defines an abstract interface intended to be selected via the `CREDENTIAL_BACKEND` env var.
 
-**Status: not wired in.** Nothing in the server calls `create_backend()`, and `Settings.credential_backend` / `aws_secret_arn` / `aws_region` are read only inside it. `AuthService` always talks to `CredentialsDatabase` directly, so every install uses Fernet-encrypted SQLite and setting `CREDENTIAL_BACKEND` currently has no effect. The rest of this section describes the abstraction as written.
+**Status: not wired in.** Nothing in the server calls `create_backend()`, and `Settings.credential_backend` / `aws_secret_arn` / `aws_region` are read only inside it. `AuthService` always talks to `CredentialsDatabase` directly, so every install uses Fernet-encrypted SQLite and setting `CREDENTIAL_BACKEND` currently has no effect. The value is still validated: the field is a `Literal["fernet", "keyring", "aws"]`, so any other value fails `Settings` at startup. The rest of this section describes the abstraction as written.
 
 ```python
 class CredentialBackend(ABC):
@@ -170,13 +172,15 @@ aws = ["boto3>=1.34.0"]        # AWS Secrets Manager
 ```env
 # .env at the repo root (scaffolded from .env.template; there is no server/.env)
 
-# Required for Fernet backend
-API_KEY_ENCRYPTION_KEY=<any string, at least 32 chars for good entropy>
+# Required, at least 32 characters (Settings enforces min_length=32).
+# Never change it once credentials are stored (see Placeholder secrets below).
+API_KEY_ENCRYPTION_KEY=<48 random hex characters>
 
-# Which backend to use -- currently has no effect (see Multi-Backend Abstraction)
-CREDENTIAL_BACKEND=fernet         # fernet | keyring | aws
+# Which backend to use -- currently has no effect (see Multi-Backend Abstraction),
+# but a value other than fernet | keyring | aws fails Settings validation
+CREDENTIAL_BACKEND=fernet
 
-# Path to credentials SQLite file
+# Path to credentials SQLite file (a relative path resolves under DATA_DIR)
 CREDENTIALS_DB_PATH=credentials.db
 
 # AWS backend only (also unused until the backend layer is wired in)
@@ -184,15 +188,38 @@ AWS_SECRET_ARN=arn:aws:secretsmanager:...
 AWS_REGION=us-east-1
 ```
 
-If `API_KEY_ENCRYPTION_KEY` is missing or changed, existing ciphertext becomes undecryptable. There is no key-rotation mechanism today: users re-enter their keys after a key change. This is a deliberate simplification inherited from the n8n pattern.
+A missing or short `API_KEY_ENCRYPTION_KEY` stops startup (see [Lifecycle](#lifecycle)). A changed one makes every existing ciphertext undecryptable: lookups return `None`, and users must re-enter their keys. There is no key-rotation mechanism today. This is a deliberate simplification inherited from the n8n pattern.
 
-When `company build` scaffolds `.env` from `.env.template` (step `[0/6]`), it generates a fresh `secrets.token_hex(24)` value for `API_KEY_ENCRYPTION_KEY` (and `SECRET_KEY` / `JWT_SECRET_KEY`) instead of copying the dev placeholder; an existing `.env` is never touched. If the dev placeholder survives while auth is enabled or `DEPLOYMENT_MODE != local`, startup logs a non-fatal error banner (`dev_secret_offenders()` in `core/config.py`).
+### Placeholder secrets
+
+`.env.template` ships publicly known `dev-` placeholder values for `API_KEY_ENCRYPTION_KEY`, `SECRET_KEY` and `JWT_SECRET_KEY` (the exact literals are `DEV_SECRET_LITERALS` in `server/core/config.py`). Whether an install replaces them depends on how its `.env` was created:
+
+| How `.env` was created | Secrets |
+|---|---|
+| `bun install` in a source checkout (the root `postinstall` hook runs `scripts/install.js`) | Copied from the template as-is: placeholders |
+| Global install: `company provision`, the first `company` command, or the `install.sh` / `install.ps1` installers (all run `scripts/install.js`) | Copied from the template as-is: placeholders |
+| `company build` when no `.env` exists yet (step `[0/6]`, `_scaffold_env_secrets` in `cli/commands/build.py`) | A fresh `secrets.token_hex(24)` value for each `dev-` placeholder |
+| Docker (`docker/entrypoint.sh`) | Fresh values written to the env file on the data volume at first start |
+| `company deploy` | Fresh values for every deploy (`cli/commands/deploy/_secrets.py`) |
+| Desktop app | Nothing is generated: the template values apply unless `<userData>/desktop.env` sets them |
+
+An existing `.env` is never modified. So the usual checkout flow (`bun install`, then `bun run build`) keeps the placeholders: `install.js` has already created `.env` by the time `company build` looks for it.
+
+`dev_secret_offenders()` (`server/core/config.py`) makes startup log a non-fatal error banner only when login is on (`VITE_AUTH_ENABLED` is anything other than `false`) or `DEPLOYMENT_MODE` is not `local`. A default local install, with login off, runs on the placeholders without any warning.
+
+To replace them, generate one value per key and set it in `.env` or the process environment, which wins over `.env`:
+
+```bash
+python -c "import secrets; print(secrets.token_hex(24))"
+```
+
+Do this before the first credential is saved. After that, never change `API_KEY_ENCRYPTION_KEY`, or every stored credential becomes unreadable (see above). Changing `JWT_SECRET_KEY` signs every user out.
 
 ## Security Properties
 
 - **Server-scoped key**: not tied to user login sessions. JWT cookies expire, but the encryption key survives across restarts.
 - **No plaintext on disk**: credentials are only decrypted in memory.
-- **No plaintext in Redis**: even in Redis mode, only encrypted envelopes cross the wire (the cache layer never stores decrypted credentials).
+- **No plaintext in Redis**: credentials never pass through the cache layer. `AuthService` receives a `CacheService` handle but does not use it for credentials, so neither plaintext nor ciphertext reaches Redis, even with `REDIS_ENABLED=true`.
 - **Salt per install**: different OpenCompany installs have different salts, so ciphertext is not portable across installs even with the same server key.
 - **Held for the process lifetime**: the derived key is never written to disk, but it is not wiped at shutdown either. `EncryptionService.clear()` (which drops the Fernet reference) is called only by tests; the `main.py` lifespan shutdown does not call it, so the key leaves memory when the process exits.
 

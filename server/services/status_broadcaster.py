@@ -1337,8 +1337,9 @@ def register_service_refresh(callback: _ServiceRefreshCallback) -> None:
     """Register a per-service refresh callback.
 
     Idempotent on re-import (same callable is a no-op). Each registered
-    callback runs once per ``_refresh_all_services()`` cycle (i.e. on
-    every WebSocket client connect).
+    callback runs once per ``_refresh_all_services()`` cycle, and the only
+    cycle is the background task the ``main.py`` lifespan schedules at
+    startup; client connects do not trigger one (see :meth:`connect`).
     """
     _SERVICE_REFRESH_FANOUT.register(callback)
 
