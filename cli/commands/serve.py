@@ -19,18 +19,16 @@ from __future__ import annotations
 
 import asyncio
 import os
-from pathlib import Path
 
 import typer
 
-from cli._common import UVICORN_GRACEFUL_SHUTDOWN_SECONDS, preflight
+from cli._common import backend_shutdown_grace_seconds, build_backend_spec, preflight
 from cli.buildenv import validate_build
 from cli.colors import console
-from cli.platform_ import server_dir, server_venv_python
 
 
 def serve_command(port: int | None = None) -> None:
-    from cli.supervisor import Manager, ServiceSpec
+    from cli.supervisor import Manager
 
     cfg, root = preflight()
     os.environ.setdefault("PYTHONUTF8", "1")
@@ -43,7 +41,7 @@ def serve_command(port: int | None = None) -> None:
     # Free the port we will bind (clears stale orphans; idempotent).
     from cli.ports import kill_port
 
-    kill_port(bind_port)
+    kill_port(bind_port, backend_graceful_timeout=backend_shutdown_grace_seconds(cfg))
 
     console.print()
     console.print("  [bold]OpenCompany[/] serve (single-port)")
@@ -51,25 +49,12 @@ def serve_command(port: int | None = None) -> None:
     console.print()
 
     specs = [
-        ServiceSpec(
-            name="server",
-            argv=[
-                str(server_venv_python(root)),
-                "-m",
-                "uvicorn",
-                "main:app",
-                "--host",
-                "0.0.0.0",
-                "--port",
-                str(bind_port),
-                "--log-level",
-                "warning",
-                "--timeout-graceful-shutdown",
-                str(UVICORN_GRACEFUL_SHUTDOWN_SECONDS),
-            ],
-            cwd=server_dir(root),
+        build_backend_spec(
+            cfg,
+            host="0.0.0.0",
+            root=root,
+            port=bind_port,
             env={"SERVE_STATIC_CLIENT": "1", "PORT": str(bind_port)},
-            ready_port=bind_port,
         ),
     ]
 

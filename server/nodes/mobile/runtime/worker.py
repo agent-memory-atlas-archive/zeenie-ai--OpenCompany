@@ -15,17 +15,19 @@ from io import BytesIO
 
 try:
     from .errors import describe_error
+    from .progress import ProgressCallbacks
 except ImportError:  # Executed by path in the isolated engine environment.
     from errors import describe_error
+    from progress import ProgressCallbacks
 
 STAGE = "bootstrap"
 WIRE = sys.stdout
 WIRE_LOCK = threading.Lock()
 
 
-def emit(kind: str, **data) -> None:
+def emit(event_type: str, **data) -> None:
     with WIRE_LOCK:
-        WIRE.write(json.dumps({"v": 1, "type": kind, **data}, default=str) + "\n")
+        WIRE.write(json.dumps({"v": 1, "type": event_type, **data}, default=str) + "\n")
         WIRE.flush()
 
 
@@ -159,12 +161,7 @@ async def main(config: dict) -> None:
     # Only this isolated engine process uses LangChain; the server does not.
     from langchain_core.callbacks import BaseCallbackHandler
 
-    class Progress(BaseCallbackHandler):
-        def on_chain_start(self, serialized, inputs, *, metadata=None, **kwargs):
-            step = (metadata or {}).get("langgraph_step")
-            if isinstance(step, int):
-                emit("progress", steps=max(0, step))
-
+    class Progress(ProgressCallbacks, BaseCallbackHandler):
         def on_chat_model_start(self, serialized, messages, **kwargs):
             role = (kwargs.get("metadata") or {}).get("langgraph_node")
             allowed = {"planner", "orchestrator", "contextor", "cortex", "executor", "outputter", "hopper"}
@@ -198,7 +195,7 @@ async def main(config: dict) -> None:
         AgentConfigBuilder()
         .with_default_profile(profile)
         .for_device(DevicePlatform(config["platform"]), config["serial"])
-        .with_graph_config_callbacks([Progress()])
+        .with_graph_config_callbacks([Progress(emit)])
         .build()
     )
     agent_config.local_controller = Controller(config)

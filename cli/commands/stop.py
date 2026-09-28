@@ -11,7 +11,7 @@ import time
 
 import typer
 
-from cli._common import free_all_ports, preflight
+from cli._common import backend_shutdown_grace_seconds, free_all_ports, preflight
 from cli.colors import console
 from cli.config import load_dev_overrides
 from cli.platform_ import platform_name
@@ -55,7 +55,9 @@ def stop_command() -> None:
             f"[green]\\[OK][/] Temporal: Killed {len(temporal_pids)} process(es)"
         )
 
-    orphaned_pids = kill_orphaned_opencompany_processes(str(root))
+    orphaned_pids = kill_orphaned_opencompany_processes(
+        str(root), backend_graceful_timeout=backend_shutdown_grace_seconds(cfg)
+    )
     if orphaned_pids:
         time.sleep(0.2)  # let DB locks release
         console.print(

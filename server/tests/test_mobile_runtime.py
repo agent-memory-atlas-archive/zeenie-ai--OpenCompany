@@ -209,7 +209,7 @@ async def test_queued_cancel_is_scoped_to_run_and_never_starts_worker(runtime, m
     await asyncio.sleep(0)
     assert len(runtime.queue) == 2
     await runtime.cancel("workflow", "agent", run_id="run")
-    assert [entry["status"] for entry in runtime.queue] == ["cancelled", "queued"]
+    assert [(entry["run_id"], entry["status"]) for entry in runtime.queue] == [("other-run", "queued")]
     await runtime.cancel("workflow", "agent", run_id="other-run")
     runtime.serial = None  # Cancellation must win over offline validation.
     runtime.task_lock.release()
@@ -348,7 +348,93 @@ async def test_activity_is_bounded_and_phase_clock_is_stable(runtime, monkeypatc
     for _ in range(50):
         await runtime._publish_progress("Waiting for model")
     assert runtime.active["phase_started_at"] == started
-    assert len(runtime.active["activity"]) == 40
+    assert len(runtime.active["activity"]) == 1
     assert runtime.active["updated_at"] >= started
+    for index in range(50):
+        await runtime._publish_progress(f"Operation {index}")
+    assert len(runtime.active["activity"]) == 40
     await runtime._publish_progress("Tapping screen")
     assert runtime.snapshot()["active"]["activity"][-1]["message"] == "Tapping screen"
+
+
+async def test_worker_semantic_progress_survives_device_noise_and_model_wait(runtime, monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, Mock
+    import nodes.mobile._runtime as module
+    import services.status_broadcaster as status
+
+    broadcast = AsyncMock()
+    monkeypatch.setattr(status, "get_status_broadcaster", lambda: SimpleNamespace(update_node_status=broadcast))
+    log = Mock()
+    monkeypatch.setattr(module, "event", log)
+    proc = FakeProcess()
+    messages = [
+        {"type": "progress", "steps": 1},
+        {"type": "agent_update", "kind": "plan", "message": "Working on: Find private test app",
+         "plan": [{"id": "g1", "description": "Find private test app", "status": "pending", "reason": "Search is visible"}]},
+        {"type": "agent_update", "kind": "action", "action_id": "tap1", "state": "started", "message": "Tap · Search", "detail": "Find private test app"},
+        *[{"type": "activity", "operation": "observe", "state": "completed", "duration_ms": i} for i in range(50)],
+        {"type": "progress", "steps": 2},
+        {"type": "agent_update", "kind": "action", "action_id": "tap1", "state": "failed", "message": "Tap · Search",
+         "detail": "Find private test app", "duration_ms": 1050, "outcome": "Element not found"},
+        {"type": "diagnostic", "stage": "model_request", "role": "cortex"},
+        {"type": "progress", "steps": 3},
+        {"type": "completed", "result": "done"},
+    ]
+    for message in messages:
+        proc.stdout.feed_data((json.dumps(message) + "\n").encode())
+    proc.returncode = 0
+    proc.stdout.feed_eof()
+    proc.terminated.set()
+
+    async def spawn(*_args, **_kwargs):
+        return proc
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
+    await runtime.run(**run_args())
+    task = runtime.last_task
+    assert task["current_goal"] == "Find private test app"
+    assert task["plan"][0]["reason"] == "Search is visible"
+    assert len(task["agent_activity"]) == 2  # start/end share one action row
+    action = task["current_action"]
+    assert action["step"] == 1
+    assert action["state"] == "failed"
+    assert action["outcome"] == "Element not found"
+    assert action["duration_ms"] == 1050
+    assert task["phase"] == "Waiting for model: choosing an action"
+    assert task["steps"] == 3
+    assert all(item["message"] != "Using phone" for item in task["activity"])
+    assert "Find private test app" not in str(log.call_args_list)
+    assert "Find private test app" not in str(broadcast.call_args_list)
+
+
+async def test_semantic_history_is_bounded_and_interruption_is_not_success(runtime, monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    import services.status_broadcaster as status
+    monkeypatch.setattr(status, "get_status_broadcaster", lambda: SimpleNamespace(update_node_status=AsyncMock()))
+    runtime.active = {"node_id": "phone", "workflow_id": "wf", "run_id": "run", "status": "running"}
+    for index in range(45):
+        await runtime._publish_agent_progress({"kind": "action", "action_id": str(index), "state": "started",
+                                               "message": "Tap · Search", "detail": "a" * 1000})
+    assert len(runtime.active["agent_activity"]) == 40
+    assert len(runtime.active["current_action"]["detail"]) == 500
+    await runtime._stop_worker()
+    assert runtime.active["current_action"]["state"] == "returned"
+    assert "interrupted" in runtime.active["current_action"]["outcome"]
+    assert all(item["state"] == "returned" for item in runtime.active["agent_activity"])
+
+
+async def test_plan_completion_clears_current_goal_and_invalid_updates_are_ignored(runtime, monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    import services.status_broadcaster as status
+    monkeypatch.setattr(status, "get_status_broadcaster", lambda: SimpleNamespace(update_node_status=AsyncMock()))
+    runtime.active = {"node_id": "phone", "workflow_id": "wf", "run_id": "run", "status": "running", "current_goal": "Open app"}
+    await runtime._publish_agent_progress({"kind": "plan", "message": "Plan updated", "plan": [
+        {"id": "g", "description": "Open app", "status": "success", "reason": "Home screen visible"}]})
+    assert runtime.active["current_goal"] is None
+    assert runtime.active["plan"][0]["reason"] == "Home screen visible"
+    await runtime._publish_agent_progress({"kind": "arbitrary", "message": "private"})
+    await runtime._publish_agent_progress({"kind": "action", "action_id": "a", "message": "private", "state": "success"})
+    assert len(runtime.active["agent_activity"]) == 1

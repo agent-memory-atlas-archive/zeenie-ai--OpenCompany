@@ -30,6 +30,7 @@ import {
   isAgentCapabilityEvent,
 } from '../types/cloudEvents';
 import { WS_CLOSE, WS_RECONNECT } from '../lib/connectionConfig';
+import { startWebSocketHeartbeat } from '../lib/webSocketHeartbeat';
 import { todoQueryKeyFromEvent } from '../lib/todoQuery';
 import { useCanvasDockStore } from '../stores/canvasDockStore';
 // Cycle note: lib/nodeSpec imports useWebSocket from this module. Safe in
@@ -82,7 +83,7 @@ export const WORKFLOW_CONTROL_REQUEST_TIMEOUT = 5 * 60 * 1000;
 export const CREDENTIAL_PROBE_REQUEST_TIMEOUT = 60 * 1000;
 
 // Maximum queued sends before backpressure kicks in (FIFO eviction of oldest)
-const QUEUE_MAX_SIZE = 200;
+const QUEUE_MAX_SIZE = WS_RECONNECT.MAX_ENQUEUED_MESSAGES;
 
 /**
  * How long to let an `execute_node` request stay in flight.
@@ -161,6 +162,10 @@ export interface WorkflowControlStatus {
   controller_run_id?: string | null;
   state: WorkflowControlState;
   revision: number;
+  workspace_epoch?: number;
+  workspace_reset_request_id?: string | null;
+  workspace_resetting?: boolean;
+  workspace_available?: boolean;
   active_count: number;
   in_flight_count: number;
   queued_count: number;
@@ -240,7 +245,24 @@ const WORKFLOW_CONTROL_STABLE_STATE_BY_ACTION: Record<
 export const isWorkflowControlMutationConfirmed = (
   action: WorkflowControlMutationAction,
   status: Pick<WorkflowControlStatus, 'state'>,
-): boolean => status.state === WORKFLOW_CONTROL_STABLE_STATE_BY_ACTION[action];
+): boolean => status.state === WORKFLOW_CONTROL_STABLE_STATE_BY_ACTION[action]
+  || (action === 'reset' && status.state === 'never_started');
+
+/** A phone-only workflow can already be ready before Reset is attempted.
+ * Recover a lost response only when the server proves this Reset completed. */
+export const isWorkflowResetRecoveryConfirmed = (
+  status: WorkflowControlStatus,
+  expectedRevision: number,
+  requestIds: ReadonlySet<string>,
+): boolean => isWorkflowControlMutationConfirmed('reset', status)
+  && status.workspace_available !== false
+  && status.workspace_resetting !== true
+  && (
+    status.revision > expectedRevision
+    || (status.workspace_resetting === false
+      && typeof status.workspace_reset_request_id === 'string'
+      && requestIds.has(status.workspace_reset_request_id))
+  );
 
 export interface TeamTaskTraceEvent {
   event_id: string | number;
@@ -606,6 +628,10 @@ export const normalizeWorkflowControlStatus = (value: any, workflowId?: string):
     state,
     generation: Number(source.generation ?? 0),
     revision: Number(source.revision ?? 0),
+    workspace_epoch: Number(source.workspace_epoch ?? 0),
+    workspace_reset_request_id: source.workspace_reset_request_id ?? null,
+    workspace_resetting: source.workspace_resetting === true,
+    workspace_available: source.workspace_available !== false,
     active_count: Number(source.active_count ?? source.active_runs ?? 0),
     in_flight_count: Number(source.in_flight_count ?? source.active_count ?? source.active_runs ?? 0),
     queued_count: Number(source.queued_count || 0),
@@ -824,7 +850,10 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   // type tightens to the library's class so any feature-specific calls
   // (`shouldReconnect`, `reconnect()`) type-check.
   const wsRef = useRef<ReconnectingWebSocket | null>(null);
-  const pingIntervalRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isMountedRef = useRef(true);
+  const authenticatedRef = useRef(isAuthenticated);
+  authenticatedRef.current = isAuthenticated;
+  const stopHeartbeatRef = useRef<(() => void) | null>(null);
   const pendingRequestsRef = useRef<Map<string, PendingRequest>>(new Map());
   // Generic broadcast subscribers ({type -> Set<handler>}) for events
   // surfaced via send_custom_event on the backend. Lets new features
@@ -845,6 +874,57 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   // comparison inside the workflow-switch effect below. NOT a global mirror;
   // do not read from elsewhere.
   const previousWorkflowIdForSwitchRef = useRef<string | undefined>(currentWorkflowId);
+
+  const rejectPendingRequests = useCallback((reason: string) => {
+    for (const pending of pendingRequestsRef.current.values()) {
+      if (pending.timeout) clearTimeout(pending.timeout);
+      pending.reject(new Error(reason));
+    }
+    pendingRequestsRef.current.clear();
+  }, []);
+
+  const disposeConnection = useCallback((reason: string) => {
+    const ws = wsRef.current;
+    // Invalidate ownership before close: stale callbacks must not change a
+    // later connection or restart its heartbeat (including Strict Mode).
+    wsRef.current = null;
+    stopHeartbeatRef.current?.();
+    stopHeartbeatRef.current = null;
+    if (ws) {
+      ws.onopen = ws.onclose = ws.onmessage = ws.onerror = null;
+      ws.close(WS_CLOSE.NORMAL_CLOSURE, reason);
+    }
+    rejectPendingRequests(reason);
+    for (const queued of pendingSendQueueRef.current) {
+      queued.abortController.abort();
+      queued.reject(new Error(reason));
+    }
+    pendingSendQueueRef.current = [];
+  }, [rejectPendingRequests]);
+
+  // One request registry for ordinary calls and reconnect snapshots. A
+  // disconnect rejects sent work; it must never replay an uncertain write.
+  const sendOnSocket = useCallback(<T,>(
+    ws: ReconnectingWebSocket, payload: Record<string, any>, timeoutMs: number,
+  ): Promise<T> => new Promise((resolve, reject) => {
+    if (!isMountedRef.current || !authenticatedRef.current || wsRef.current !== ws || ws.readyState !== ReconnectingWebSocket.OPEN) {
+      reject(new Error('WebSocket is not connected'));
+      return;
+    }
+    const requestId = generateRequestId();
+    const timeout = timeoutMs > 0 ? setTimeout(() => {
+      pendingRequestsRef.current.delete(requestId);
+      reject(new Error(`Request timeout: ${payload.type}`));
+    }, timeoutMs) : null;
+    pendingRequestsRef.current.set(requestId, { resolve, reject, timeout });
+    try {
+      ws.send(JSON.stringify({ ...payload, request_id: requestId }));
+    } catch (error) {
+      if (timeout) clearTimeout(timeout);
+      pendingRequestsRef.current.delete(requestId);
+      reject(error);
+    }
+  }), []);
 
   const applyWorkflowControlStatus = useCallback((
     workflowId: string,
@@ -880,30 +960,13 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       // Fetch deployment status for the new workflow (n8n pattern)
       // This ensures the deploy button shows correct state when switching workflows
       if (wsRef.current?.readyState === ReconnectingWebSocket.OPEN) {
+        const ws = wsRef.current;
         const fetchDeploymentStatus = async () => {
           try {
-            const requestId = generateRequestId();
-            const response = await new Promise<any>((resolve, reject) => {
-              const timeout = setTimeout(() => reject(new Error('Timeout')), 5000);
-
-              const handler = (event: MessageEvent) => {
-                try {
-                  const msg = JSON.parse(event.data);
-                  if (msg.request_id === requestId) {
-                    clearTimeout(timeout);
-                    wsRef.current?.removeEventListener('message', handler);
-                    resolve(msg);
-                  }
-                } catch { /* swallow message-parse errors — invalid frames are ignored */ }
-              };
-
-              wsRef.current?.addEventListener('message', handler);
-              wsRef.current?.send(JSON.stringify({
-                type: 'get_deployment_status',
-                request_id: requestId,
-                workflow_id: currentWorkflowId
-              }));
-            });
+            const response = await sendOnSocket<any>(ws, {
+              type: 'get_deployment_status', workflow_id: currentWorkflowId,
+            }, 5000);
+            if (!isMountedRef.current || wsRef.current !== ws || useAppStore.getState().currentWorkflow?.id !== currentWorkflowId) return;
 
             // Update deployment status based on response
             const isRunning = response.is_running || false;
@@ -937,12 +1000,12 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
     // Update at the END of the effect so the next run sees the prior id.
     previousWorkflowIdForSwitchRef.current = currentWorkflowId;
-  }, [currentWorkflowId]);
+  }, [currentWorkflowId, sendOnSocket]);
 
   // Handle incoming messages
   /** Hand a broadcast to every addEventListener(type) subscriber. A case
    *  that handles a type itself calls this too when listeners may want it. */
-  const dispatchToListeners = (type: string, data: any) => {
+  const dispatchToListeners = useCallback((type: string, data: any) => {
     const listeners = eventListenersRef.current.get(type);
     if (!listeners || listeners.size === 0) return;
     for (const handler of listeners) {
@@ -950,7 +1013,7 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         console.error(`[WebSocket] Listener for '${type}' threw:`, err);
       }
     }
-  };
+  }, []);
 
   const handleMessage = useCallback((event: MessageEvent) => {
     try {
@@ -1731,6 +1794,7 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
               setConsoleLogs([]);
               setChatMessages([]);
             }
+            dispatchToListeners(type, { ...message.data, workflow_id: workflowId });
           }
           break;
         }
@@ -2022,10 +2086,10 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     } catch (error) {
       console.error('[WebSocket] Failed to parse message:', error);
     }
-  }, [applyWorkflowControlStatus]);
+  }, [applyWorkflowControlStatus, dispatchToListeners]);
 
   // Drain queued sends after a successful reconnect. Each queued send gets a
-  // fresh request_id and a reset timeout budget; responses correlate via the
+  // fresh request_id and the remaining timeout budget; responses correlate via the
   // existing pendingRequestsRef map. Per-call abortController cancels the
   // queue-side timeout that was running while the request was waiting in line.
   const drainPendingSends = useCallback((ws: ReconnectingWebSocket) => {
@@ -2037,47 +2101,26 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       } catch {
         // Ignore — abort is idempotent.
       }
-      if (ws.readyState !== WebSocket.OPEN) {
-        // Defensive: should not happen since we drain inside onopen.
-        try {
-          queued.reject(new Error('WebSocket closed during drain'));
-        } catch {
-          // Ignore — caller may have already settled.
-        }
+      const remaining = queued.timeoutMs > 0
+        ? queued.timeoutMs - (Date.now() - queued.enqueuedAt) : -1;
+      if (queued.timeoutMs > 0 && remaining <= 0) {
+        queued.reject(new Error(`Request timeout (queued): ${queued.type}`));
         continue;
       }
-      const requestId = generateRequestId();
-      let timeout: ReturnType<typeof setTimeout> | null = null;
-      if (queued.timeoutMs > 0) {
-        // Reset the timeout budget on replay so caller's perspective
-        // remains "now"; queue-side timer was already aborted above.
-        timeout = setTimeout(() => {
-          pendingRequestsRef.current.delete(requestId);
-          queued.reject(new Error(`Request timeout: ${queued.type}`));
-        }, queued.timeoutMs);
-      }
-      pendingRequestsRef.current.set(requestId, {
-        resolve: queued.resolve,
-        reject: queued.reject,
-        timeout,
-      });
-      ws.send(JSON.stringify({
-        type: queued.type,
-        request_id: requestId,
-        ...queued.data,
-      }));
+      void sendOnSocket(ws, { type: queued.type, ...queued.data }, remaining)
+        .then(queued.resolve, queued.reject);
     }
-  }, []);
+  }, [sendOnSocket]);
 
   // Connect to WebSocket. Uses PartySocket's `ReconnectingWebSocket` —
   // a native-WebSocket-compatible class with built-in jittered exponential
-  // backoff, message replay, and intentional-close (code 1000) handling.
+  // backoff. Explicit close() stops retries; remote close codes do not.
   // Replaces the previous flat 3 s `setTimeout(reconnect)` loop.
   // Backoff envelope is configured via `WS_RECONNECT` in
   // `lib/connectionConfig.ts` so a future tuning pass is a one-file edit.
   // Ref: https://docs.partykit.io/reference/partysocket-api/
   const connect = useCallback(() => {
-    if (wsRef.current?.readyState === ReconnectingWebSocket.OPEN) {
+    if (wsRef.current || !isMountedRef.current || !authenticatedRef.current) {
       return;
     }
 
@@ -2089,16 +2132,21 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         maxReconnectionDelay: WS_RECONNECT.MAX_DELAY_MS,
         reconnectionDelayGrowFactor: WS_RECONNECT.GROW_FACTOR,
         // Reconnect indefinitely while the page is open. Intentional
-        // closes via `ws.close(1000, ...)` (logout / unmount) skip the
-        // reconnect path because PartySocket inspects the close code.
+        // disposal via ws.close() (logout / unmount) stops retries.
         maxRetries: Infinity,
         // Send-while-disconnected buffer; replayed automatically on the
         // next OPEN. Mirrors the previous `pendingSendQueueRef` cap intent
         // for opportunistic out-of-band sends.
         maxEnqueuedMessages: WS_RECONNECT.MAX_ENQUEUED_MESSAGES,
       });
+      wsRef.current = ws;
+      const ownsConnection = () => isMountedRef.current && authenticatedRef.current && wsRef.current === ws;
+      let openEpoch = 0;
 
       ws.onopen = async () => {
+        if (!ownsConnection()) return;
+        const epoch = ++openEpoch;
+        const isCurrentOpen = () => ownsConnection() && openEpoch === epoch && ws.readyState === ReconnectingWebSocket.OPEN;
         setIsConnected(true);
         setReconnecting(false);
 
@@ -2110,12 +2158,8 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         // do not invalidate them, so canvas / palette icons no longer
         // flash back to fallback on every reconnect.
 
-        // Start ping interval
-        pingIntervalRef.current = setInterval(() => {
-          if (ws.readyState === ReconnectingWebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'ping' }));
-          }
-        }, 30000);
+        stopHeartbeatRef.current?.();
+        stopHeartbeatRef.current = startWebSocketHeartbeat(ws);
 
         // Drain any sends that were queued while the socket was reconnecting.
         // Runs BEFORE setIsReady(true) so isReady-gated callers don't race
@@ -2165,34 +2209,15 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         // hydrate panels that PersistQueryClient doesn't cache (terminal /
         // chat / console history come straight from the server's per-request
         // log read, not from a query cache).
-        const sendBurstRequest = <T = any>(payload: object, idPrefix: string): Promise<T> =>
-          new Promise<T>((resolve, reject) => {
-            const requestId = `${idPrefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-            const timeout = setTimeout(() => {
-              ws.removeEventListener('message', handler);
-              reject(new Error('Timeout'));
-            }, 5000);
-            const handler = (event: MessageEvent) => {
-              try {
-                const msg = JSON.parse(event.data);
-                if (msg.request_id === requestId) {
-                  clearTimeout(timeout);
-                  ws.removeEventListener('message', handler);
-                  resolve(msg);
-                }
-              } catch { /* swallow message-parse errors — invalid frames are ignored */ }
-            };
-            ws.addEventListener('message', handler);
-            ws.send(JSON.stringify({ ...payload, request_id: requestId }));
-          });
+        const sendBurstRequest = <T = any>(payload: Record<string, any>): Promise<T> =>
+          sendOnSocket<T>(ws, payload, 5000);
 
         void (async () => {
           try {
             const terminalResponse = await sendBurstRequest<any>(
               { type: 'get_terminal_logs' },
-              'terminal_logs',
             );
-            if (terminalResponse.success && terminalResponse.logs) {
+            if (isCurrentOpen() && terminalResponse.success && terminalResponse.logs) {
               const logs: TerminalLogEntry[] = terminalResponse.logs.map((log: any) => ({
                 timestamp: log.timestamp || new Date().toISOString(),
                 level: log.level || 'info',
@@ -2212,9 +2237,9 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             const workflowId = useAppStore.getState().currentWorkflow?.id || 'default';
             const chatResponse = await sendBurstRequest<any>(
               { type: 'get_chat_messages', session_id: workflowId },
-              'chat_messages',
             );
-            if (chatResponse.success && chatResponse.messages) {
+            if (isCurrentOpen() && (useAppStore.getState().currentWorkflow?.id || 'default') === workflowId
+              && chatResponse.success && chatResponse.messages) {
               const messages: ChatMessage[] = chatResponse.messages.map((msg: any) => ({
                 role: msg.role as 'user' | 'assistant',
                 message: msg.message,
@@ -2232,9 +2257,9 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             const consoleWorkflowId = useAppStore.getState().currentWorkflow?.id;
             const consoleResponse = await sendBurstRequest<any>(
               { type: 'get_console_logs', limit: 100, workflow_id: consoleWorkflowId },
-              'console',
             );
-            if (consoleResponse.success && consoleResponse.logs) {
+            if (isCurrentOpen() && useAppStore.getState().currentWorkflow?.id === consoleWorkflowId
+              && consoleResponse.success && consoleResponse.logs) {
               const logs: ConsoleLogEntry[] = consoleResponse.logs.map((log: any) => ({
                 node_id: log.node_id,
                 label: log.label,
@@ -2255,69 +2280,35 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         })();
       };
 
-      ws.onmessage = handleMessage;
+      ws.onmessage = (event) => {
+        if (ownsConnection()) handleMessage(event);
+      };
 
       ws.onclose = (event) => {
+        if (!ownsConnection()) return;
+        ++openEpoch;
         console.log('[WebSocket] Disconnected:', event.code, event.reason);
         setIsConnected(false);
         setIsReady(false);
-        wsRef.current = null;
+        // PartySocket retains ownership across retries, including remote
+        // code 1000 and its synthetic error-close events.
 
         // Reject every in-flight request so TanStack Query's retry +
         // any awaiters fail fast on the dead socket instead of waiting
         // for the 30s REQUEST_TIMEOUT. Trigger-node waiters that deliberately
         // had no timeout are still cleared — the next reconnect will
         // re-register them when the user re-runs the trigger.
-        if (pendingRequestsRef.current.size > 0) {
-          for (const [, pending] of pendingRequestsRef.current) {
-            if (pending.timeout) clearTimeout(pending.timeout);
-            try {
-              pending.reject(new Error('WebSocket closed'));
-            } catch {
-              // Ignore — caller may have already settled.
-            }
-          }
-          pendingRequestsRef.current.clear();
-        }
-
-        // Pending-send queue handling: only drop on intentional close
-        // (RFC 6455 §7.4.1 Normal Closure, code 1000). Transient closes
-        // preserve the queue so the next onopen drain replays them.
-        if (event.code === WS_CLOSE.NORMAL_CLOSURE) {
-          if (pendingSendQueueRef.current.length > 0) {
-            for (const queued of pendingSendQueueRef.current) {
-              try {
-                queued.abortController.abort();
-                queued.reject(new Error('WebSocket closed (intentional)'));
-              } catch {
-                // Ignore — caller may have already settled.
-              }
-            }
-            pendingSendQueueRef.current = [];
-          }
-        }
-
-        // Clear ping interval
-        if (pingIntervalRef.current) {
-          clearInterval(pingIntervalRef.current);
-          pingIntervalRef.current = null;
-        }
-
-        // PartySocket performs the reconnect itself when
-        // `event.code !== WS_CLOSE.NORMAL_CLOSURE`, honouring the
-        // `WS_RECONNECT` envelope passed at construction time. Surface
-        // "reconnecting" to the UI for transient closes; intentional
-        // closes (logout / unmount) leave the flag false.
-        if (event.code !== WS_CLOSE.NORMAL_CLOSURE) {
-          setReconnecting(true);
-        }
+        rejectPendingRequests('WebSocket closed; request outcome may be unknown');
+        // Only unsent work survives a transient close, under its original
+        // deadline. disposeConnection rejects it on logout/unmount.
+        stopHeartbeatRef.current?.();
+        stopHeartbeatRef.current = null;
+        setReconnecting(true);
       };
 
       ws.onerror = (error) => {
-        console.error('[WebSocket] Error:', error);
+        if (ownsConnection()) console.error('[WebSocket] Error:', error);
       };
-
-      wsRef.current = ws;
     } catch (error) {
       // Construction-time error (e.g. malformed URL). PartySocket has
       // not installed its retry loop yet, so just log — there is
@@ -2326,7 +2317,7 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       // jittered backoff.
       console.error('[WebSocket] Failed to create connection:', error);
     }
-  }, [handleMessage, drainPendingSends]);
+  }, [handleMessage, drainPendingSends, rejectPendingRequests, sendOnSocket]);
 
   // Request current status
   const requestStatus = useCallback(() => {
@@ -2439,8 +2430,8 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const sessionId = currentWorkflowId || 'default';
     const ws = wsRef.current;
 
-    const chatRequestId = `chat_switch_${Date.now()}`;
-    const consoleRequestId = `console_switch_${Date.now()}`;
+    const chatRequestId = `chat_switch_${generateRequestId()}`;
+    const consoleRequestId = `console_switch_${generateRequestId()}`;
     const handler = (event: MessageEvent) => {
       try {
         const msg = JSON.parse(event.data);
@@ -2526,26 +2517,17 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     timeoutMs?: number
   ): Promise<T> => {
     return new Promise((resolve, reject) => {
+      if (!isMountedRef.current || !authenticatedRef.current) {
+        reject(new Error('WebSocket unavailable: not authenticated or unmounted'));
+        return;
+      }
       const useTimeout = timeoutMs === undefined || timeoutMs >= 0;
       const actualTimeout = timeoutMs && timeoutMs > 0 ? timeoutMs : REQUEST_TIMEOUT;
       const effectiveTimeout = (timeoutMs === -1 || !useTimeout) ? -1 : actualTimeout;
 
       // FAST PATH: socket open — send immediately.
       if (wsRef.current?.readyState === ReconnectingWebSocket.OPEN) {
-        const requestId = generateRequestId();
-        let timeout: ReturnType<typeof setTimeout> | null = null;
-        if (effectiveTimeout > 0) {
-          timeout = setTimeout(() => {
-            pendingRequestsRef.current.delete(requestId);
-            reject(new Error(`Request timeout: ${type}`));
-          }, effectiveTimeout);
-        }
-        pendingRequestsRef.current.set(requestId, { resolve, reject, timeout });
-        wsRef.current.send(JSON.stringify({
-          type,
-          request_id: requestId,
-          ...data,
-        }));
+        void sendOnSocket<T>(wsRef.current, { type, ...data }, effectiveTimeout).then(resolve, reject);
         return;
       }
 
@@ -2593,7 +2575,7 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         abortController.signal.addEventListener('abort', () => clearTimeout(queueTimeout));
       }
     });
-  }, []);
+  }, [sendOnSocket]);
 
   // =========================================================================
   // Chat Message Operations
@@ -2920,6 +2902,17 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
 
     const pending = WORKFLOW_CONTROL_PENDING_BY_REQUEST[type];
+    const previousStatus = workflowControlStatusesRef.current[workflowId];
+    const resetRequestIds = new Set<string>();
+    if (type === 'reset_workflow' && previousStatus?.workspace_resetting
+      && typeof previousStatus.workspace_reset_request_id === 'string') {
+      // Retrying an interrupted reset can finish the original server request.
+      resetRequestIds.add(previousStatus.workspace_reset_request_id);
+    }
+    let resetExpectedRevision = Number(data.expected_revision ?? previousStatus?.revision ?? 0);
+    const isReconciled = (status: WorkflowControlStatus) => type === 'reset_workflow'
+      ? isWorkflowResetRecoveryConfirmed(status, resetExpectedRevision, resetRequestIds)
+      : isWorkflowControlMutationConfirmed(pending.action, status);
     workflowControlPendingRef.current.set(workflowId, pending);
     setWorkflowControlPending((previous) => ({ ...previous, [workflowId]: pending }));
     useWorkflowControlStore.getState().setPending(workflowId, pending);
@@ -2927,12 +2920,17 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const sendMutationAttempt = async (
       attemptData: Record<string, any>,
     ): Promise<WorkflowStartResult> => {
+      const idempotencyKey = crypto.randomUUID();
+      if (type === 'reset_workflow') {
+        resetRequestIds.add(idempotencyKey);
+        resetExpectedRevision = Number(attemptData.expected_revision ?? resetExpectedRevision);
+      }
       const response = await sendRequest<any>(type, {
         ...attemptData,
         workflow_id: workflowId,
         // Every bounded attempt has its own idempotency identity. In
         // particular, a conflict retry must not replay the rejected request.
-        idempotency_key: crypto.randomUUID(),
+        idempotency_key: idempotencyKey,
       }, WORKFLOW_CONTROL_REQUEST_TIMEOUT);
 
       // A success:false response can still be the newest authoritative
@@ -2966,7 +2964,7 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       let reconciled: WorkflowControlStatus | undefined;
       try {
         reconciled = await requestWorkflowControlStatus(workflowId);
-        if (isWorkflowControlMutationConfirmed(pending.action, reconciled)) {
+        if (isReconciled(reconciled)) {
           return reconciled;
         }
       } catch (resyncError) {
@@ -2992,7 +2990,7 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           // issuing a third mutation attempt.
           try {
             const retryReconciled = await requestWorkflowControlStatus(workflowId);
-            if (isWorkflowControlMutationConfirmed(pending.action, retryReconciled)) {
+            if (isReconciled(retryReconciled)) {
               return retryReconciled;
             }
           } catch (resyncError) {
@@ -3070,8 +3068,9 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       setConsoleLogs([]);
       setChatMessages([]);
     }
+    dispatchToListeners('workflow_runtime_reset', { workflow_id: workflowId });
     return result;
-  }, [controlMutation]);
+  }, [controlMutation, dispatchToListeners]);
 
   const getWorkflowControlStatusAsync = useCallback(async (workflowId: string) => {
     try {
@@ -3602,9 +3601,6 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
   }, [sendRequest]);
 
-  // Track if component is mounted to prevent state updates after unmount
-  const isMountedRef = useRef(true);
-
   // Connect only when authenticated (not during auth loading)
   useEffect(() => {
     isMountedRef.current = true;
@@ -3614,8 +3610,8 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       return;
     }
 
-    // Skip if already connected
-    if (wsRef.current?.readyState === ReconnectingWebSocket.OPEN) {
+    // The wrapper owns both the live socket and all reconnect attempts.
+    if (wsRef.current) {
       return;
     }
 
@@ -3633,49 +3629,21 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   // Handle logout - separate effect to avoid reconnect loops
   useEffect(() => {
-    if (!isAuthenticated && wsRef.current) {
-      // Drain the pending-send queue with a clear auth error before closing.
-      if (pendingSendQueueRef.current.length > 0) {
-        for (const queued of pendingSendQueueRef.current) {
-          try {
-            queued.abortController.abort();
-            queued.reject(new Error('auth: not authenticated'));
-          } catch {
-            // Ignore — caller may have already settled.
-          }
-        }
-        pendingSendQueueRef.current = [];
-      }
-      wsRef.current.close(WS_CLOSE.NORMAL_CLOSURE, 'User logged out');
-      wsRef.current = null;
+    if (!isAuthenticated) {
+      disposeConnection('User logged out');
       setIsConnected(false);
       setIsReady(false);
+      setReconnecting(false);
     }
-  }, [isAuthenticated]);
+  }, [isAuthenticated, disposeConnection]);
 
   // Cleanup on unmount only
   useEffect(() => {
     return () => {
       isMountedRef.current = false;
-      if (pingIntervalRef.current) clearInterval(pingIntervalRef.current);
-      // Drain the pending-send queue so any in-flight awaiters fail fast on
-      // unmount instead of dangling forever.
-      if (pendingSendQueueRef.current.length > 0) {
-        for (const queued of pendingSendQueueRef.current) {
-          try {
-            queued.abortController.abort();
-            queued.reject(new Error('WebSocket unmounting'));
-          } catch {
-            // Ignore — caller may have already settled.
-          }
-        }
-        pendingSendQueueRef.current = [];
-      }
-      if (wsRef.current?.readyState === ReconnectingWebSocket.OPEN) {
-        wsRef.current.close(WS_CLOSE.NORMAL_CLOSURE, 'Component unmounted');
-      }
+      disposeConnection('Component unmounted');
     };
-  }, []);
+  }, [disposeConnection]);
 
   // Memoized provider value: spreading a fresh object each render forces
   // every useContext consumer to re-render on any state change. Wrapping

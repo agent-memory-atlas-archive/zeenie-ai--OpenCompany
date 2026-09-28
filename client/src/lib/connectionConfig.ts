@@ -86,13 +86,19 @@ export const WS_RECONNECT = {
   MAX_ENQUEUED_MESSAGES: 200,
 } as const;
 
+/** Application heartbeat, independent of the server's protocol-level ping. */
+export const WS_HEARTBEAT = {
+  INTERVAL_MS: 30_000,
+  TIMEOUT_MS: 10_000,
+} as const;
+
 /**
  * WebSocket close codes per RFC 6455 §7.4.1.
  * https://datatracker.ietf.org/doc/html/rfc6455#section-7.4.1
  *
- * Browsers expose these via `CloseEvent.code`. PartySocket inspects
- * `1000` to skip its reconnect loop (intentional close); every other
- * code is treated as transient and triggers reconnect.
+ * A remote close (including 1000) may reconnect. Calling the wrapper's
+ * close() explicitly stops retries; the event's code does not express
+ * whether the application deliberately disposed the connection.
  *
  * Only the subset this app actively sends or branches on is listed.
  * Add new entries here rather than inlining the numeric literal.
@@ -104,4 +110,6 @@ export const WS_CLOSE = {
    * teardown so PartySocket does not reconnect.
    */
   NORMAL_CLOSURE: 1000,
+  /** Application-private code used to replace a nonresponsive connection. */
+  HEARTBEAT_TIMEOUT: 4000,
 } as const;

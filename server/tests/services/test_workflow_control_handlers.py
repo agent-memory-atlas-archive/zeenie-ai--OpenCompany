@@ -8,6 +8,14 @@ import pytest
 from services.deployment import handlers
 
 
+@pytest.fixture(autouse=True)
+def no_workspace_tasks(monkeypatch):
+    # These lifecycle contracts use ordinary graph nodes. Workspace-specific
+    # admission and cleanup are covered in test_workspace_task_reset.py.
+    monkeypatch.setattr(handlers, "_workspace_runtime_status", AsyncMock(return_value={}))
+    monkeypatch.setattr(handlers, "_reset_workspace_tasks", AsyncMock(return_value={"present": False}))
+
+
 def _control(
     status: str,
     revision: int,

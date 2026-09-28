@@ -77,10 +77,8 @@ describe('WS_RECONNECT', () => {
 
 describe('WS_CLOSE', () => {
   it('NORMAL_CLOSURE matches RFC 6455 §7.4.1', () => {
-    // PartySocket inspects this exact value to skip its reconnect
-    // loop. Any drift would either re-trigger reconnect on logout
-    // (1000 → !1000) or suppress reconnect on real drops (drift the
-    // other way). RFC 6455 §7.4.1 fixes this at 1000.
+    // The code identifies normal closure on the wire. Explicit close(),
+    // rather than this numeric value, tells PartySocket to stop retrying.
     expect(WS_CLOSE.NORMAL_CLOSURE).toBe(1000);
   });
 

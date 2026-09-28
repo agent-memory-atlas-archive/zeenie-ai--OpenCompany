@@ -662,6 +662,12 @@ class MachinaWorkflow:
                         heartbeat_timeout=timedelta(minutes=2),
                         retry_policy=activity_retry_policy,
                     )
+                    if getattr(node_cls, "workspace_task", False) and workflow.patched("workspace-node-cancellation-v1"):
+                        start_kwargs.update(
+                            start_to_close_timeout=node_cls.start_to_close_timeout,
+                            heartbeat_timeout=node_cls.heartbeat_timeout,
+                            cancellation_type=workflow.ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
+                        )
                     if dispatch.get("queue") is not None:
                         start_kwargs["task_queue"] = dispatch["queue"]
 

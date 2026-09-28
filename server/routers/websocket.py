@@ -1606,7 +1606,15 @@ async def websocket_status_endpoint(websocket: WebSocket):
     websocket.state.user_id = authenticated_user_id
 
     broadcaster = get_status_broadcaster()
-    await broadcaster.connect(websocket)
+    try:
+        await broadcaster.connect(websocket)
+    except BaseException:
+        # connect registers the socket before delivering initial snapshots.
+        # A cancellation there must not leave a connection outside the
+        # receive/process cleanup guard below. disconnect is idempotent if
+        # acceptance itself failed before registration.
+        await broadcaster.disconnect(websocket)
+        raise
 
     # Message queue for decoupling receive from processing
     message_queue: asyncio.Queue = asyncio.Queue()
@@ -1621,8 +1629,12 @@ async def websocket_status_endpoint(websocket: WebSocket):
             while True:
                 data = await websocket.receive_json()
                 await message_queue.put(data)
-        except WebSocketDisconnect:
-            # Don't log here - logging during shutdown can raise KeyboardInterrupt
+        except WebSocketDisconnect as exc:
+            # Routine tab closes and server restarts should not look like
+            # failures, but abnormal closes need enough context to diagnose.
+            log = logger.debug if exc.code in (1000, 1001) else logger.warning
+            reason = "".join(character if character.isprintable() else "?" for character in str(exc.reason or "")[:123])
+            log("[WebSocket] Client disconnected", path="/ws/status", close_code=exc.code, reason=reason)
             await message_queue.put(None)  # Signal shutdown
         except asyncio.CancelledError:
             # Task cancelled during shutdown - this is expected

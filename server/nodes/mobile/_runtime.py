@@ -15,6 +15,7 @@ from ._paths import mobile_root, runtime_python
 from ._process import command, hidden_options
 from ._diagnostics import event, recent
 from ._emulator import DeviceLock, recover_emulator, boot_error, owned_children, stop_children
+from .runtime.progress import plan_summary, summary
 
 READS = frozenset({"geometry", "observe", "date", "packages", "foreground"})
 ACTIONS = frozenset({"tap", "swipe", "touch", "text", "erase", "key", "launch", "terminate", "url", "rotate"})
@@ -42,6 +43,13 @@ class MobileRuntime:
         self.active: dict | None = None
         self.last_task: dict | None = None
         self.queue: list[dict] = []
+        # Execution handles are deliberately separate from public task snapshots.
+        # Completion means run() has drained its worker and admitted device I/O.
+        self._run_tasks: dict[str, tuple[dict, asyncio.Task, asyncio.Event]] = {}
+        self._worker_stop_tasks: set[asyncio.Task] = set()
+        self._reset_runs: set[str] = set()
+        self._draining_runs: set[str] = set()
+        self._retired_generations: dict[tuple[str, str], int] = {}
         self.capabilities: dict[str, tuple[str, Lease]] = {}
         self.resume_event = asyncio.Event()
         self.viewer: str | None = None
@@ -476,22 +484,77 @@ class MobileRuntime:
         def matches(entry):
             return entry["workflow_id"] == workflow_id and entry["node_id"] == node_id and (run_id is None or entry["run_id"] == run_id)
 
-        for entry in self.queue:
-            if matches(entry):
-                entry["status"] = "cancelled"
-        if self.active and matches(self.active):
-            self.active["status"] = "cancelled"
-            self.control.revoke("run:" + self.active["run_id"])
-            self.capabilities.clear()
-            self.resume_event.set()
-            await self._stop_worker()
+        await self._cancel_matching(matches)
 
-    async def run(self, *, principal: str, workflow_id: str, node_id: str, run_id: str, params: dict, model: dict, broker_url: str, execution_id: str | None = None) -> dict:
+    async def reset_execution_state(self, *, workflow_id: str, node_id: str, generation: int) -> dict:
+        if generation < 0:
+            raise MobileError("invalid_generation", "Reset generation cannot be negative")
+        # Retire admission before the first await so a late graph activity cannot
+        # enqueue while reset is draining a previously admitted task.
+        if generation > 0:
+            key = (workflow_id, node_id)
+            self._retired_generations[key] = max(generation, self._retired_generations.get(key, 0))
+
+        def matches(entry):
+            return (
+                entry["workflow_id"] == workflow_id and entry["node_id"] == node_id
+                # A phone-only reset must not cancel a graph generation admitted
+                # concurrently by Start. Zero identifies direct Workspace work.
+                and (entry.get("generation", 0) == 0 if generation == 0 else entry.get("generation", 0) <= generation)
+            )
+
+        await self._cancel_matching(matches, clear=True)
+        return {"reset": True}
+
+    async def _cancel_matching(self, matches, *, clear: bool = False) -> None:
+        records = [record for record in self._run_tasks.values() if matches(record[0])]
+        entries = [entry for entry in self.queue if matches(entry)]
+        active = self.active if self.active and matches(self.active) else None
+        if active is not None:
+            entries.append(active)
+        run_ids = {entry["run_id"] for entry in entries}
+        for entry in entries:
+            entry["status"] = "cancelled"
+        if clear:
+            self._reset_runs.update(run_ids)
+            if self.last_task and matches(self.last_task):
+                self.last_task = None
+        # Revoke before cancellation/draining. Keep manual and unrelated leases.
+        for run_id in run_ids:
+            self.control.revoke("run:" + run_id)
+        for capability, (run_id, _) in list(self.capabilities.items()):
+            if run_id in run_ids:
+                self.capabilities.pop(capability, None)
+        for entry, task, _ in records:
+            # A second reset must not interrupt a first cancellation's finally.
+            if not task.done() and not task.cancelling() and entry["run_id"] not in self._draining_runs:
+                task.cancel()
+        if records:
+            await asyncio.gather(*(done.wait() for _, _, done in records))
+            if active is not None and self.active is active:
+                raise MobileError("reset_failed", "Mobile task cleanup did not finish; retry reset")
+        elif active is not None:
+            # Also handle state restored/manually owned without a live run handle.
+            await self._stop_worker()
+            async with self.control.lock:
+                pass
+            if self.active is active:
+                self.active = None
+        if clear:
+            if self.last_task and matches(self.last_task):
+                self.last_task = None
+            self._reset_runs.difference_update(run_ids)
+
+    async def run(self, *, principal: str, workflow_id: str, node_id: str, run_id: str, params: dict, model: dict, broker_url: str, execution_id: str | None = None, generation: int = 0) -> dict:
+        if generation > 0 and generation <= self._retired_generations.get((workflow_id, node_id), 0):
+            raise MobileError("stale_generation", "This mobile task belongs to a reset workflow generation")
         if len(self.queue) >= 32:
             raise MobileError("queue_full", "The shared device queue is full")
         if any(q["run_id"] == run_id for q in self.queue) or (self.active and self.active["run_id"] == run_id):
             raise MobileError("duplicate_run", "This task is already admitted")
-        entry = {"run_id": run_id, "workflow_id": workflow_id, "node_id": node_id, "execution_id": execution_id, "status": "queued", "steps": 0, "max_steps": params["max_steps"]}
+        entry = {"run_id": run_id, "workflow_id": workflow_id, "node_id": node_id, "execution_id": execution_id, "generation": generation, "status": "queued", "steps": 0, "max_steps": params["max_steps"]}
+        done = asyncio.Event()
+        self._run_tasks[run_id] = (entry, asyncio.current_task(), done)
         self.queue.append(entry)
         event("task_queued", run_id=run_id, workflow_id=workflow_id, node_id=node_id)
         try:
@@ -505,11 +568,11 @@ class MobileRuntime:
                     raise MobileError("device_offline", "Start the shared device in Workspace first")
                 self.active = entry
                 entry.update(started_at=time.time(), provider=model.get("provider"), model=model.get("model"))
-                await self._publish_progress("Preparing phone")
                 active_remaining = params["timeout_s"]
                 steps_remaining = params["max_steps"]
                 attempts = 0
                 try:
+                    await self._publish_progress("Preparing phone")
                     while True:
                         if entry["status"] == "cancelled":
                             raise asyncio.CancelledError()
@@ -582,14 +645,18 @@ class MobileRuntime:
                         event("task_completed", run_id=run_id)
                         return {"response": result.get("result"), "outcome": "completed", "run_id": run_id, "artifacts": []}
                 finally:
-                    self.capabilities.clear()
+                    self._draining_runs.add(run_id)
+                    for capability, (owner_run, _) in list(self.capabilities.items()):
+                        if owner_run == run_id:
+                            self.capabilities.pop(capability, None)
                     self.control.revoke("run:" + run_id)
                     await self._stop_worker()
                     # Wait for any previously admitted broker write before reporting completion.
                     async with self.control.lock:
                         pass
                     entry["finished_at"] = time.time()
-                    self.last_task = entry
+                    if run_id not in self._reset_runs:
+                        self.last_task = entry
                     self.active = None
         except asyncio.CancelledError:
             entry["status"] = "cancelled"
@@ -603,8 +670,11 @@ class MobileRuntime:
         finally:
             if entry in self.queue:
                 self.queue.remove(entry)
+            self._run_tasks.pop(run_id, None)
+            self._draining_runs.discard(run_id)
+            done.set()
 
-    async def _publish_progress(self, phase: str) -> None:
+    async def _publish_progress(self, phase: str, *, record: bool = True) -> None:
         if not self.active:
             return
         entry = self.active
@@ -614,7 +684,8 @@ class MobileRuntime:
         entry["phase"] = phase
         entry["updated_at"] = now
         history = entry.setdefault("activity", [])
-        history.append({"at": now, "message": phase, "step": entry.get("steps", 0)})
+        if record and (not history or history[-1]["message"] != phase):
+            history.append({"at": now, "message": phase, "step": entry.get("steps", 0)})
         del history[:-40]
         try:
             from services.status_broadcaster import get_status_broadcaster
@@ -626,6 +697,58 @@ class MobileRuntime:
             )
         except Exception as exc:
             event("progress_delivery_failed", failed=True, error_type=type(exc).__name__)
+
+    async def _publish_agent_progress(self, message: dict) -> None:
+        """Detailed summaries stay in the owner-only snapshot, never diagnostic logs."""
+        if not self.active or message.get("kind") not in {"plan", "action"}:
+            return
+        entry = self.active
+        now = time.time()
+        kind = message["kind"]
+        item = {"at": now, "step": entry.get("steps", 0), "kind": kind,
+                "message": summary(message.get("message"), 400), "detail": summary(message.get("detail"))}
+        if not item["message"]:
+            return
+        history = entry.setdefault("agent_activity", [])
+        if kind == "plan":
+            plan = plan_summary(message.get("plan"))
+            if plan is None:
+                return
+            entry["plan"] = plan
+            entry["current_goal"] = next((goal["description"] for goal in plan if goal["status"] == "pending"), None)
+            history.append(item)
+            phase = "Updating task plan"
+        else:
+            action_id = summary(message.get("action_id"), 100)
+            state = message.get("state")
+            if not action_id or state not in {"started", "completed", "failed", "returned"}:
+                return
+            item.update(action_id=action_id, state=state, outcome=summary(message.get("outcome")))
+            duration = message.get("duration_ms")
+            if isinstance(duration, (int, float)) and 0 <= duration <= 86_400_000:
+                item["duration_ms"] = round(duration)
+            previous = next((row for row in reversed(history) if row.get("action_id") == action_id), None)
+            if previous:
+                # Keep one row and the original engine step for each actual tool call.
+                item.update(at=previous["at"], step=previous["step"], finished_at=now)
+                previous.update(item)
+                item = previous
+            else:
+                history.append(item)
+            if state == "started" or not entry.get("current_action") or entry["current_action"].get("action_id") == action_id:
+                entry["current_action"] = item
+            phase = {"started": "Executing phone action", "completed": "Phone action completed",
+                     "failed": "Phone action failed", "returned": "Checking action outcome"}[state]
+        del history[:-40]
+        await self._publish_progress(phase, record=False)
+
+    def _finish_pending_actions(self) -> None:
+        if not self.active:
+            return
+        for item in self.active.get("agent_activity", []):
+            if item.get("state") == "started":
+                item.update(state="returned", finished_at=time.time(),
+                            outcome="Action interrupted before the tool confirmed its outcome.")
 
     async def _run_worker(self, config: dict, timeout: float) -> dict:
         entry = Path(__file__).with_name("runtime") / "worker.py"
@@ -645,6 +768,7 @@ class MobileRuntime:
         if config["capability"] not in self.capabilities or not self.active or self.active["status"] != "running":
             await self._stop_worker()
             return {"success": False, "error": "Task admission revoked"}
+        self.active.update(plan=[], current_goal=None, current_action=None)
         proc.stdin.write((json.dumps(config) + "\n").encode())
         await proc.stdin.drain()
         proc.stdin.close()
@@ -681,10 +805,12 @@ class MobileRuntime:
                         duration = message.get("duration_ms")
                         suffix = f" ({duration / 1000:.1f}s)" if isinstance(duration, (int, float)) and duration >= 0 else ""
                         await self._publish_progress(label if state == "started" else f"{label}: {state}{suffix}")
+                elif message.get("type") == "agent_update":
+                    await self._publish_agent_progress(message)
                 elif message.get("type") == "diagnostic":
                     event("engine_stage", **scope, stage=message.get("stage"), error_type=message.get("error_type"))
                     phase = {"model_request": "Waiting for model", "model_response": "Model responded",
-                             "engine_initialization": "Connecting engine", "task_execution": "Using phone",
+                             "engine_initialization": "Connecting engine", "task_execution": "Preparing task plan",
                              "engine_cleanup": "Finishing engine cleanup"}.get(message.get("stage"))
                     stage = message.get("stage")
                     request_id = str(message.get("request_id", "model"))
@@ -714,7 +840,7 @@ class MobileRuntime:
                     if steps != self.active.get("attempt_steps", 0):
                         event("task_progress", **scope, steps=steps)
                         self.active["steps"] = min(self.active.get("max_steps", steps), self.active.get("step_offset", 0) + steps)
-                        await self._publish_progress("Using phone")
+                        await self._publish_progress(self.active.get("phase", "Preparing task plan"), record=False)
                     self.active["attempt_steps"] = steps
             await proc.wait()
             event("engine_exited", failed=proc.returncode not in (0, None), **scope, exit_code=proc.returncode)
@@ -725,13 +851,23 @@ class MobileRuntime:
     async def _stop_worker(self):
         proc, self.worker = self.worker, None
         if proc and proc.returncode is None:
-            with contextlib.suppress(ProcessLookupError):
-                proc.terminate()
-                try:
-                    await asyncio.wait_for(proc.wait(), 5)
-                except asyncio.TimeoutError:
-                    proc.kill()
-                    await proc.wait()
+            task = asyncio.create_task(self._terminate_worker(proc))
+            self._worker_stop_tasks.add(task)
+            task.add_done_callback(self._worker_stop_tasks.discard)
+        if self._worker_stop_tasks:
+            # Takeover and reset can overlap. Both must await an already-started
+            # worker stop even after self.worker has been detached.
+            await asyncio.shield(asyncio.gather(*self._worker_stop_tasks))
+        self._finish_pending_actions()
+
+    async def _terminate_worker(self, proc):
+        with contextlib.suppress(ProcessLookupError):
+            proc.terminate()
+            try:
+                await asyncio.wait_for(proc.wait(), 5)
+            except asyncio.TimeoutError:
+                proc.kill()
+                await proc.wait()
 
     async def _stop_driver(self):
         proc, self.driver = self.driver, None

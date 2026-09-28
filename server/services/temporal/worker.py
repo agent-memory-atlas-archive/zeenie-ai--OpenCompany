@@ -54,9 +54,11 @@ def _framework_workflows() -> list:
     from services.temporal.workflow_control_workflow import WorkflowControlWorkflow
 
     from services.temporal.node_invocation import NodeInvocationWorkflow
+    from services.temporal.workspace_tasks_workflow import WorkspaceTaskControllerWorkflow
 
     return [
         NodeInvocationWorkflow,
+        WorkspaceTaskControllerWorkflow,
         MachinaWorkflow,
         AgentWorkflow,
         DelegatedTaskWorkflow,
@@ -223,6 +225,7 @@ class TemporalWorkerManager:
             collect_polling_activities,
         )
         from services.temporal.agent_activities import collect_agent_activities
+        from services.temporal.workspace_task_activities import reset_workspace_task_runtime
         from services.temporal.activities import (
             broadcast_trigger_status_activity,
             evaluate_trigger_filter_activity,
@@ -278,6 +281,7 @@ class TemporalWorkerManager:
                 load_persisted_workflow_graph_activity,
                 pause_workflow_on_failure_activity,
                 record_run_completion_activity,
+                reset_workspace_task_runtime,
                 store_node_output_activity,
                 *per_type,
                 *agent_activities,
@@ -736,6 +740,7 @@ async def run_standalone_worker(
         store_node_output_activity,
     )
     from services.temporal.agent_activities import collect_agent_activities
+    from services.temporal.workspace_task_activities import reset_workspace_task_runtime
     from services.temporal.agent_workflow import (
         AgentWorkflow,
         DelegatedTaskWorkflow,
@@ -761,6 +766,7 @@ async def run_standalone_worker(
                 load_persisted_workflow_graph_activity,
                 pause_workflow_on_failure_activity,
                 record_run_completion_activity,
+                reset_workspace_task_runtime,
                 store_node_output_activity,
                 *registered_plugin_activities,
                 *registered_agent_activities,
@@ -817,6 +823,7 @@ async def create_worker(
         store_node_output_activity,
     )
     from services.temporal.agent_activities import collect_agent_activities
+    from services.temporal.workspace_task_activities import reset_workspace_task_runtime
     from services.temporal.agent_workflow import (
         AgentWorkflow,
         DelegatedTaskWorkflow,
@@ -841,6 +848,7 @@ async def create_worker(
             load_persisted_workflow_graph_activity,
             pause_workflow_on_failure_activity,
             record_run_completion_activity,
+            reset_workspace_task_runtime,
             store_node_output_activity,
             *registered_plugin_activities,
             *registered_agent_activities,

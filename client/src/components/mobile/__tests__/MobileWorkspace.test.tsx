@@ -1,20 +1,35 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import MobileWorkspace from '../MobileWorkspace';
 import { mobilePoint, mobileRequest } from '../api';
 
-const { connectVideo } = vi.hoisted(() => ({ connectVideo: vi.fn(() => () => {}) }));
+const { connectVideo, listeners, addEventListener } = vi.hoisted(() => {
+  const listeners = new Map<string, Set<(data: unknown) => void>>();
+  return {
+    connectVideo: vi.fn(() => () => {}), listeners,
+    addEventListener: (type: string, handler: (data: unknown) => void) => {
+      const handlers = listeners.get(type) ?? new Set();
+      handlers.add(handler); listeners.set(type, handlers);
+      return () => { handlers.delete(handler); };
+    },
+  };
+});
 vi.mock('../video', () => ({ connectMobileVideo: connectVideo }));
+vi.mock('@/contexts/WebSocketContext', () => ({ useWebSocketActions: () => ({ addEventListener }) }));
 const fetchMock = vi.fn();
 const nodes = [{ node_id: 'flow:mobile_agent:1', label: 'Phone assistant' }];
 const ready = { supported: true, adb: true, emulator: true, image: true, engine: true, video: true, acceleration: 'WHPX is installed and usable.' };
 let snapshot: Record<string, unknown>;
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+const reset = (workflowId: string) => act(() => {
+  for (const handler of listeners.get('workflow_runtime_reset') ?? []) handler({ workflow_id: workflowId });
+});
 
 beforeEach(() => {
   sessionStorage.clear();
   connectVideo.mockClear();
+  listeners.clear();
   snapshot = { running: false, control_state: 'idle', controller: null, epoch: 0, geometry: { width: 1080, height: 1920, rotation: 0 } };
   vi.stubGlobal('fetch', fetchMock);
   fetchMock.mockReset().mockImplementation(async (url: string) => json(url.endsWith('/doctor') ? ready : snapshot));
@@ -22,11 +37,115 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe('Mobile Workspace', () => {
+  it('clears the old run, task recovery IDs and lease after a matching workflow reset', async () => {
+    sessionStorage.setItem('mobile-task:flow:flow:mobile_agent:1', 'old-submission');
+    sessionStorage.setItem('mobile-task:flow:flow:android:2', 'other-phone-submission');
+    sessionStorage.setItem('mobile-task:other:other:mobile_agent:1', 'unrelated-submission');
+    snapshot = { ...snapshot, running: true, active: { run_id: 'old-run', phase: 'Using phone', current_goal: 'Old phone task' } };
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.endsWith('/takeover')) {
+        snapshot = { ...snapshot, controller: 'viewer:server-hash', control_state: 'human', epoch: 7 };
+        return json({ owner: 'viewer:server-hash', epoch: 7 });
+      }
+      if (url.includes('/tasks/')) return json({ status: 'running' });
+      return json(url.endsWith('/doctor') ? ready : snapshot);
+    });
+    render(<MobileWorkspace workflowId="flow" nodes={[...nodes, { node_id: 'flow:android:2', label: 'Second phone' }]} />);
+    await screen.findByText('Old phone task');
+    await screen.findByText('Working on your request');
+    await userEvent.click(screen.getByRole('button', { name: 'Use phone' }));
+    await screen.findByRole('button', { name: 'Phone Home' });
+    snapshot = { ...snapshot, active: null, last_task: null };
+    reset('flow');
+    await screen.findByText('Ready');
+    expect(screen.queryByText('Old phone task')).toBeNull();
+    expect(screen.queryByText('Working on your request')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Phone Home' })).toBeNull();
+    expect(fetchMock.mock.calls.some(([url]) => url.endsWith('/release'))).toBe(false);
+    expect(sessionStorage.getItem('mobile-task:flow:flow:mobile_agent:1')).toBeNull();
+    expect(sessionStorage.getItem('mobile-task:flow:flow:android:2')).toBeNull();
+    expect(sessionStorage.getItem('mobile-task:other:other:mobile_agent:1')).toBe('unrelated-submission');
+    await userEvent.click(screen.getByText('Ask AI to use the phone', { selector: 'summary' }));
+    await userEvent.type(screen.getByRole('textbox', { name: 'Ask AI to use the phone' }), 'New task');
+    expect(screen.getByRole('button', { name: 'Run task' })).toBeEnabled();
+  });
+
+  it('aborts old status and task polls and ignores their delayed responses after reset', async () => {
+    sessionStorage.setItem('mobile-task:flow:flow:mobile_agent:1', 'old-submission');
+    let resolveStatus!: (response: Response) => void;
+    let resolveTask!: (response: Response) => void;
+    let oldStatusSignal: AbortSignal | undefined;
+    let oldTaskSignal: AbortSignal | undefined;
+    let statusCalls = 0;
+    snapshot.running = true;
+    fetchMock.mockImplementation((url: string, options: RequestInit) => {
+      if (url.endsWith('/status') && statusCalls++ === 0) {
+        oldStatusSignal = options.signal as AbortSignal;
+        return new Promise<Response>((resolve) => { resolveStatus = resolve; });
+      }
+      if (url.includes('/tasks/old-submission')) {
+        oldTaskSignal = options.signal as AbortSignal;
+        return new Promise<Response>((resolve) => { resolveTask = resolve; });
+      }
+      return Promise.resolve(json(url.endsWith('/doctor') ? ready : snapshot));
+    });
+    render(<MobileWorkspace workflowId="flow" nodes={nodes} />);
+    await waitFor(() => expect(oldTaskSignal).toBeDefined());
+    reset('flow');
+    await screen.findByText('Ready');
+    expect(oldStatusSignal?.aborted).toBe(true);
+    expect(oldTaskSignal?.aborted).toBe(true);
+    await act(async () => {
+      resolveStatus(json({ ...snapshot, active: { run_id: 'stale-run', phase: 'Using phone', current_goal: 'Stale phone activity' } }));
+      resolveTask(json({ status: 'completed', result: 'Stale task result' }));
+    });
+    expect(screen.queryByText('Stale phone activity')).toBeNull();
+    expect(screen.queryByText('Stale task result')).toBeNull();
+    expect(sessionStorage.getItem('mobile-task:flow:flow:mobile_agent:1')).toBeNull();
+  });
+
+  it('ignores resets for another workflow without replacing the phone session', async () => {
+    sessionStorage.setItem('mobile-task:flow:flow:mobile_agent:1', 'existing-submission');
+    snapshot = { ...snapshot, running: true, active: { run_id: 'run', phase: 'Using phone', current_goal: 'Keep this task' } };
+    render(<MobileWorkspace workflowId="flow" nodes={nodes} />);
+    await screen.findByText('Keep this task');
+    await waitFor(() => expect(connectVideo).toHaveBeenCalledOnce());
+    const canvas = screen.getByLabelText('Phone screen, view only').querySelector('canvas');
+    reset('other');
+    expect(screen.getByText('Keep this task')).toBeInTheDocument();
+    expect(screen.getByLabelText('Phone screen, view only').querySelector('canvas')).toBe(canvas);
+    expect(sessionStorage.getItem('mobile-task:flow:flow:mobile_agent:1')).toBe('existing-submission');
+    expect(connectVideo).toHaveBeenCalledOnce();
+  });
+
+  it('does not restore a pre-reset submission when its HTTP response arrives late', async () => {
+    snapshot.running = true;
+    let resolveSubmission!: (response: Response) => void;
+    fetchMock.mockImplementation((url: string, options: RequestInit) => {
+      if (url.endsWith('/tasks') && options.method === 'POST') {
+        return new Promise<Response>((resolve) => { resolveSubmission = resolve; });
+      }
+      return Promise.resolve(json(url.endsWith('/doctor') ? ready : snapshot));
+    });
+    render(<MobileWorkspace workflowId="flow" nodes={nodes} />);
+    await screen.findByText('Ready');
+    await userEvent.click(screen.getByText('Ask AI to use the phone', { selector: 'summary' }));
+    await userEvent.type(screen.getByRole('textbox', { name: 'Ask AI to use the phone' }), 'Old request');
+    await userEvent.click(screen.getByRole('button', { name: 'Run task' }));
+    await waitFor(() => expect(resolveSubmission).toBeDefined());
+    reset('flow');
+    await screen.findByText('Ready');
+    await act(async () => { resolveSubmission(json({ status: 'running', invocation_id: 'old-run' })); });
+    expect(sessionStorage.getItem('mobile-task:flow:flow:mobile_agent:1')).toBeNull();
+    expect(screen.queryByText('Working on your request')).toBeNull();
+    expect(fetchMock.mock.calls.some(([url]) => url.includes('/tasks/'))).toBe(false);
+  });
+
   it('shows internal phone progress when invoked by an AI agent tool call', async () => {
     snapshot.running = true;
     snapshot.active = { run_id: 'tool-run', phase: 'Waiting for model', steps: 7, max_steps: 40 };
     render(<MobileWorkspace workflowId="flow" nodes={nodes} />);
-    expect(await screen.findByText(/Waiting for model.*Step 7 \/ 40/)).toBeVisible();
+    expect(await screen.findByText(/Waiting for model.*Engine step 7 \/ 40/)).toBeVisible();
   });
   it('retains a startup failure across status refreshes without claiming the phone is ready', async () => {
     snapshot.start_error = 'This phone is already open, but could not be safely reconnected.';

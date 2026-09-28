@@ -40,6 +40,10 @@ class AndroidTool(ToolNode):
     Output = MobileOutput
 
     @classmethod
+    async def reset_execution_state(cls, **kwargs) -> dict:
+        return await MobileUseAgent.reset_execution_state(**kwargs)
+
+    @classmethod
     def interpret_result(cls, result):
         # Agent tool invocation flattens failures to {"error": ...}. Do not
         # report a rejected Android task as a successful Temporal activity.

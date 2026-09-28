@@ -207,6 +207,11 @@ class NodeExecutor:
             return result
 
         except asyncio.CancelledError:
+            # Workspace engines own subprocesses/device leases. Temporal must
+            # observe cancellation after their finally blocks finish, not an
+            # ordinary failure envelope that can be mistaken for completion.
+            if getattr(get_node_class(node_type), "workspace_task", False):
+                raise
             return ExecutionResult(
                 False, node_id, node_type, error="Cancelled", execution_id=execution_id, execution_time=time.time() - start_time
             ).to_dict()

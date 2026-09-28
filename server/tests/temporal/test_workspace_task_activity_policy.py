@@ -26,7 +26,8 @@ async def test_workspace_task_honors_plugin_policy_and_authenticated_principal(m
     monkeypatch.setattr(module.workflow, "execute_activity", execute)
     tool_payload = {"node_type": "embedded_task", "node_id": "child", "user_id": "untrusted", "nodes": [{"id": "model"}]}
     result = await module._execute_plugin_tool_activity(
-        "node.embedded_task.v1", "call-1", tool_payload, {"user_id": "authenticated-owner", "temporal_worker_pool_enabled": pool}
+        "node.embedded_task.v1", "call-1", tool_payload,
+        {"user_id": "authenticated-owner", "temporal_worker_pool_enabled": pool, "generation": 7, "workflow_id": "wf"}
     )
     patched.assert_called_once_with("workspace-task-activity-policy-v1")
     assert result == {"success": True}
@@ -37,6 +38,7 @@ async def test_workspace_task_honors_plugin_policy_and_authenticated_principal(m
     assert kwargs["cancellation_type"] == ActivityCancellationType.WAIT_CANCELLATION_COMPLETED
     assert kwargs.get("task_queue") == ("device-pool" if pool else None)
     assert kwargs["args"][0]["user_id"] == "authenticated-owner"
+    assert kwargs["args"][0]["generation"] == 7
     assert kwargs["args"][0]["nodes"] == [{"id": "model"}]
     assert tool_payload["user_id"] == "untrusted"  # caller input is not mutated
 

@@ -4,6 +4,7 @@ import {
   assertWorkflowControlMutationSucceeded,
   extractWorkflowControlStatusSnapshot,
   isWorkflowControlMutationConfirmed,
+  isWorkflowResetRecoveryConfirmed,
   mergeWorkflowControlStatus,
   normalizeWorkflowControlStatus,
   shouldRetryResetWorkflowAfterConflict,
@@ -66,6 +67,9 @@ describe('workflow control status ordering', () => {
         workflow_id: 'workflow-1',
         generation: '5',
         revision: '11',
+        workspace_epoch: '3',
+        workspace_reset_request_id: 'reset-request',
+        workspace_resetting: true,
         state: 'paused',
         active_runs: '2',
       },
@@ -75,6 +79,9 @@ describe('workflow control status ordering', () => {
       workflow_id: 'workflow-1',
       generation: 5,
       revision: 11,
+      workspace_epoch: 3,
+      workspace_reset_request_id: 'reset-request',
+      workspace_resetting: true,
       state: 'paused',
       active_count: 2,
       can_resume: true,
@@ -177,6 +184,40 @@ describe('workflow control mutation responses', () => {
       new Error('workflow_control_transition_pending'),
       status({ state: 'starting', revision: 2, can_reset: true }),
     )).toBe(false);
+  });
+
+  it('does not confirm a phone-only reset merely because the workflow was already ready', () => {
+    expect(isWorkflowResetRecoveryConfirmed(status({
+      state: 'ready', revision: 3, workspace_epoch: 2,
+      workspace_reset_request_id: 'old-reset', workspace_resetting: false,
+    }), 3, new Set(['new-reset']))).toBe(false);
+  });
+
+  it.each(['ready', 'never_started'] as const)('recovers %s when the exact workspace reset completed', (state) => {
+    expect(isWorkflowResetRecoveryConfirmed(status({
+      state, revision: 3, workspace_epoch: 4,
+      workspace_reset_request_id: 'this-reset', workspace_resetting: false,
+    }), 3, new Set(['this-reset']))).toBe(true);
+  });
+
+  it('requires workspace cleanup to finish even when the request ID or revision matches', () => {
+    expect(isWorkflowResetRecoveryConfirmed(status({
+      state: 'ready', revision: 4, workspace_reset_request_id: 'this-reset', workspace_resetting: true,
+    }), 3, new Set(['this-reset']))).toBe(false);
+  });
+
+  it.each([3, 4])('does not confirm reset with unavailable workspace status at revision %s', (revision) => {
+    const unavailable = normalizeWorkflowControlStatus({
+      state: 'ready', revision, workspace_available: false,
+      workspace_reset_request_id: 'this-reset', workspace_resetting: false,
+    });
+    expect(unavailable.workspace_available).toBe(false);
+    expect(isWorkflowResetRecoveryConfirmed(unavailable, 3, new Set(['this-reset']))).toBe(false);
+  });
+
+  it('preserves recovery of ordinary resets after their lifecycle revision advances', () => {
+    expect(isWorkflowResetRecoveryConfirmed(status({ state: 'ready', revision: 4 }), 3, new Set())).toBe(true);
+    expect(isWorkflowResetRecoveryConfirmed(status({ state: 'resetting', revision: 4 }), 3, new Set())).toBe(false);
   });
 
   it.each([

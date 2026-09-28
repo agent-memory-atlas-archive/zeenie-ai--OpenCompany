@@ -994,15 +994,61 @@ async def _with_runtime_counts(payload: Dict[str, Any], workflow_id: str) -> Dic
     from core.container import container
 
     status = container.workflow_service().get_deployment_status(workflow_id)
+    workspace = await _workspace_runtime_status(workflow_id)
     return {
         **payload,
-        "active_count": status.get("active_runs", 0),
-        "in_flight_count": status.get("active_runs", 0),
+        **{key: value for key, value in workspace.items() if key != "workspace_active_count"},
+        "active_count": status.get("active_runs", 0) + workspace.get("workspace_active_count", 0),
+        "in_flight_count": status.get("active_runs", 0) + workspace.get("workspace_active_count", 0),
         "queued_count": (
             int(payload.get("queued_count", 0) or 0)
             + int(status.get("queued_events", 0) or 0)
         ),
     }
+
+
+async def _workspace_runtime_status(workflow_id: str) -> Dict[str, Any]:
+    from core.container import container
+    from services.node_invocations import controller_status, workspace_task_nodes
+
+    database = container.database()
+    _, nodes = await workspace_task_nodes(database, workflow_id)
+    wrapper = container.temporal_client()
+    if wrapper is None or wrapper.client is None:
+        return {"can_reset": True, "workspace_available": False} if nodes else {}
+    try:
+        state = await controller_status(workflow_id, client=wrapper.client)
+    except Exception as exc:
+        logger.warning("Workspace task status unavailable", workflow_id=workflow_id, error_type=type(exc).__name__)
+        return {"can_reset": True, "workspace_available": False} if nodes else {}
+    if state is None:
+        return {"can_reset": True, "workspace_epoch": 0} if nodes else {}
+    result = {
+        "can_reset": True, "workspace_available": True,
+        "workspace_active_count": state["active_count"], "workspace_epoch": state["epoch"],
+        "workspace_resetting": state["resetting"],
+        "workspace_reset_request_id": state.get("reset_request_id") or state.get("last_reset_request_id"),
+    }
+    if state["resetting"]:
+        result.update(state="resetting", can_start=False, can_pause=False, can_resume=False, can_edit=False)
+    return result
+
+
+async def _reset_workspace_tasks(workflow_id: str, database, control, data: Dict[str, Any]) -> Dict[str, Any]:
+    from services.node_invocations import controller_status, reset, workspace_task_nodes
+    from core.container import container
+
+    _, nodes = await workspace_task_nodes(database, workflow_id, control)
+    wrapper = container.temporal_client()
+    state = None
+    if wrapper is not None and wrapper.client is not None:
+        state = await controller_status(workflow_id, client=wrapper.client)
+    if not nodes and state is None:
+        return {"cancelled": 0, "reset_nodes": [], "present": False}
+    # Phone-only resets do not advance the graph revision. Deriving an ID
+    # from that revision would make every later Reset replay the first one.
+    request_id = str(data.get("idempotency_key") or f"workflow-reset:{uuid.uuid4().hex}")
+    return {**await reset(workflow_id, request_id), "present": True}
 
 
 def _close_local_admission(workflow_id: str) -> None:
@@ -2072,23 +2118,29 @@ async def handle_reset_workflow(data: Dict[str, Any], websocket: WebSocket) -> D
     workflow_id = data["workflow_id"]
     service = _control_service()
     current = await service.database.get_latest_workflow_control(workflow_id)
-    if current is None:
-        return await _with_runtime_counts(
-            await service.get_status(workflow_id),
-            workflow_id,
-        )
+    if current is None or current.status == "reset":
+        # Workspace tasks also exist before Start and after a generation was
+        # reset. Their own Temporal controller supplies the cleanup barrier.
+        revision = current.revision if current else 0
+        if int(data.get("expected_revision", revision)) != revision:
+            if current is not None and current.status == "reset":
+                return {"success": True, "idempotent": True, **await _control_payload(current)}
+            raise ValueError("control_revision_conflict")
+        workspace = await _reset_workspace_tasks(workflow_id, service.database, current, data)
+        if not workspace.get("present", True):
+            payload = await _control_payload(current) if current else await service.get_status(workflow_id)
+            return {"success": True, "idempotent": True, **payload}
+        from services.status_broadcaster import get_status_broadcaster
+        await get_status_broadcaster().broadcast({
+            "type": "workflow_runtime_reset", "workflow_id": workflow_id,
+            "reset_nodes": workspace.get("reset_nodes", []),
+        })
+        payload = await _with_runtime_counts(await service.get_status(workflow_id), workflow_id)
+        await get_status_broadcaster().broadcast({"type": "workflow_control_status", "workflow_id": workflow_id, "data": payload})
+        return {"success": True, "idempotent": not workspace.get("cancelled"), **payload}
 
-    # ``reset`` is a completed cleanup barrier. Re-running generation-wide
-    # sweeps here would race a concurrent Start and could terminate resources
-    # from the next generation because standalone triggers use the stable
-    # application workflow id.
-    if current.status == "reset":
-        return {
-            "success": True,
-            "idempotent": True,
-            **await _control_payload(current),
-        }
-
+    # The completed-generation branch above only resets direct Workspace
+    # tasks. Generation-wide cleanup below must not sweep a later Start.
     if current.status != "resetting":
         current = await service.transition(
             current, expected_revision=_expected_revision(data, current),
@@ -2144,6 +2196,7 @@ async def handle_reset_workflow(data: Dict[str, Any], websocket: WebSocket) -> D
     # Controller, cron, and legacy local admission paths are now closed. This
     # final strict sweep therefore observes a fixed set of generation runs.
     terminated = await _terminate_generation_workflows(current, strict=True)
+    workspace = await _reset_workspace_tasks(workflow_id, service.database, current, data)
 
     archived = await service.database.update_workflow_run_data_scope(
         current.data_scope_id or current.execution_id,
@@ -2170,6 +2223,7 @@ async def handle_reset_workflow(data: Dict[str, Any], websocket: WebSocket) -> D
         "data_scope_id": current.data_scope_id or current.execution_id,
         "archived_nodes": node_state["archived_nodes"],
         "reset_nodes": node_state["reset_nodes"],
+        "cancelled_workspace_tasks": workspace.get("cancelled", 0),
     })
     payload = await _broadcast_control(current, extra={
         "terminated_executions": terminated,

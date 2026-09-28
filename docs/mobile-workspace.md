@@ -104,6 +104,16 @@ Resuming starts a fresh agent worker against the current device state with a new
 
 Workspace submissions use a client-generated submission UUID and a durable Temporal workflow identity scoped to principal, saved workflow, and node. Repeating a submission returns the existing task; reusing its UUID with a different prompt is rejected. Mobile task activities have automatic retries disabled. This is not a guarantee that arbitrary device actions are globally exactly-once across host failure.
 
+### Resetting phone tasks
+
+Use the workflow toolbar's **Reset** for phone tasks submitted through **Ask AI to use the phone**, as well as phone work invoked by the workflow. Direct Workspace submissions are tracked by a per-workflow Temporal `WorkspaceTaskControllerWorkflow`, so Reset is available even when the regular workflow has never started.
+
+Reset blocks new Workspace submissions, cancels queued and running tasks for this workflow, and waits for cancellation and phone cleanup before reporting completion. Other workflows' phone tasks are unaffected. If cleanup or Temporal status is unavailable, Reset remains unconfirmed and can be retried; an already-ready workflow alone is not proof that its phone task stopped. The workflow remains stopped afterward.
+
+The phone stays running, with its apps, sign-ins, and existing human-control lease preserved. Reset clears this workflow's task and activity panel and browser submission recovery IDs, then loads a fresh phone status. If you were controlling the phone, choose **Use phone** again to reconnect this view's manual controls. Completed task history remains in Temporal.
+
+After upgrading to this implementation, restart the backend and its Temporal worker so they register `WorkspaceTaskControllerWorkflow` and its cleanup activity. The process-local device broker still requires the backend and mobile activity worker to share the supported single-process deployment described above.
+
 ## Engine isolation and credentials
 
 OpenCompany installs mobile-use into its own Python 3.12 environment. The main server does not import its agent dependencies. Each task receives a separate worker process; a trusted device process owns the explicitly selected emulator serial. The worker's injected controller talks to a loopback capability broker. It does not choose an ADB serial or receive an arbitrary host-command API.
@@ -191,12 +201,46 @@ Passing a source or fake-process test does not count as passing the correspondin
 ### Live Android activity
 
 Workspace shows the active phone task's model/provider, step budget, total elapsed time,
-current phase duration, and time since the last reported activity. The expandable activity
-panel retains the latest 40 events: model requests/responses and actual device operations
-(screen plus accessibility-tree reads, taps, scrolling, typing, navigation, and app actions).
-Completed operations include duration. The last task remains visible after completion,
-failure, or cancellation until another task runs; history is in memory and clears on restart.
+current phase duration, and time since the last reported activity. The main activity panel
+shows the SDK's subtask plan and current subtask, followed by the latest 40 plan/action
+updates. Actions include the selected app or screen target, the SDK tool's explicit intent,
+duration, and confirmed tool outcome. A tool completing an action does not mark a subtask
+complete: subtask status comes from the SDK's planner/orchestrator updates. Interrupted
+actions whose outcomes were not confirmed are shown as unconfirmed.
+
+The counter is labeled **Engine step** because it measures LangGraph execution steps,
+including planning and coordination, rather than taps or completed subtasks. Nested chain
+callbacks and graph branches at the same step do not generate duplicate counter events.
+The current subtask stays visible across model waits and device reads. A resumed worker
+creates a fresh plan from the current screen; earlier activity remains in the timeline.
+
+A separate collapsed **Technical activity** section retains the latest 40 phase/device
+events: model requests/responses, screen/accessibility-tree reads, and device operations.
+Consecutive identical phase messages are coalesced. Completed operations include duration.
+The last task remains visible after completion, failure, or cancellation until another task
+runs; history is in memory and clears on restart. Older runs cannot recover details that
+were not captured at the time.
+
 A 30-second quiet period shows a notice, not a claim that the engine is stuck. Use the last
 phase to distinguish a model wait from device I/O; take manual control using Use phone if needed.
-The panel is outside the phone canvas and hidden in full-screen mode. Activity contains
-operational summaries, never private model reasoning, typed text, URLs, or prompt content.
+The panel is outside the phone canvas and hidden in full-screen mode. Detailed summaries
+are bounded and available only through the owner-only mobile status response. They can
+contain task-specific plan descriptions and screen labels. Typed tool payloads and input
+tools' echoed field contents are omitted, and URL strings are redacted. These summaries
+are not sent to diagnostic logs or the generic workflow status broadcast. Raw model
+responses, provider thinking blocks, cumulative agent thoughts, screenshots, and injected
+graph state are never forwarded to the activity panel.
+
+This integration follows the SDK's [Agent configuration](https://www.minitap.ai/docs/mobile-use-sdk/sdk-reference/agent)
+and the pinned source's `AgentConfigBuilder.with_graph_config_callbacks(...)`: graph node
+results expose `subgoal_plan`, and tool callbacks expose intent/arguments plus
+`Command.update.executor_messages` with `ToolMessage.status`. The SDK's internal
+`on_plan_changes` hook is not exposed by this pinned Agent configuration. No additional
+upstream patch or dependency is needed. [Local trace recording](https://www.minitap.ai/docs/mobile-use-sdk/core-concepts/observability)
+is a separate feature that creates screenshots and step artifacts; `record_trace=False`
+remains intentional for the live activity panel.
+
+Regression coverage includes callback filtering, SDK-shaped plans, tool error results,
+input-content filtering, interruption, bounded histories, and preserving subtask context
+during quiet waits. An optional test executes a mock graph with the installed pinned SDK
+and its real executor tool node, without a model request or device connection.

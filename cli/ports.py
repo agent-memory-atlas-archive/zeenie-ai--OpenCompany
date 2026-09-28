@@ -12,6 +12,7 @@ import sys
 import subprocess
 import time
 from dataclasses import dataclass
+from pathlib import Path
 
 import psutil
 
@@ -147,7 +148,27 @@ def kill_pid(pid: int, *, graceful_timeout: float = 3.0) -> bool:
         return False
 
 
-def kill_port(port: int) -> KillResult:
+def _is_backend_process(pid: int, root_dir: str | None = None) -> bool:
+    """Identify this checkout's uvicorn before granting its longer drain.
+
+    A reserved port can belong to an unrelated program. Match both the app
+    invocation and working directory so its generic cleanup grace remains
+    short. Unknown/inaccessible processes retain the generic timeout too.
+    """
+    from cli.platform_ import server_dir
+
+    try:
+        proc = psutil.Process(pid)
+        argv = proc.cmdline()
+        return (
+            any(argv[i : i + 3] == ["-m", "uvicorn", "main:app"] for i in range(len(argv)))
+            and Path(proc.cwd()).resolve() == server_dir(Path(root_dir) if root_dir else None).resolve()
+        )
+    except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
+        return False
+
+
+def kill_port(port: int, *, backend_graceful_timeout: float | None = None) -> KillResult:
     """Kill anything listening on ``port`` and report whether the port is free.
 
     Post-kill recheck sleeps ``_POST_KILL_RECHECK_DELAY`` because Windows
@@ -162,7 +183,10 @@ def kill_port(port: int) -> KillResult:
     for pid in find_pids_by_port(port):
         if pid == my_pid:
             continue
-        if kill_pid(pid):
+        grace = 3.0
+        if backend_graceful_timeout is not None and _is_backend_process(pid):
+            grace = backend_graceful_timeout
+        if kill_pid(pid, graceful_timeout=grace):
             killed.append(pid)
     if killed:
         time.sleep(_POST_KILL_RECHECK_DELAY)
@@ -225,7 +249,8 @@ def _names_this_checkout(cmd: str, root_norm: str) -> bool:
 
 
 def kill_orphaned_opencompany_processes(
-    root_dir: str, *, exclude_substring: str | None = None
+    root_dir: str, *, exclude_substring: str | None = None,
+    backend_graceful_timeout: float | None = None,
 ) -> list[int]:
     """Kill stray python/bun processes whose cmdline references the project root.
 
@@ -250,7 +275,10 @@ def kill_orphaned_opencompany_processes(
                 continue
             if proc.pid in safe_pids:
                 continue
-            if kill_pid(proc.pid, graceful_timeout=2.0):
+            grace = 2.0
+            if backend_graceful_timeout is not None and _is_backend_process(proc.pid, root_dir):
+                grace = backend_graceful_timeout
+            if kill_pid(proc.pid, graceful_timeout=grace):
                 killed.append(proc.pid)
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             pass

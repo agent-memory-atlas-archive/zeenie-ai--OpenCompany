@@ -494,7 +494,7 @@ const TopToolbar: React.FC<TopToolbarProps> = ({
             disabled={hasPendingControlMutation}
             title={isRetryingReset
               ? 'Retry the interrupted reset transition'
-              : 'Terminate and archive this execution'}
+              : 'Stop active work and reset this workflow'}
           >
             <RotateCcw className="h-3 w-3" />
             {isRetryingReset ? 'Retry Reset' : 'Reset'}
@@ -514,7 +514,7 @@ const TopToolbar: React.FC<TopToolbarProps> = ({
           </Badge>
         )}
 
-        <AlertDialog open={resetOpen} onOpenChange={setResetOpen}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Reset workflow execution?</AlertDialogTitle><AlertDialogDescription>This immediately terminates active work and archives the current generation. Task history remains available. The workflow will remain stopped until you press Start.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Keep current execution</AlertDialogCancel><AlertDialogAction disabled={hasPendingControlMutation} onClick={onResetWorkflow}>{isRetryingReset ? 'Retry reset' : 'Reset workflow'}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
+        <AlertDialog open={resetOpen} onOpenChange={setResetOpen}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Reset workflow execution?</AlertDialogTitle><AlertDialogDescription>This stops active work, cancels phone tasks, and archives the current generation. Reset waits for phone actions to finish cleaning up. Task history remains available. The workflow will remain stopped until you press Start.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Keep current execution</AlertDialogCancel><AlertDialogAction disabled={hasPendingControlMutation} onClick={onResetWorkflow}>{isRetryingReset ? 'Retry reset' : 'Reset workflow'}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
 
         <ActionButton
           intent="save"

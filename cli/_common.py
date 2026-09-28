@@ -22,6 +22,7 @@ helper that actually needs the dep pulls it in.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -65,16 +66,42 @@ def free_all_ports(cfg: Config) -> list[KillResult]:
     """
     from cli.ports import kill_port
 
-    return [kill_port(port) for port in cfg.all_ports]
+    grace = backend_shutdown_grace_seconds(cfg)
+    return [
+        kill_port(port, backend_graceful_timeout=grace)
+        for port in cfg.all_ports
+    ]
 
 
 # Seconds uvicorn waits for open connections / in-flight handler tasks before
 # running the lifespan shutdown. uvicorn's default is "forever": a browser
 # WebSocket that dies with a TCP reset can leave its handler task lingering,
 # and then the backend never reaches the teardown that reaps Temporal, the
-# Node sidecar and the WhatsApp bridge — the supervisor's 5 s grace expired
-# and tree-killed it instead. Same value the desktop shell passes.
+# Node sidecar and the WhatsApp bridge. This is only the connection-drain
+# phase, not the full backend shutdown budget. Same value the desktop shell passes.
 UVICORN_GRACEFUL_SHUTDOWN_SECONDS = 5
+BACKEND_CLEANUP_GRACE_SECONDS = 30
+
+
+def backend_shutdown_grace_seconds(cfg: Config) -> float:
+    """Allow connection drain, Temporal teardown, then other cleanup.
+
+    ``preflight``/``load_config`` has already merged the env files into
+    ``os.environ``, matching the backend's Settings without importing its
+    dependencies. The pool, manager worker, and local Temporal runtime
+    currently stop sequentially, each with the configured grace window.
+    Other plugin/resource cleanup gets an additional bounded allowance.
+    """
+    temporal_grace = 0
+    if cfg.temporal_enabled:
+        temporal_grace = int(os.environ["TEMPORAL_GRACEFUL_SHUTDOWN_SECONDS"])
+        if temporal_grace < 1:
+            raise ValueError("TEMPORAL_GRACEFUL_SHUTDOWN_SECONDS must be at least 1")
+    return float(
+        UVICORN_GRACEFUL_SHUTDOWN_SECONDS
+        + 3 * temporal_grace
+        + BACKEND_CLEANUP_GRACE_SECONDS
+    )
 
 
 def build_backend_spec(
@@ -82,11 +109,13 @@ def build_backend_spec(
     *,
     host: str,
     root: Path | None = None,
+    port: int | None = None,
+    env: dict[str, str] | None = None,
 ) -> "ServiceSpec":
     """The Python backend ``ServiceSpec`` shared by ``start`` and ``dev``.
 
     Invokes the server venv's interpreter directly — the same idiom
-    ``company serve`` documents (no resident ``uv run`` parent process,
+    ``company serve`` uses (no resident ``uv run`` parent process,
     no runtime dependency on uv being on PATH; ``company build`` owns
     sync semantics). ``host`` is the only differentiator (``start``
     picks ``127.0.0.1`` on Windows/WSL vs ``0.0.0.0`` elsewhere;
@@ -99,6 +128,7 @@ def build_backend_spec(
     from cli.platform_ import server_venv_python
     from cli.supervisor import ServiceSpec
 
+    bind_port = cfg.backend_port if port is None else port
     return ServiceSpec(
         name="server",
         argv=[
@@ -109,14 +139,16 @@ def build_backend_spec(
             "--host",
             host,
             "--port",
-            str(cfg.backend_port),
+            str(bind_port),
             "--log-level",
             "warning",
             "--timeout-graceful-shutdown",
             str(UVICORN_GRACEFUL_SHUTDOWN_SECONDS),
         ],
         cwd=server_dir(root),
-        ready_port=cfg.backend_port,
+        env=env or {},
+        ready_port=bind_port,
+        terminate_grace_seconds=backend_shutdown_grace_seconds(cfg),
     )
 
 

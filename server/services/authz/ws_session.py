@@ -94,9 +94,31 @@ def _origin_refused(websocket: Any, settings: Any) -> bool:
     origin = headers.get("origin")
     if is_allowed_ws_origin(origin, headers.get("host"), getattr(settings, "cors_origins", None) or ()):
         return False
-    path = str((getattr(websocket, "scope", None) or {}).get("path") or "")
-    logger.warning("[WebSocket] Refused a handshake from a foreign origin", path=path, origin=origin)
     return True
+
+
+async def _reject_handshake(websocket: Any, *, code: int, reason: str, category: str) -> None:
+    """Record why admission failed without logging request credentials.
+
+    ASGI translates a close before acceptance into HTTP 403; the browser
+    never receives the application close code, so server logs must retain
+    both it and the denial reason to diagnose failed upgrades.
+    """
+    scope = getattr(websocket, "scope", None) or {}
+    route = scope.get("route")
+    path = str(getattr(route, "path", None) or scope.get("path") or "")
+    # Prefer the route template, exclude queries even for non-ASGI callers,
+    # and bound/control-clean the only request-derived diagnostic field.
+    path = path.split("?", 1)[0].split("#", 1)[0]
+    path = "".join(character if character.isprintable() else "?" for character in path[:160])
+    logger.warning(
+        "[WebSocket] Handshake rejected",
+        path=path,
+        reason=category,
+        close_code=code,
+        http_status=403,
+    )
+    await websocket.close(code=code, reason=reason)
 
 
 def _auth_disabled(settings: Any) -> bool:
@@ -112,7 +134,7 @@ async def authenticate_ws(websocket: Any, *, settings: Any, user_auth_service: C
     every same-origin caller is the owner.
     """
     if _origin_refused(websocket, settings):
-        await websocket.close(code=4003, reason="Origin not allowed")
+        await _reject_handshake(websocket, code=4003, reason="Origin not allowed", category="origin_not_allowed")
         return None
 
     if _auth_disabled(settings):
@@ -124,17 +146,17 @@ async def authenticate_ws(websocket: Any, *, settings: Any, user_auth_service: C
 
     token = get_session_token(websocket.cookies, settings)
     if not token:
-        await websocket.close(code=4001, reason="Not authenticated")
+        await _reject_handshake(websocket, code=4001, reason="Not authenticated", category="missing_session")
         return None
 
     payload = user_auth_service().verify_token(token)
     if not payload:
-        await websocket.close(code=4001, reason="Invalid or expired session")
+        await _reject_handshake(websocket, code=4001, reason="Invalid or expired session", category="invalid_session")
         return None
 
     principal = str(payload.get("sub") or "")
     if not principal:
-        await websocket.close(code=4001, reason="Invalid session subject")
+        await _reject_handshake(websocket, code=4001, reason="Invalid session subject", category="invalid_session_subject")
         return None
     return principal
 
@@ -142,12 +164,10 @@ async def authenticate_ws(websocket: Any, *, settings: Any, user_auth_service: C
 async def admit_internal_ws(websocket: Any, *, settings: Any) -> bool:
     """Admit the worker socket, or close it and return ``False``."""
     if _origin_refused(websocket, settings):
-        await websocket.close(code=4003, reason="Origin not allowed")
+        await _reject_handshake(websocket, code=4003, reason="Origin not allowed", category="origin_not_allowed")
         return False
     if not is_internal_caller(websocket.headers, settings.secret_key):
-        client = websocket.client.host if getattr(websocket, "client", None) else "unknown"
-        logger.warning("[WebSocket Internal] Refused a connection without the worker token", client=client)
-        await websocket.close(code=4001, reason="Not authenticated")
+        await _reject_handshake(websocket, code=4001, reason="Not authenticated", category="invalid_worker_token")
         return False
     return True
 

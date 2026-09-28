@@ -147,6 +147,16 @@ class MobileUseAgent(ActionNode):
     Params = MobileParams
     Output = MobileOutput
 
+    @classmethod
+    async def reset_execution_state(cls, *, node_id: str, workflow_id: str, execution_id: str,
+                                    generation: int, graph: dict, database: Any) -> dict:
+        from ._runtime import peek_runtime
+
+        runtime = peek_runtime()
+        if runtime is None:
+            return {"reset": False}
+        return await runtime.reset_execution_state(workflow_id=workflow_id, node_id=node_id, generation=generation)
+
     @Operation("execute")
     async def execute_op(self, ctx: NodeContext, params: MobileParams) -> dict:
         from ._runtime import get_runtime
@@ -164,15 +174,25 @@ class MobileUseAgent(ActionNode):
         if directive and directive != config["prompt"]:
             config["prompt"] = f"{directive}\n\n{config['prompt']}"
         try:
+            broker_url = await runtime.ensure_broker()
+            raw_generation = ctx.raw.get("generation", 0)
+            generation = raw_generation if isinstance(raw_generation, int) and not isinstance(raw_generation, bool) else 0
+            if generation > 0:
+                from services.plugin.deps import get_database
+
+                control = await get_database().get_latest_workflow_control(ctx.workflow_id)
+                if control is None or control.generation != generation or control.status in {"resetting", "reset"}:
+                    raise NodeUserError("This mobile task belongs to an inactive workflow generation")
             return await runtime.run(
                 principal=ctx.user_id,
                 workflow_id=ctx.workflow_id,
                 node_id=ctx.node_id,
                 run_id=task_identity(ctx),
                 execution_id=ctx.execution_id,
+                generation=generation,
                 params=config,
                 model=model,
-                broker_url=await runtime.ensure_broker(),
+                broker_url=broker_url,
             )
         except MobileError as exc:
             raise NodeUserError(str(exc)) from None

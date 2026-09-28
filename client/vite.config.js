@@ -4,6 +4,7 @@ import tailwindcss from '@tailwindcss/vite'
 import { resolve } from 'path'
 import { readFileSync } from 'fs'
 import { visualizer } from 'rollup-plugin-visualizer'
+import { createDevProxyDiagnostics } from './devProxyDiagnostics.js'
 
 // Read root package.json for app version (one level up from client/)
 // Falls back to '0.0.0' in Docker where only client/ is in the build context
@@ -12,46 +13,6 @@ try {
   const rootPkg = JSON.parse(readFileSync(resolve(process.cwd(), '..', 'package.json'), 'utf-8'))
   appVersion = rootPkg.version
 } catch { /* Docker build - root package.json not available */ }
-
-// Dev-boot race: Vite is ready in ~1 s while uvicorn is still importing
-// routers, so an already-open browser tab reconnects and its proxied /ws
-// upgrade gets ECONNREFUSED. Vite closes the socket and PartySocket
-// reconnects the moment the backend binds, so nothing is broken — but Vite
-// logs the raw AggregateError stack for every attempt, which buries the real
-// startup output.
-//
-// Vite attaches its own proxy `error` handler AFTER calling `configure()`, so
-// a proxy-level handler cannot replace it. `customLogger` is the documented
-// seam: collapse this one connection-refused case into a single concise line
-// and pass every other message through untouched.
-// Ref: https://vite.dev/config/shared-options.html#customlogger
-const PROXY_BACKEND_UNAVAILABLE = /proxy (error|socket error)/i
-const CONNECTION_REFUSED = /ECONNREFUSED/
-const BACKEND_NOTICE_INTERVAL_MS = 10_000
-
-const createBackendAwareLogger = () => {
-  const logger = createLogger()
-  const logError = logger.error.bind(logger)
-  const logInfo = logger.info.bind(logger)
-  let lastNoticeAt = 0
-
-  logger.error = (msg, options) => {
-    const text = typeof msg === 'string' ? msg : String(msg ?? '')
-    if (PROXY_BACKEND_UNAVAILABLE.test(text) && CONNECTION_REFUSED.test(text)) {
-      const now = Date.now()
-      if (now - lastNoticeAt >= BACKEND_NOTICE_INTERVAL_MS) {
-        lastNoticeAt = now
-        logInfo('backend not listening yet - proxied /ws and /api will retry', {
-          timestamp: true,
-        })
-      }
-      return
-    }
-    logError(msg, options)
-  }
-
-  return logger
-}
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
@@ -103,8 +64,10 @@ export default defineConfig(({ mode }) => {
     },
   }
 
+  const proxyDiagnostics = createDevProxyDiagnostics(createLogger())
+
   return {
-    customLogger: createBackendAwareLogger(),
+    customLogger: proxyDiagnostics.logger,
     plugins: [
       tailwindcss(),
       react({
@@ -163,6 +126,7 @@ export default defineConfig(({ mode }) => {
             target: `http://localhost:${requireEnv('PYTHON_BACKEND_PORT')}`,
             changeOrigin: false,
             ws: prefix === '/ws',
+            configure: prefix === '/ws' ? proxyDiagnostics.configureWebSocketProxy : undefined,
           },
         ])
       ),

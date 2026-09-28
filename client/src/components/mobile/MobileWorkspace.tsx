@@ -5,6 +5,7 @@ import type { PointerEvent } from 'react';
 import { ArrowLeft, Home, Play, RotateCw, Smartphone, Square } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { buildApiUrl } from '@/config/api';
+import { useWebSocketActions } from '@/contexts/WebSocketContext';
 import { mobilePath, mobilePoint, mobileRequest, type Doctor, type Geometry, type Invocation, type MobileStatus } from './api';
 
 const fieldClass = 'min-w-0 rounded border border-border-default bg-bg-input px-2 py-1.5 text-sm text-fg-default outline-none focus-visible:ring-2 focus-visible:ring-ring';
@@ -15,15 +16,29 @@ const describe = (value: unknown): string => typeof value === 'string' ? value :
 export default function MobileWorkspace({ workflowId, nodes, visible = true }: {
   workflowId?: string | null; nodes: { node_id: string; label: string }[]; visible?: boolean;
 }) {
+  const { addEventListener } = useWebSocketActions();
   const [selected, setSelected] = useState('');
+  const [sessionVersion, setSessionVersion] = useState(0);
+  const resetVersion = useRef(0);
+  const isCurrentSession = useCallback(() => resetVersion.current === sessionVersion, [sessionVersion]);
   const nodeId = nodes.some((node) => node.node_id === selected) ? selected : nodes[0]?.node_id;
+  useEffect(() => addEventListener('workflow_runtime_reset', (event) => {
+    if (!workflowId || event?.workflow_id !== workflowId) return;
+    // Invalidate pending responses immediately, before React unmounts the old
+    // session. A delayed task submission must not restore its recovery ID.
+    resetVersion.current += 1;
+    for (const node of nodes) {
+      try { sessionStorage.removeItem(`mobile-task:${workflowId}:${node.node_id}`); } catch { /* optional recovery */ }
+    }
+    setSessionVersion(resetVersion.current);
+  }), [addEventListener, workflowId, nodes]);
   if (!workflowId || workflowId === 'new') return <Empty message="Save this workflow before opening its mobile workspace." />;
   if (!nodeId) return <Empty message="Add a Mobile Agent or Android tool to this workflow to use its phone here." />;
   return <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
     {nodes.length > 1 && <select className={`${fieldClass} mx-2 mt-2 shrink-0`} aria-label="Mobile agent" value={nodeId} onChange={(event) => setSelected(event.target.value)}>
       {nodes.map((node) => <option key={node.node_id} value={node.node_id}>{node.label}</option>)}
     </select>}
-    <MobileSession key={`${workflowId}:${nodeId}`} workflowId={workflowId} nodeId={nodeId} visible={visible} />
+    <MobileSession key={`${workflowId}:${nodeId}:${sessionVersion}`} workflowId={workflowId} nodeId={nodeId} visible={visible} isCurrentSession={isCurrentSession} />
   </div>;
 }
 
@@ -31,7 +46,7 @@ function Empty({ message }: { message: string }) {
   return <div className="m-auto flex max-w-80 flex-col items-center gap-3 p-6 text-center text-sm text-fg-muted"><Smartphone aria-hidden className="size-6" />{message}</div>;
 }
 
-function MobileSession({ workflowId, nodeId, visible }: { workflowId: string; nodeId: string; visible: boolean }) {
+function MobileSession({ workflowId, nodeId, visible, isCurrentSession }: { workflowId: string; nodeId: string; visible: boolean; isCurrentSession: () => boolean }) {
   const path = mobilePath(workflowId, nodeId);
   const [viewerId] = useState(() => crypto.randomUUID());
   const [status, setStatus] = useState<MobileStatus | null>(null);
@@ -66,8 +81,8 @@ function MobileSession({ workflowId, nodeId, visible }: { workflowId: string; no
   const running = status?.running === true;
   const refresh = useCallback(async (signal?: AbortSignal) => {
     const next = await mobileRequest<MobileStatus>(`${path}/status`, undefined, signal);
-    if (active.current) { setStatus(next); setConnectionError(''); }
-  }, [path]);
+    if (active.current && isCurrentSession() && !signal?.aborted) { setStatus(next); setConnectionError(''); }
+  }, [path, isCurrentSession]);
 
   useEffect(() => {
     active.current = true;
@@ -81,15 +96,15 @@ function MobileSession({ workflowId, nodeId, visible }: { workflowId: string; no
     let timer: ReturnType<typeof setTimeout>;
     const poll = async () => {
       try { await refresh(controller.signal); }
-      catch { if (!controller.signal.aborted && active.current) setConnectionError('Connection to the phone was lost. Retrying automatically…'); }
-      if (!controller.signal.aborted) timer = setTimeout(() => void poll(), 2000);
+      catch { if (!controller.signal.aborted && active.current && isCurrentSession()) setConnectionError('Connection to the phone was lost. Retrying automatically…'); }
+      if (!controller.signal.aborted && isCurrentSession()) timer = setTimeout(() => void poll(), 2000);
     };
     void poll();
     void mobileRequest<Doctor>(`${path}/doctor`, undefined, controller.signal).then((value) => {
-      if (!controller.signal.aborted) setDoctor(value);
-    }).catch((cause) => { if (!controller.signal.aborted) setError(cause.message); });
+      if (!controller.signal.aborted && isCurrentSession()) setDoctor(value);
+    }).catch((cause) => { if (!controller.signal.aborted && isCurrentSession()) setError(cause.message); });
     return () => { controller.abort(); clearTimeout(timer); };
-  }, [visible, pageVisible, refresh, path]);
+  }, [visible, pageVisible, refresh, path, isCurrentSession]);
   useEffect(() => {
     if (!submission || !visible || !pageVisible) return;
     const controller = new AbortController();
@@ -97,15 +112,15 @@ function MobileSession({ workflowId, nodeId, visible }: { workflowId: string; no
     const poll = async () => {
       try {
         const next = await mobileRequest<Invocation>(`${path}/tasks/${encodeURIComponent(submission)}`, undefined, controller.signal);
-        if (!controller.signal.aborted) setTask(next);
-        if (!finished.has(taskState(next)) && !controller.signal.aborted) timer = setTimeout(() => void poll(), 1500);
+        if (!controller.signal.aborted && isCurrentSession()) setTask(next);
+        if (!finished.has(taskState(next)) && !controller.signal.aborted && isCurrentSession()) timer = setTimeout(() => void poll(), 1500);
       } catch (cause) {
-        if (!controller.signal.aborted) { setError(cause instanceof Error ? cause.message : 'Could not read this task.'); timer = setTimeout(() => void poll(), 4000); }
+        if (!controller.signal.aborted && isCurrentSession()) { setError(cause instanceof Error ? cause.message : 'Could not read this task.'); timer = setTimeout(() => void poll(), 4000); }
       }
     };
     void poll();
     return () => { controller.abort(); clearTimeout(timer); };
-  }, [submission, visible, pageVisible, path]);
+  }, [submission, visible, pageVisible, path, isCurrentSession]);
   useEffect(() => {
     if (!running || !visible || !pageVisible || !canvas.current) return;
     let disposed = false;
@@ -132,16 +147,17 @@ function MobileSession({ workflowId, nodeId, visible }: { workflowId: string; no
     return () => {
       const releasedEpoch = leaseEpoch.current;
       leaseEpoch.current = null;
-      if (releasedEpoch !== null) void mobileRequest(`${path}/release`, { viewer_id: viewerId, epoch: releasedEpoch, resume: false }).catch(() => {});
+      // Reset cancels AI work but preserves a person's server-owned lease.
+      if (releasedEpoch !== null && isCurrentSession()) void mobileRequest(`${path}/release`, { viewer_id: viewerId, epoch: releasedEpoch, resume: false }).catch(() => {});
     };
-  }, [visible, pageVisible, path, viewerId]);
+  }, [visible, pageVisible, path, viewerId, isCurrentSession]);
 
   const perform = async (label: string, action: () => Promise<void>) => {
     if (operation.current) return;
     operation.current = true; setBusy(label); setError('');
-    try { await action(); if (active.current && label !== 'input') await refresh(); }
-    catch (cause) { if (active.current) setError(cause instanceof Error ? cause.message : 'That action failed.'); }
-    finally { operation.current = false; if (active.current) setBusy(''); }
+    try { await action(); if (active.current && isCurrentSession() && label !== 'input') await refresh(); }
+    catch (cause) { if (active.current && isCurrentSession()) setError(cause instanceof Error ? cause.message : 'That action failed.'); }
+    finally { operation.current = false; if (active.current && isCurrentSession()) setBusy(''); }
   };
   const input = async (action: string, parameters: Record<string, unknown>, geometry = status?.geometry) => {
     if (!held || epoch === null || !geometry) return;
@@ -176,7 +192,7 @@ function MobileSession({ workflowId, nodeId, visible }: { workflowId: string; no
     const attempt = pendingSubmission.current?.prompt === clean ? pendingSubmission.current : { id: crypto.randomUUID(), prompt: clean };
     pendingSubmission.current = attempt;
     const response = await mobileRequest<Invocation>(`${path}/tasks`, { submission_id: attempt.id, prompt: clean });
-    if (!active.current) return;
+    if (!active.current || !isCurrentSession()) return;
     setSubmission(attempt.id); setTask(response); setPrompt(''); pendingSubmission.current = null;
     try { sessionStorage.setItem(`mobile-task:${workflowId}:${nodeId}`, attempt.id); } catch { /* optional recovery */ }
   });
@@ -191,13 +207,13 @@ function MobileSession({ workflowId, nodeId, visible }: { workflowId: string; no
   return <FullView label="Phone" toolbar={<>
       <Smartphone aria-hidden className="size-4 shrink-0 text-fg-muted" />
       <span role="status" className="min-w-0 flex-1 truncate text-xs text-fg-muted">{setupActive ? 'Setting up' : status?.starting ? 'Starting phone…' : busy ? `${busy}…` : running ? (held ? 'You’re using the phone' : status.active?.status === 'running' ? 'AI is working' : status.control_state === 'recovering' ? 'Reconnecting…' : 'Ready') : status ? 'Phone is off' : 'Connecting…'}</span>
-      {running && status?.active?.run_id != null && <span role="status" className="text-xs text-fg-muted">{String(status.active.phase || status.active.status || 'Working')} · Step {Number(status.active.steps || 0)} / {Number(status.active.max_steps || 0)}</span>}
+      {running && status?.active?.run_id != null && <span role="status" className="text-xs text-fg-muted">{String(status.active.phase || status.active.status || 'Working')} · Engine step {Number(status.active.steps || 0)} / {Number(status.active.max_steps || 0)}</span>}
       {!running && powerControl}
       {running && (held ? <>
         <Button size="sm" onClick={() => void perform('releasing', async () => { await mobileRequest(`${path}/release`, { viewer_id: viewerId, epoch, resume: true }); leaseEpoch.current = null; setEpoch(null); })} disabled={!!busy}>Let AI continue</Button>
         <Button size="sm" variant="outline" onClick={() => void perform('releasing', async () => { await mobileRequest(`${path}/release`, { viewer_id: viewerId, epoch, resume: false }); leaseEpoch.current = null; setEpoch(null); })} disabled={!!busy}>Finish using phone</Button>
       </> : <Button size="sm" variant="outline" disabled={!!busy} onClick={() => void perform('taking control', async () => { const claim = await mobileRequest<{ epoch: number; owner: string }>(`${path}/takeover`, { viewer_id: viewerId });
-          if (!active.current || !viewActive.current) { await mobileRequest(`${path}/release`, { viewer_id: viewerId, epoch: claim.epoch, resume: false }); return; }
+          if (!active.current || !isCurrentSession() || !viewActive.current) { await mobileRequest(`${path}/release`, { viewer_id: viewerId, epoch: claim.epoch, resume: false }); return; }
           leaseEpoch.current = claim.epoch; setEpoch(claim.epoch); setLeaseOwner(claim.owner); })}>Use phone</Button>)}
     </>} controls={<>
       <div className="flex flex-wrap items-center gap-2">

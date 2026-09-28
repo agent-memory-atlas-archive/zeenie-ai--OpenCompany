@@ -121,7 +121,7 @@ async def _execute_plugin_tool_activity(
         # The caller's authenticated principal is not a model argument. Keep
         # it on the leaf context so owner-only plugins cannot inherit the
         # legacy default principal accidentally.
-        tool_payload = {**tool_payload, "user_id": str(context.get("user_id") or "owner")}
+        tool_payload = {**tool_payload, **_inherited_scope(context), "user_id": str(context.get("user_id") or "owner")}
     return await workflow.execute_activity(
         activity_name,
         args=[tool_payload],
