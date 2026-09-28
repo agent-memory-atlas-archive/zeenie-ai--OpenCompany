@@ -553,6 +553,16 @@ def test_preinstall_gates_source_checkouts_to_bun(preinstall_js_src: str):
     assert "pnpm-workspace" not in preinstall_js_src
 
 
+def test_files_allowlist_excludes_terraform_state(root_pkg: dict):
+    """``cli/`` ships whole, so a local ``terraform apply`` against a module in
+    ``cli/terraform/`` leaves state files that ``bun pm pack`` would bundle into
+    the tarball ``company deploy up --source local`` uploads. The state records
+    instance ids, IPs and URLs; it must never leave the machine."""
+    files = root_pkg.get("files", [])
+    assert "!**/*.tfstate" in files
+    assert "!**/*.tfstate.*" in files
+
+
 def test_root_manifest_declares_bun_as_the_dev_package_manager(root_pkg: dict):
     """The ``packageManager`` pin is read by ``oven-sh/setup-bun`` in CI
     and doubles as the read-floor for ``bun.lock`` (the ranged overrides

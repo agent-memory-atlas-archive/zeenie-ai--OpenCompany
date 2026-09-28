@@ -62,6 +62,8 @@
     "!**/node_modules/",
     "!**/.vite/",
     "!**/.terraform/",
+    "!**/*.tfstate",
+    "!**/*.tfstate.*",
     "!server/tests/_test_opencompany_root/",
     ".env.template",
     "pyproject.toml",
