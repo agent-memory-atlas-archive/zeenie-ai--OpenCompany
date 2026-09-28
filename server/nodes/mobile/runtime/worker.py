@@ -9,6 +9,8 @@ import re
 import sys
 import urllib.request
 import uuid
+import time
+import threading
 from io import BytesIO
 
 try:
@@ -18,11 +20,13 @@ except ImportError:  # Executed by path in the isolated engine environment.
 
 STAGE = "bootstrap"
 WIRE = sys.stdout
+WIRE_LOCK = threading.Lock()
 
 
 def emit(kind: str, **data) -> None:
-    WIRE.write(json.dumps({"v": 1, "type": kind, **data}, default=str) + "\n")
-    WIRE.flush()
+    with WIRE_LOCK:
+        WIRE.write(json.dumps({"v": 1, "type": kind, **data}, default=str) + "\n")
+        WIRE.flush()
 
 
 class Controller:
@@ -43,10 +47,17 @@ class Controller:
             json.dumps(payload).encode(),
             {"Content-Type": "application/json", "Authorization": f"Bearer {self.config['capability']}"},
         )
-        with urllib.request.urlopen(req, timeout=35) as response:
-            result = json.load(response)
-        if not result.get("success"):
-            raise RuntimeError(result.get("error", "Device command failed"))
+        started = time.monotonic()
+        emit("activity", operation=operation, state="started")
+        try:
+            with urllib.request.urlopen(req, timeout=35) as response:
+                result = json.load(response)
+            if not result.get("success"):
+                raise RuntimeError(result.get("error", "Device command failed"))
+        except Exception:
+            emit("activity", operation=operation, state="failed", duration_ms=round((time.monotonic() - started) * 1000))
+            raise
+        emit("activity", operation=operation, state="completed", duration_ms=round((time.monotonic() - started) * 1000))
         return result["result"]
 
     async def read(self, operation: str, **params):
@@ -155,10 +166,16 @@ async def main(config: dict) -> None:
                 emit("progress", steps=max(0, step))
 
         def on_chat_model_start(self, serialized, messages, **kwargs):
-            emit("diagnostic", stage="model_request")
+            role = (kwargs.get("metadata") or {}).get("langgraph_node")
+            allowed = {"planner", "orchestrator", "contextor", "cortex", "executor", "outputter", "hopper"}
+            emit("diagnostic", stage="model_request", request_id=str(kwargs.get("run_id", "model")),
+                 role=role if role in allowed else None)
+
+        def on_llm_error(self, error, **kwargs):
+            emit("diagnostic", stage="model_error", request_id=str(kwargs.get("run_id", "model")))
 
         def on_llm_end(self, response, **kwargs):
-            emit("diagnostic", stage="model_response")
+            emit("diagnostic", stage="model_response", request_id=str(kwargs.get("run_id", "model")))
             output = response.llm_output or {}
             usage = output.get("token_usage") or output.get("usage") or {}
             if usage:
@@ -211,6 +228,8 @@ async def main(config: dict) -> None:
         raise
     finally:
         try:
+            if not task_failed:
+                emit("diagnostic", stage="engine_cleanup")
             await agent.clean()
         except Exception as cleanup_error:
             if not task_failed:

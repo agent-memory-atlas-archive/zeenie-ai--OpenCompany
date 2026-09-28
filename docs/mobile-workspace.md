@@ -186,3 +186,17 @@ This is an implementation plan, not currently supported functionality. Keep the 
 | iOS | Not implemented | Same-Mac lifecycle, IDB adapter, simulator app install, preview, gestures, fenced takeover |
 
 Passing a source or fake-process test does not count as passing the corresponding device acceptance check.
+
+
+### Live Android activity
+
+Workspace shows the active phone task's model/provider, step budget, total elapsed time,
+current phase duration, and time since the last reported activity. The expandable activity
+panel retains the latest 40 events: model requests/responses and actual device operations
+(screen plus accessibility-tree reads, taps, scrolling, typing, navigation, and app actions).
+Completed operations include duration. The last task remains visible after completion,
+failure, or cancellation until another task runs; history is in memory and clears on restart.
+A 30-second quiet period shows a notice, not a claim that the engine is stuck. Use the last
+phase to distinguish a model wait from device I/O; take manual control using Use phone if needed.
+The panel is outside the phone canvas and hidden in full-screen mode. Activity contains
+operational summaries, never private model reasoning, typed text, URLs, or prompt content.

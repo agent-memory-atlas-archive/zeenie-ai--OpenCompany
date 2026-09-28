@@ -303,6 +303,9 @@ async def test_worker_failure_reaches_diagnostics_and_keeps_provider_code(runtim
     from nodes.mobile._control import MobileError
 
     proc = FakeProcess()
+    proc.stdout.feed_data(b'{"type":"activity","operation":"observe","state":"started"}\n')
+    proc.stdout.feed_data(b'{"type":"activity","operation":"observe","state":"completed","duration_ms":123}\n')
+    proc.stdout.feed_data(b'{"type":"activity","operation":"secret-url","state":"started"}\n')
     proc.stdout.feed_data(b'{"type":"diagnostic","stage":"model_request"}\n')
     proc.stdout.feed_data(b'{"type":"failed","error":"Model not found (HTTP 404)","code":"model_not_found","http_status":404,"error_type":"ClientError","stage":"task_execution"}\n')
     proc.returncode = 1
@@ -324,3 +327,28 @@ async def test_worker_failure_reaches_diagnostics_and_keeps_provider_code(runtim
     assert recorded[0]["execution_id"] == "execution-2"
     assert recorded[0]["node_id"] == "agent"
     assert recorded[0]["model"] == "selected-model"
+    assert runtime.active is None
+    assert runtime.last_task["status"] == "failed"
+    assert runtime.last_task["error_code"] == "model_not_found"
+    assert runtime.last_task["activity"][-1]["message"] == "Waiting for model"
+    assert runtime.last_task["finished_at"] >= runtime.last_task["started_at"]
+    messages = [item["message"] for item in runtime.last_task["activity"]]
+    assert "Reading screen and accessibility tree: completed (0.1s)" in messages
+    assert not any("secret-url" in item for item in messages)
+
+
+async def test_activity_is_bounded_and_phase_clock_is_stable(runtime, monkeypatch):
+    from unittest.mock import AsyncMock
+    from types import SimpleNamespace
+    import services.status_broadcaster as status
+    monkeypatch.setattr(status, "get_status_broadcaster", lambda: SimpleNamespace(update_node_status=AsyncMock()))
+    runtime.active = {"node_id": "phone", "workflow_id": "wf", "run_id": "run", "status": "running"}
+    await runtime._publish_progress("Waiting for model")
+    started = runtime.active["phase_started_at"]
+    for _ in range(50):
+        await runtime._publish_progress("Waiting for model")
+    assert runtime.active["phase_started_at"] == started
+    assert len(runtime.active["activity"]) == 40
+    assert runtime.active["updated_at"] >= started
+    await runtime._publish_progress("Tapping screen")
+    assert runtime.snapshot()["active"]["activity"][-1]["message"] == "Tapping screen"

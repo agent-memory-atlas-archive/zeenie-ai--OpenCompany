@@ -13,6 +13,7 @@ export interface MobileStatus {
   controller?: string | null;
   epoch: number;
   control_state: string;
+  last_task?: Record<string, unknown> | null;
   active?: Record<string, unknown> | null;
   queue?: unknown[];
 }

@@ -59,3 +59,17 @@ Windows x64 managed Android only; one shared phone and one video viewer. No iOS,
 
 - [Mobile Agent](mobile_use_agent.md)
 - [Mobile Workspace setup, controls, logging and limitations](../../../docs/mobile-workspace.md)
+
+
+### Live Android activity
+
+Workspace shows the active phone task's model/provider, step budget, total elapsed time,
+current phase duration, and time since the last reported activity. The expandable activity
+panel retains the latest 40 events: model requests/responses and actual device operations
+(screen plus accessibility-tree reads, taps, scrolling, typing, navigation, and app actions).
+Completed operations include duration. The last task remains visible after completion,
+failure, or cancellation until another task runs; history is in memory and clears on restart.
+A 30-second quiet period shows a notice, not a claim that the engine is stuck. Use the last
+phase to distinguish a model wait from device I/O; take manual control using Use phone if needed.
+The panel is outside the phone canvas and hidden in full-screen mode. Activity contains
+operational summaries, never private model reasoning, typed text, URLs, or prompt content.

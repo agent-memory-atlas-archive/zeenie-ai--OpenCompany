@@ -22,3 +22,17 @@ Call `android` with a single `prompt` describing one clear goal, the relevant ap
 - Terminal source `mobile` shows the execution ID, provider, model backend, model wait, and device timing. Report the error and relevant phase without asking the owner to reveal API keys.
 
 Example: `{"prompt":"Open Settings, find the Android version, and report it without changing settings."}`
+
+
+### Live Android activity
+
+Workspace shows the active phone task's model/provider, step budget, total elapsed time,
+current phase duration, and time since the last reported activity. The expandable activity
+panel retains the latest 40 events: model requests/responses and actual device operations
+(screen plus accessibility-tree reads, taps, scrolling, typing, navigation, and app actions).
+Completed operations include duration. The last task remains visible after completion,
+failure, or cancellation until another task runs; history is in memory and clears on restart.
+A 30-second quiet period shows a notice, not a claim that the engine is stuck. Use the last
+phase to distinguish a model wait from device I/O; take manual control using Use phone if needed.
+The panel is outside the phone canvas and hidden in full-screen mode. Activity contains
+operational summaries, never private model reasoning, typed text, URLs, or prompt content.

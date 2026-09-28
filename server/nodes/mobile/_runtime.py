@@ -40,6 +40,7 @@ class MobileRuntime:
         self._setup_loaded = False
         self._setup_saved = 0.0
         self.active: dict | None = None
+        self.last_task: dict | None = None
         self.queue: list[dict] = []
         self.capabilities: dict[str, tuple[str, Lease]] = {}
         self.resume_event = asyncio.Event()
@@ -119,6 +120,7 @@ class MobileRuntime:
             "setup_progress": self.setup_progress,
             "diagnostics": recent(),
             "active": {k: v for k, v in (self.active or {}).items() if k not in {"prompt"}},
+            "last_task": self.last_task,
             "queue": [{k: v for k, v in q.items() if k != "prompt"} for q in self.queue],
             **self.control.snapshot(),
         }
@@ -502,6 +504,8 @@ class MobileRuntime:
                 if not self.serial:
                     raise MobileError("device_offline", "Start the shared device in Workspace first")
                 self.active = entry
+                entry.update(started_at=time.time(), provider=model.get("provider"), model=model.get("model"))
+                await self._publish_progress("Preparing phone")
                 active_remaining = params["timeout_s"]
                 steps_remaining = params["max_steps"]
                 attempts = 0
@@ -512,6 +516,7 @@ class MobileRuntime:
                         if self.control.owner and self.control.owner.startswith("viewer:"):
                             entry["status"] = "awaiting_user"
                         if entry["status"] == "awaiting_user":
+                            await self._publish_progress("Waiting for you")
                             await asyncio.wait_for(self.resume_event.wait(), 1800)
                             self.resume_event.clear()
                             if entry["status"] == "cancelled":
@@ -573,6 +578,7 @@ class MobileRuntime:
                             continue
                         if not result.get("success"):
                             raise MobileError(result.get("code", "agent_failed"), result.get("error", "Mobile agent failed"))
+                        entry["status"] = "completed"
                         event("task_completed", run_id=run_id)
                         return {"response": result.get("result"), "outcome": "completed", "run_id": run_id, "artifacts": []}
                 finally:
@@ -582,11 +588,16 @@ class MobileRuntime:
                     # Wait for any previously admitted broker write before reporting completion.
                     async with self.control.lock:
                         pass
+                    entry["finished_at"] = time.time()
+                    self.last_task = entry
                     self.active = None
         except asyncio.CancelledError:
+            entry["status"] = "cancelled"
             event("task_cancelled", run_id=run_id)
             raise
         except Exception as exc:
+            entry["status"] = "failed"
+            entry["error_code"] = getattr(exc, "code", "timeout" if isinstance(exc, asyncio.TimeoutError) else "task_failed")
             event("task_failed", failed=True, run_id=run_id, error_type=type(exc).__name__, code=getattr(exc, "code", "task_failed"))
             raise
         finally:
@@ -597,7 +608,14 @@ class MobileRuntime:
         if not self.active:
             return
         entry = self.active
+        now = time.time()
+        if entry.get("phase") != phase:
+            entry["phase_started_at"] = now
         entry["phase"] = phase
+        entry["updated_at"] = now
+        history = entry.setdefault("activity", [])
+        history.append({"at": now, "message": phase, "step": entry.get("steps", 0)})
+        del history[:-40]
         try:
             from services.status_broadcaster import get_status_broadcaster
             await get_status_broadcaster().update_node_status(
@@ -639,6 +657,8 @@ class MobileRuntime:
         event("engine_starting", **scope)
         await self._publish_progress("Starting Android task")
 
+        pending_models: dict[str, float] = {}
+
         async def read():
             result = {"success": False, "error": "Mobile worker exited before completing the task"}
             while line := await proc.stdout.readline():
@@ -649,11 +669,41 @@ class MobileRuntime:
                     result = {"success": False, "error": message.get("error", "Worker failed"), "code": message.get("code", "engine_failed")}
                     event("engine_failed", failed=True, **scope, engine_trace=message.get("trace", []),
                           **{key: message.get(key) for key in ("error_type", "code", "stage", "http_status", "provider_status")})
+                elif message.get("type") == "activity":
+                    labels = {"observe": "Reading screen and accessibility tree", "geometry": "Checking screen size",
+                              "tap": "Tapping screen", "swipe": "Scrolling", "text": "Typing text",
+                              "key": "Pressing navigation key", "launch": "Opening app", "terminate": "Closing app",
+                              "url": "Opening link", "erase": "Erasing text", "packages": "Listing apps",
+                              "foreground": "Checking current app", "date": "Checking device time"}
+                    label = labels.get(message.get("operation"))
+                    state = message.get("state")
+                    if label and state in {"started", "completed", "failed"}:
+                        duration = message.get("duration_ms")
+                        suffix = f" ({duration / 1000:.1f}s)" if isinstance(duration, (int, float)) and duration >= 0 else ""
+                        await self._publish_progress(label if state == "started" else f"{label}: {state}{suffix}")
                 elif message.get("type") == "diagnostic":
                     event("engine_stage", **scope, stage=message.get("stage"), error_type=message.get("error_type"))
                     phase = {"model_request": "Waiting for model", "model_response": "Model responded",
-                             "engine_initialization": "Connecting engine", "task_execution": "Using phone"}.get(message.get("stage"))
-                    if phase and self.active and self.active.get("phase") != phase:
+                             "engine_initialization": "Connecting engine", "task_execution": "Using phone",
+                             "engine_cleanup": "Finishing engine cleanup"}.get(message.get("stage"))
+                    stage = message.get("stage")
+                    request_id = str(message.get("request_id", "model"))
+                    if stage == "model_request":
+                        pending_models[request_id] = time.monotonic()
+                        role = {"planner": "planning", "orchestrator": "coordinating next step",
+                                "contextor": "understanding the screen", "cortex": "choosing an action",
+                                "executor": "preparing an action", "outputter": "preparing the result",
+                                "hopper": "selecting an app"}.get(message.get("role"))
+                        if role:
+                            phase = f"Waiting for model: {role}"
+                    elif stage in {"model_response", "model_error"}:
+                        started = pending_models.pop(request_id, None)
+                        phase = "Model request failed" if stage == "model_error" else "Model responded"
+                        if started is not None:
+                            phase += f" ({time.monotonic() - started:.1f}s)"
+                        if pending_models:
+                            phase += f"; waiting for {len(pending_models)} model request(s)"
+                    if phase and self.active:
                         await self._publish_progress(phase)
                 elif message.get("type") == "ready":
                     event("engine_ready", **scope)

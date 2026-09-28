@@ -1,3 +1,4 @@
+import { PhoneActivity } from './PhoneActivity';
 import { FullView } from '../workspace/FullView';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { PointerEvent } from 'react';
@@ -259,6 +260,7 @@ function MobileSession({ workflowId, nodeId, visible }: { workflowId: string; no
           <Button size="sm" variant="outline" disabled={!text || !!busy} onClick={() => void perform('input', async () => { await input('text', { text }); setText(''); })}>Type</Button>
         </div>}
       </>}
+      <PhoneActivity task={status?.active?.run_id ? status.active : status?.last_task} />
       <details aria-label="Phone AI task" className="max-h-[45%] shrink-0 overflow-y-auto border-t border-border-default group-data-[full-view=true]/fullview:hidden">
         <summary className="cursor-pointer px-2 py-2 text-xs font-medium outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">Ask AI to use the phone
           {task && <span role="status" className="ml-2 font-normal text-fg-muted">{({queued: 'Waiting for the phone', running: 'Working on your request', completed: 'Done', failed: 'Could not finish', cancelled: 'Cancelled', awaiting_user: 'Waiting for you'})[taskState(task)] || 'Request received'}</span>}
