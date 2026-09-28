@@ -14,7 +14,7 @@ Each workflow node executes as a **Temporal activity** with its own isolated con
 |---|---|---|
 | **Legacy single activity** (`execute_node_activity`) | `TEMPORAL_PER_TYPE_DISPATCH=false` | Every node routed through one dispatcher activity. WebSocket round-trip back to the FastAPI server. Stable since Wave 11; kept as the fallback path. |
 | **Per-type activity** (`node.{type}.v{version}`) | `TEMPORAL_PER_TYPE_DISPATCH=true` (production default) | Each plugin gets its own `@activity.defn`. Per-plugin retry / timeout / heartbeat configs apply. With `TEMPORAL_WORKER_POOL_ENABLED=true` (default since Wave 16.4) the activity also carries `task_queue=cls.task_queue`, landing it on its specialised `TemporalWorkerPool` worker (browser / code-exec / ai-heavy / ...). Shipped in F4.A (commit `8261b05`); queue routing activated in Wave 16. |
-| **Agent-as-child-workflow** (`AgentWorkflow`) | `TEMPORAL_AGENT_WORKFLOW_ENABLED=true` | AI Agents (aiAgent, chatAgent, 11 specialized agents, 2 team leads) run as Temporal child workflows. Each LLM turn = activity; each tool call = per-type activity. Mirrors Temporal's AI Cookbook canonical pattern. F4.B infrastructure shipped (commit `a4d009e`); per-agent migrations follow. |
+| **Agent-as-child-workflow** (`AgentWorkflow`) | `TEMPORAL_AGENT_WORKFLOW_ENABLED=true` | AI Agents (every type in `AGENT_WORKFLOW_TYPES` in `services/temporal/workflow.py`: aiAgent, chatAgent, the specialized agents and the team leads) run as Temporal child workflows. Each LLM turn = activity; each tool call = per-type activity. Mirrors Temporal's AI Cookbook canonical pattern. F4.B infrastructure shipped (commit `a4d009e`); per-agent migrations follow. |
 
 `rlm_agent`, `claude_code_agent` and `vertex_managed_agent` are intentionally excluded from AgentWorkflow — their externalised loops (RLM REPL / Claude CLI `--resume` / Vertex Interactions API `previous_interaction_id` chaining) require single-process state continuity. The authoritative list is `AGENT_WORKFLOW_TYPES` in `services/temporal/workflow.py`; any agent type outside it runs as an ordinary per-type activity.
 
@@ -39,7 +39,7 @@ company stop             # Stops all services including Temporal
 
 (`bun run start` / `bun run dev` / `bun run stop` are thin wrappers over the same `company` verbs.)
 
-The embedded Temporal worker runs **inside the Python backend** — registered in the `main.py` lifespan via `TemporalWorkerManager`, not as a separate process.
+The embedded Temporal worker runs **inside the Python backend**, not as a separate process. `main.py` only schedules `run_temporal_lifecycle` (task `temporal-init`); [services/temporal/lifecycle.py](../server/services/temporal/lifecycle.py) `_start_execution_engine` creates the `TemporalWorkerManager` and then the `TemporalWorkerPool`.
 
 **Standalone worker** (for horizontal scaling — add more pollers against the same task queue):
 
@@ -346,7 +346,7 @@ Env overrides: `TEMPORAL_<QUEUE>_CONCURRENCY` (int) and `TEMPORAL_<QUEUE>_RATE_L
 
 ### Agent-as-child-workflow (F4.B)
 
-When `TEMPORAL_AGENT_WORKFLOW_ENABLED=true` and the node type is in the migrating set (`aiAgent` / `chatAgent` / 11 specialized agents / 2 team leads), the orchestrator schedules `AgentWorkflow` as a child workflow instead of an activity. Inside the workflow:
+When `TEMPORAL_AGENT_WORKFLOW_ENABLED=true` and the node type is in `AGENT_WORKFLOW_TYPES` (`aiAgent`, `chatAgent`, the specialized agents and the team leads; `rlm_agent`, `claude_code_agent` and `vertex_managed_agent` are excluded), the orchestrator schedules `AgentWorkflow` as a child workflow instead of an activity. Inside the workflow:
 
 ```
 AgentWorkflow.run(context):
@@ -385,7 +385,8 @@ AgentWorkflow.run(context):
                child_context = {**tool_payload,
                                 "parent_node_id": <self>,
                                 "invocation": {"task": …, "context": …}}
-               id = f"{parent_workflow_id}-delegate-{child_node_id}-{iter}"
+               id = _delegation_child_id(...)
+                  # "{agent_workflow_id}-delegate-{tool_node_id}-{iteration+1}-{call_index+1}"
            else:
              execute_activity(f"node.{tool_node_type}.v{version}")
            emit_phase("tool_completed", tool_name=...)
@@ -531,9 +532,10 @@ CONFIG_HANDLES = {
 }
 
 # Trigger node types - event listeners, never scheduled as blocking activities
-# Authoritative list: server/constants.py WORKFLOW_TRIGGER_TYPES (frozenset,
-# 17 entries at the time of writing). Omitting a trigger there is a silent
-# failure: find_trigger_nodes filters on this set, so deploy ignores the node.
+# Authoritative list: server/constants.py WORKFLOW_TRIGGER_TYPES (frozenset;
+# the copy below can fall behind it). Omitting a trigger there
+# is a silent failure: find_trigger_nodes filters on this set, so deploy
+# ignores the node.
 WORKFLOW_TRIGGER_TYPES = frozenset([
     "start", "cronScheduler",
     "webhookTrigger", "whatsappReceive",
@@ -545,8 +547,7 @@ WORKFLOW_TRIGGER_TYPES = frozenset([
 ])
 
 # Android service types (connect directly to agent input-tools) -- authoritative list
-# in server/constants.py ANDROID_SERVICE_NODE_TYPES (16 entries since
-# Wave 11.I).
+# in server/constants.py ANDROID_SERVICE_NODE_TYPES.
 ```
 
 Config nodes are:
@@ -661,10 +662,10 @@ The Temporal binary + persistence are managed in-process by the plugin-folder pa
 
 **WS surface**: `_handlers.py` registers `temporal_status` / `temporal_start` / `temporal_stop` via `services.ws_handler_registry.register_ws_handlers`. `_refresh.py` registers a WS-connect callback via `services.status_broadcaster.register_service_refresh` so the FE health indicator stays current.
 
-**Months-long durability contract**: running and paused deployments survive backend restarts, are never auto-terminated, and keep executing for months. Mechanisms, each replay-patch-guarded where it changes recorded commands:
+**Months-long durability contract**: running and paused deployments survive backend restarts, are never auto-terminated, and keep executing for months. None of the mechanisms below carries a `workflow.patched` marker: the lifetime-cap removal and the poll-interval floor apply unconditionally, including when an older history is replayed.
 
-- **No lifetime caps on new child runs.** Trigger/cron-spawned `MachinaWorkflow` runs, agent children, and delegated-task runners previously carried 1-2h `execution_timeout`/`run_timeout` — Temporal's timeout timers keep ticking through a cooperative pause, so any pause longer than the cap silently terminated the run (and a timed-out delegated runner skipped its compensation: leaked permit + stuck task row). New executions start children unbounded (no patch marker was retained for this change; the live `workflow.patched` markers in the tree are `machina-conditional-edges-v1` and `machina-run-record-v1` in `services/temporal/workflow.py` and `machina-trigger-listener-node-filter` in `services/temporal/trigger_listener_workflow.py` — verify with `grep -rn "workflow.patched(" server/services/temporal`. `machina-run-record-v1` gates the `workflow_runs.record_completion` activity that trigger-spawned runs schedule when they finish, for Normal mode's "done today"; see [normal_mode.md](./normal_mode.md#done-today)). Liveness is the activity layer's job: node activities heartbeat every 30s against a 2-minute `heartbeat_timeout`; their `start_to_close` is a generous 24h ceiling, not 10 minutes. The subagent-permit wait uses `PERMIT_WAIT_RETRY` (unlimited attempts) so a queued delegation waits as long as admission takes instead of failing after ~3h.
-- **History-pressure continue-as-new everywhere.** Temporal terminates any workflow around ~51,200 history events. `WorkflowControlWorkflow` (which multiplexes all of a deployment's triggers into one history) now rolls over on `is_continue_as_new_suggested()` / a 10K-event soft cap, carrying trigger specs, per-trigger provider `seen_ids` (written back into the spec after every poll cycle), queued push events, the bounded dedup baseline, and the control state — a rollover works mid-pause too, since a paused controller still accretes signal history. `TriggerListenerWorkflow`/`PollingTriggerWorkflow` gained the same pressure check (the old `_processed_count >= 16_000` gate was unreachable: real spawns cost ~15-25 events each, and polling counted only emitted events while a quiet mailbox burned ~11 events/cycle — dead in ~3 days at the 60s default). Poll intervals are clamped to a 30s floor on the patched path. Because run ids change on rollover, **controller handles are addressed by workflow id only, never run_id-pinned** (`_controller_handle`, manager `register_trigger`).
+- **No lifetime caps on new child runs.** Trigger/cron-spawned `MachinaWorkflow` runs, agent children, and delegated-task runners previously carried 1-2h `execution_timeout`/`run_timeout` — Temporal's timeout timers keep ticking through a cooperative pause, so any pause longer than the cap silently terminated the run (and a timed-out delegated runner skipped its compensation: leaked permit + stuck task row). New executions start children unbounded (no patch marker was retained for this change). The live `workflow.patched` markers are `machina-conditional-edges-v1` and `machina-run-record-v1` in `services/temporal/workflow.py`, `machina-trigger-listener-node-filter` in `services/temporal/trigger_listener_workflow.py`, and `workspace-task-activity-policy-v1` in `services/temporal/agent_workflow.py`; the list grows, so check it with `grep -rn "workflow.patched(" server/services/temporal`. `machina-run-record-v1` gates the `workflow_runs.record_completion` activity that trigger-spawned runs schedule when they finish, for Normal mode's "done today"; see [normal_mode.md](./normal_mode.md#done-today)). Liveness is the activity layer's job: node activities heartbeat every 30s against a 2-minute `heartbeat_timeout`; their `start_to_close` is a generous 24h ceiling, not 10 minutes. The subagent-permit wait uses `PERMIT_WAIT_RETRY` (unlimited attempts) so a queued delegation waits as long as admission takes instead of failing after ~3h.
+- **History-pressure continue-as-new everywhere.** Temporal terminates any workflow around ~51,200 history events. `WorkflowControlWorkflow` (which multiplexes all of a deployment's triggers into one history) now rolls over on `is_continue_as_new_suggested()` / a 10K-event soft cap, carrying trigger specs, per-trigger provider `seen_ids` (written back into the spec after every poll cycle), queued push events, the bounded dedup baseline, and the control state — a rollover works mid-pause too, since a paused controller still accretes signal history. `TriggerListenerWorkflow`/`PollingTriggerWorkflow` gained the same pressure check (the old `_processed_count >= 16_000` gate was unreachable: real spawns cost ~15-25 events each, and polling counted only emitted events while a quiet mailbox burned ~11 events/cycle — dead in ~3 days at the 60s default). Poll intervals are clamped to a 30s floor (`_MIN_POLL_INTERVAL_S` in `polling_trigger_workflow.py` and `workflow_control_workflow.py`), with no patch gate. Because run ids change on rollover, **controller handles are addressed by workflow id only, never run_id-pinned** (`_controller_handle`, manager `register_trigger`).
 - **dispatch.emit controller narrowing.** Controllers advertise their push event types via the `ControlEventTypes` keyword-list Search Attribute (upserted as triggers register); `dispatch.emit` skips controllers with no matching trigger instead of signalling every running controller with every platform event (each unmatched signal was ~4 immutable history events — one busy deployment burned every other controller's rollover budget). Controllers without the attribute (pre-upgrade histories) keep match-all behaviour.
 - **Boot-time reconcile** (`reconcile_active_controls_on_boot`, called from the lifecycle module after workers start): runs the lazy `_reconcile_control` over every active control row, converges `starting` rows a crash left behind (controller alive with triggers registered → `running`; alive-but-empty for a graph that declares triggers → `failed` + controller closed; vanished → `failed`), and re-arms the process-local half of running/paused generations from the persisted graph snapshot — DeploymentManager state, in-process collectors for non-canary trigger types, cron pause posture. Idempotent by construction (controller `register_trigger` keyed by listener id, legacy starts use `USE_EXISTING`, cron creation preserves server-owned pause state).
 

@@ -35,7 +35,7 @@ phase plan lives in `~/.claude/plans/properly-fix-the-tech-dreamy-tarjan.md`.
 | D5 — Auto-gen `DEFAULT_TOOL_NAMES` from `ToolNode` ClassVars | ✅ commits `a01f590` / `07906f0` / `899771c` (78 plugin classes + golden fixture + 3 invariant tests; 75 passed) |
 | B11 — FE `plugin_connection_status` envelope handler | ✅ commit `899771c` |
 | D4 — Drop legacy `*_status` raw frames (status-only round) | ✅ commit `5ea4e90` (whatsapp/android/telegram status retired; FE consumes typed channel) |
-| Canary flag default flip + invariant lock | ✅ this commit (default `True`; `EVENT_FRAMEWORK_ENABLED=false` is the rollback) |
+| Canary flag default flip + invariant lock | ✅ shipped (default `True`; the `EVENT_FRAMEWORK_ENABLED=false` rollback no longer works, see "Rollback (known gap)" below) |
 | Wave 13 — EventType SA mismatch fix + canary-only emit path + trigger status lifecycle + polling OOM + template resolution + cancel sweep | ✅ shipped (see "Wave 13 fixes" below) |
 
 ### Dropped / Deferred / Pending
@@ -45,23 +45,15 @@ phase plan lives in `~/.claude/plans/properly-fix-the-tech-dreamy-tarjan.md`.
 | D2 — Custom `event_dlq` SQLModel table | ❌ **dropped** (commit `89b15bd`, docs only). Temporal Event History + Visibility queries cover the ops-inspection use case; reinventing them would contradict Wave 12's "Temporal-native, no custom infra" thesis. See § "Failure inspection — no separate DLQ table". |
 | D2b — Retire `event_waiter.py` Redis-Streams branch | ✅ shipped as Wave 15.3 (see [TEMPORAL_CLEANUP_AND_RESILIENCE_PLAN.md](./ARCHIVE/TEMPORAL_CLEANUP_AND_RESILIENCE_PLAN.md)). `event_waiter` is memory-mode-only now; Temporal owns durable delivery. The in-memory collector still backs canvas-Run + non-canary (Twitter) triggers. |
 | D4 — Drain the last legacy `event_waiter.dispatch` dual-emit | ⏳ pending — only `nodes/twitter/_events.py` remains (twitterReceive is not canary-registered). The whatsapp message/newsletter/history wire keys are now one-way legacy WS frames for FE readers, not dual-emit. |
-| WorkflowEnvironment integration smoke test | ⏳ pending — full 7-canary in-process Temporal cluster. Existing unit tests + per-canary producer tests + `TestCanaryRegistryCoverage` cover the static surface; the integration smoke would catch real-cluster regressions only. |
+| WorkflowEnvironment integration smoke test | ⏳ pending — every canary type against an in-process Temporal cluster. Existing unit tests + per-canary producer tests + `TestCanaryRegistryCoverage` cover the static surface; the integration smoke would catch real-cluster regressions only. |
 
-**Test surface: 256 passed + 1 xfail** across 18 event-framework test files.
+`Settings.event_framework_enabled` gates the new dispatch path. **Default flipped to `True` on 2026-05-15** — the Temporal-Signal consumer fan-out is now production-default. With the flag off, `services.events.dispatch.emit` is a pass-through no-op (logged at DEBUG as `event-framework disabled — emit no-op`), and `DeploymentManager._canary_listener_enabled_for` sends canary trigger types back to the in-process collector (`trigger_manager.setup_event_trigger`).
 
-`Settings.event_framework_enabled` gates the new dispatch path. **Default flipped to `True` on 2026-05-15** — the Temporal-Signal consumer fan-out is now production-default. The env var `EVENT_FRAMEWORK_ENABLED=false` is the rollback channel; when set, `services.events.dispatch.emit` reverts to a pass-through no-op and the legacy `event_waiter.dispatch` path keeps working unchanged for non-canary triggers.
+### Rollback (known gap)
 
-### Rollback procedure
+`EVENT_FRAMEWORK_ENABLED=false` is **not** a working rollback any more. The in-process collector fires only on `event_waiter.dispatch(...)`, and most canary producers no longer call it: their `_events.py` calls `dispatch.emit(...)` alone (chat, webhook and email say so in their module docstrings). With the flag off, those deployed triggers never fire, and the in-process WebSocket broadcast that `emit` also performs stops too. The only remaining `event_waiter.dispatch` callers are `nodes/twitter/_events.py`, `StatusBroadcaster.send_custom_event`, and the plugin `WebhookSource` intake in `services/events/webhook.py`. Restoring a rollback would mean a dual-dispatch in `emit` itself; nothing does that today, so leave the flag on.
 
-If the canary fan-out causes regressions in production:
-
-1. Set `EVENT_FRAMEWORK_ENABLED=false` in `.env` (or the process environment).
-2. Restart the server (`company start` / `uvicorn` reload). Pydantic Settings re-reads on startup.
-3. Confirm pass-through: `dispatch.emit()` logs `event-framework disabled — emit no-op` at DEBUG.
-
-No DB migrations, no schema changes — the rollback is one env var + restart. The legacy `event_waiter` collector/processor keeps trigger nodes firing because plugin producers still call `event_waiter.dispatch(...)` alongside `dispatch.emit(...)` (the dual-dispatch pattern stays for the in-memory canvas-Run path; the Redis-Streams branch itself was retired in Wave 15.3).
-
-Locked by `tests/test_event_framework_phase_a.py::TestEventFrameworkEnabledDefault::test_event_framework_enabled_defaults_true` (source-introspection check that the `Field(default=True, ...)` declaration is present) and `TestCanaryRegistryCoverage::test_seven_canary_types_registered` (every canary plugin opted in via `register_canary_trigger_type`).
+Locked by `tests/test_event_framework_phase_a.py::TestEventFrameworkEnabledDefault::test_event_framework_enabled_defaults_true` (source-introspection check that the `Field(default=True, ...)` declaration is present) and `TestCanaryRegistryCoverage::test_seven_canary_types_registered`, which asserts that the seven original canary types are registered. It is a floor, not the full list: later plugins register too. For the live set, run `grep -rn "register_canary_trigger_type(" server/nodes`.
 
 ## What this framework does
 
@@ -103,9 +95,9 @@ chatTrigger. The scoping DECISION lives in the core call site
 session stays unscoped) and the narrowing in core dispatch — plugin
 `_events.py` factories only plumb the field of their own wire shape.
 
-Worker is embedded in the FastAPI process (`main.py:321-332` schedules
+Worker is embedded in the FastAPI process (the `main.py` lifespan schedules
 `run_temporal_lifecycle` from `services/temporal/lifecycle.py` as one
-`asyncio.create_task()`; that module owns the connect loop and the
+`asyncio.create_task()` named `temporal-init`; that module owns the connect loop and the
 `TemporalWorkerManager` / `TemporalWorkerPool` start). Activities
 and the WebSocket connection pool share memory + event loop, so the fan-out
 to FE clients is a direct in-process call — no Redis Streams hop required.

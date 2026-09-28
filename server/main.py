@@ -333,13 +333,14 @@ async def lifespan(app: FastAPI):
     set_startup_time()
 
     # Initialize Temporal in the background - do NOT block lifespan startup.
-    # This lifespan owns the Temporal dev server (spawned below via
-    # TemporalServerRuntime.ensure_started), and on fresh startup it may take
-    # several seconds to become reachable. Blocking the lifespan here would
-    # delay FastAPI HTTP serving and cascade into frontend
+    # This lifespan owns the Temporal dev server (the task scheduled below
+    # spawns it via TemporalServerRuntime.ensure_started), and on fresh
+    # startup it may take several seconds to become reachable. Blocking the
+    # lifespan here would delay FastAPI HTTP serving and cascade into frontend
     # ERR_CONNECTION_REFUSED on /api/auth/status. Instead, yield fast and
     # let Temporal init happen in a background task. WorkflowService falls back
-    # to parallel/sequential execution until Temporal is ready.
+    # to sequential execution until Temporal is ready (the parallel executor
+    # is used only with REDIS_ENABLED=true).
     app.state.temporal_worker_manager = None
     app.state.temporal_pool = None
     # Coarse readiness phase for /health/ready (the desktop splash reads

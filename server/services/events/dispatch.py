@@ -19,9 +19,13 @@ No EventDispatchWorkflow, no Redis Streams, no DLQ table. Temporal's
 Visibility + Signal API + Event History provide the durability primitives
 this function depends on; everything else is a thin pass-through.
 
-Behind ``Settings.event_framework_enabled`` (default on since Wave 12;
-``EVENT_FRAMEWORK_ENABLED=false`` is the rollback). When disabled,
-:func:`emit` is a no-op pass-through that returns the envelope unchanged.
+Behind ``Settings.event_framework_enabled`` (default on since Wave 12).
+When disabled, :func:`emit` is a no-op pass-through that returns the
+envelope unchanged. That is no longer a working rollback: most canary
+producers call only :func:`emit` (no ``event_waiter.dispatch``), so with
+the flag off their deployed triggers never fire and the WS broadcast
+below stops too. See docs-internal/event_framework.md, "Rollback (known
+gap)".
 """
 
 from __future__ import annotations
@@ -76,8 +80,9 @@ async def emit(
         The envelope unchanged — callers may chain.
 
     Behaviour when ``Settings.event_framework_enabled=False`` (the
-    rollback setting; the default is True): pass-through no-op. Logged at
-    DEBUG so a rolled-back process is observable.
+    default is True): pass-through no-op. Logged at DEBUG so a process
+    running with the flag off is observable. See the module docstring:
+    the flag no longer works as a rollback.
     """
     if not Settings().event_framework_enabled:
         logger.debug(

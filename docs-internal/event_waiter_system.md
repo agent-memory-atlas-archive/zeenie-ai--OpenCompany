@@ -2,7 +2,7 @@
 
 > **Scope note.** This document describes the live in-memory waiter that backs the canvas-Run path. Node authoring happens on the backend: each node is a Python plugin folder under `server/nodes/<category>/<node>/__init__.py` that emits a `NodeSpec`. The frontend reads specs via [client/src/lib/nodeSpec.ts](../client/src/lib/nodeSpec.ts) + [adapters/nodeSpecToDescription.ts](../client/src/adapters/nodeSpecToDescription.ts). See [plugin_system.md](./plugin_system.md) and [server/nodes/README.md](../server/nodes/README.md) for the authoring model.
 
-Trigger nodes in OpenCompany suspend workflow execution until an external event arrives (WhatsApp message, webhook request, Telegram message, chat input, delegated task completion, etc.). The Event Waiter system is the in-memory (`asyncio.Future`) primitive that backs push-based triggers on the canvas-Run path. In a controlled deployment, trigger definitions, push Signals, polling activities, pause state, and queued events live in `WorkflowControlWorkflow`; only a real graph invocation starts `MachinaWorkflow`. `TriggerListenerWorkflow` / `PollingTriggerWorkflow` are legacy replay/compatibility paths. The Redis-Streams backend that previously offered cross-restart waiter persistence was retired because Temporal owns deployed-trigger durability.
+Trigger nodes in OpenCompany suspend workflow execution until an external event arrives (WhatsApp message, webhook request, Telegram message, chat input, delegated task completion, etc.). The Event Waiter system is the in-memory (`asyncio.Future`) primitive that backs push-based triggers on the canvas-Run path; deployed canary triggers do not use it (see "Deployed Triggers vs Canvas Run"). In a controlled deployment, trigger definitions, push Signals, polling activities, pause state, and queued events live in `WorkflowControlWorkflow`; only a real graph invocation starts `MachinaWorkflow`. `TriggerListenerWorkflow` / `PollingTriggerWorkflow` are legacy replay/compatibility paths. The Redis-Streams backend that previously offered cross-restart waiter persistence was retired because Temporal owns deployed-trigger durability.
 
 Source file: `server/services/event_waiter.py`
 
@@ -71,7 +71,7 @@ Filter closures capture parameter values at registration time. For example, `bui
 ## Execution Flow
 
 ```
-Deployment starts
+Canvas Run (or a trigger type deployed without a canary registration)
         |
         v
 Trigger node encountered in execution layer
@@ -108,22 +108,27 @@ Single in-memory backend using `asyncio.Future` with a module-level `_waiters` d
 
 Durability note: waiter state does NOT survive a process restart — that is by design. Controlled deployed triggers get restart durability from `WorkflowControlWorkflow`; cron uses Temporal Schedules. The event waiter only backs interactive canvas-Run waits and legacy uncontrolled deployments, where a dead process means the canvas session is gone. (The Redis-Streams backend that previously covered this was retired in Wave 15.3.)
 
-## Polling Triggers vs Event Triggers
+## Deployed Triggers vs Canvas Run
 
-Some triggers do not fit the push model because the upstream service has no webhook or long-polling API. These use a different primitive in `TriggerManager`:
+When a workflow is deployed, a trigger type registered with `register_canary_trigger_type` (live list: `grep -rn "register_canary_trigger_type(" server/nodes`) does not use this module. It runs under the Temporal controller, and its producer delivers events with `services.events.dispatch.emit`. The event waiter is involved only for canvas Run and for trigger types that are not canary-registered:
 
-| Trigger Type | Mechanism | Location |
+| Trigger Type | Deployed | Canvas Run |
 |---|---|---|
-| `whatsappReceive` | Event (push) | `event_waiter.py` |
-| `webhookTrigger` | Event (push via FastAPI router) | `event_waiter.py` |
-| `chatTrigger` | Event (push via WebSocket) | `event_waiter.py` |
-| `taskTrigger` | Event (push via delegation) | `event_waiter.py` |
-| `telegramReceive` | Event (push via long-polling) | `event_waiter.py` + `TelegramService` |
-| `twitterReceive` | **Polling** | `deployment/triggers.py` + `asyncio.Queue` |
-| `googleGmailReceive` | **Polling** | `WorkflowControlWorkflow` polling activity (controlled); `PollingTriggerWorkflow` legacy compatibility |
-| `cronScheduler` | Temporal Schedule | `services/temporal/schedules.py` |
+| `whatsappReceive`, `telegramReceive`, `chatTrigger`, `webhookTrigger`, `taskTrigger`, `discordReceive`, `discordInteraction` | Canary push, delivered by `dispatch.emit` | `event_waiter` waiter; see the known gap below |
+| `whatsappBusinessReceive`, `whatsappBusinessStatus` | Canary push, delivered by `dispatch.emit` | `event_waiter` waiter, resolved by the `WebhookSource` intake in `services/events/webhook.py` |
+| `googleGmailReceive`, `emailReceive`, `msMailReceive` | Canary polling: the controller runs the plugin's `poll.{node_type}.v{version}` activity | The node polls from its own `execute`; no waiter |
+| `twitterReceive` | Not canary-registered. It is in `POLLING_TRIGGER_TYPES` but registers no polling factory, so deploy falls back to an in-process `event_waiter` collector | `event_waiter` waiter; see the known gap below |
+| `cronScheduler` | Temporal Schedule (`services/temporal/schedules.py`) | Not a waiter |
 
-Controlled polling triggers are registered with `WorkflowControlWorkflow`, which invokes the plugin-generated `poll.{node_type}.v{version}` activity and starts a graph only for deduplicated new events. Legacy uncontrolled polling still uses the deployment compatibility layer. See [temporal-execution-engine-rfc.md](ARCHIVE/temporal-execution-engine-rfc.md) for the deployment architecture.
+Controlled polling triggers are registered with `WorkflowControlWorkflow`, which starts a graph only for deduplicated new events. Legacy uncontrolled polling still uses the deployment compatibility layer. See [temporal-execution-engine-rfc.md](ARCHIVE/temporal-execution-engine-rfc.md) for the deployment architecture.
+
+### Known gap: canvas Run on canary push triggers
+
+Pressing Run on the push triggers in the first table row registers a waiter that no producer resolves. Their producers call only `dispatch.emit`, which signals Temporal consumers and broadcasts to WebSocket clients but never calls `event_waiter.dispatch`. `StatusBroadcaster.send_custom_event`, which does dispatch to waiters, has no production caller. The node stays in `waiting` until the user cancels it. Deployed runs of the same triggers are unaffected.
+
+### Known gap: `twitterReceive` never fires
+
+Nothing produces Twitter trigger events. `dispatch_twitter_event_received` in `nodes/twitter/_events.py` has no caller, and `TwitterReceiveNode` is a plain `TriggerNode`, not a `PollingTriggerNode`, so it registers no polling factory. Canvas Run and a deployment both wait on an `event_waiter` future that is never resolved; on deploy, `DeploymentManager._setup_event_trigger` also logs `No polling factory registered for trigger`. The `_events.py` module docstring describes the missing `PollingTriggerNode` refactor.
 
 ## Cancellation
 
@@ -185,7 +190,7 @@ Users can cancel a waiting trigger from the UI (Cancel button on the trigger nod
    register_filter_builder('mqttTrigger', build_mqtt_filter)
    ```
 
-3. **Dispatch events** from the external service. For a canary (Temporal-routed) trigger, register the CloudEvents type with `register_canary_trigger_type(node_type, cloudevent_type)` and emit through `services.events.dispatch.emit(envelope, wire_routing_key=...)`; the canvas-Run path also accepts the legacy shape:
+3. **Dispatch events** from the external service. For a canary (Temporal-routed) trigger, register the CloudEvents type with `register_canary_trigger_type(node_type, cloudevent_type)` and emit through `services.events.dispatch.emit(envelope, wire_routing_key=...)`. `emit` does not reach this module, so canvas Run resolves only if the producer also calls `event_waiter.dispatch` (see the known gap above):
 
    ```python
    from services import event_waiter

@@ -256,7 +256,7 @@ Failed to check auth status (attempt 4/6): TypeError: Failed to fetch
 
 **Root cause**: An older version of the FastAPI lifespan blocked on Temporal client connection for up to 30 seconds before yielding to uvicorn. During that window, uvicorn was not accepting HTTP connections, so the frontend retry window could exhaust before the backend started serving.
 
-**Status**: fixed. Temporal initialization runs in a background `asyncio.create_task()` ([server/main.py:_init_temporal_background](../server/main.py)) so the lifespan yields immediately. WorkflowService falls back to parallel/sequential execution until Temporal connects in the background.
+**Status**: fixed. The `main.py` lifespan schedules `run_temporal_lifecycle` ([server/services/temporal/lifecycle.py](../server/services/temporal/lifecycle.py)) as a background `asyncio.create_task()` named `temporal-init`, so the lifespan yields immediately. Until Temporal connects, WorkflowService falls back to sequential execution (the parallel executor runs only with `REDIS_ENABLED=true`).
 
 ---
 

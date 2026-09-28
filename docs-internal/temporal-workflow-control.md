@@ -165,7 +165,8 @@ the control plane is hardened against Temporal's per-run event-history ceiling
 - **No lifetime caps.** Spawned graph runs, agent children, and delegated-task
   runners no longer carry 1-2h execution/run timeouts (Temporal's timers keep
   ticking through a pause, so the caps silently terminated paused work).
-  Replay-patched; see TEMPORAL_ARCHITECTURE.md for the patch inventory.
+  The caps were removed unconditionally, with no `workflow.patched` marker;
+  TEMPORAL_ARCHITECTURE.md lists the markers that do exist.
 
 ## Recovery policies
 
