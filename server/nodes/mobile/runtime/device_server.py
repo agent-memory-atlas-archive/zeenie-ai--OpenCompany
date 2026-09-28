@@ -24,12 +24,14 @@ class AndroidDriver:
 
     def geometry(self):
         info = self.device.info
-        width, height = self.device.window_size()
+        width, height = info.get("displayWidth"), info.get("displayHeight")
+        if not isinstance(width, int) or not isinstance(height, int) or width <= 0 or height <= 0:
+            width, height = self.device.window_size()
         return {"width": width, "height": height, "rotation": info.get("displayRotation", 0)}
 
     def call(self, op: str, p: dict):
         d = self.device
-        geometry = self.geometry()
+        geometry = self.geometry() if op in {"geometry", "observe", "tap", "swipe", "touch"} else None
         if op in {"tap", "swipe", "touch"}:
             if p.pop("geometry", None) != geometry:
                 raise ValueError("Screen changed; refresh before interacting")

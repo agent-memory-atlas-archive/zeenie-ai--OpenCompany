@@ -22,6 +22,12 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe('Mobile Workspace', () => {
+  it('shows internal phone progress when invoked by an AI agent tool call', async () => {
+    snapshot.running = true;
+    snapshot.active = { run_id: 'tool-run', phase: 'Waiting for model', steps: 7, max_steps: 40 };
+    render(<MobileWorkspace workflowId="flow" nodes={nodes} />);
+    expect(await screen.findByText(/Waiting for model.*Step 7 \/ 40/)).toBeVisible();
+  });
   it('retains a startup failure across status refreshes without claiming the phone is ready', async () => {
     snapshot.start_error = 'This phone is already open, but could not be safely reconnected.';
     render(<MobileWorkspace workflowId="flow" nodes={nodes} />);

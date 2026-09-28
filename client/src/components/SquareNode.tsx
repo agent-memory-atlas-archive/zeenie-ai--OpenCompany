@@ -315,6 +315,10 @@ const SquareNode: React.FC<NodeProps<NodeData>> = ({ id, type, data, isConnectab
         cursor: 'pointer',
       } as NodeStyle}
     >
+      {isExecuting && typeof nodeStatus?.data?.iteration === 'number' && <span role="status" className="text-xs text-fg-muted">
+        Step {nodeStatus.data.iteration} / {Number(nodeStatus.data.max_iterations || 0)}
+        {typeof nodeStatus.data.phase === 'string' ? ` · ${nodeStatus.data.phase}` : ''}
+      </span>}
       {/* Main Square Node */}
       <div
         className="sq-node-box"

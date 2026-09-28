@@ -138,7 +138,7 @@ function MobileSession({ workflowId, nodeId, visible }: { workflowId: string; no
   const perform = async (label: string, action: () => Promise<void>) => {
     if (operation.current) return;
     operation.current = true; setBusy(label); setError('');
-    try { await action(); if (active.current) await refresh(); }
+    try { await action(); if (active.current && label !== 'input') await refresh(); }
     catch (cause) { if (active.current) setError(cause instanceof Error ? cause.message : 'That action failed.'); }
     finally { operation.current = false; if (active.current) setBusy(''); }
   };
@@ -190,6 +190,7 @@ function MobileSession({ workflowId, nodeId, visible }: { workflowId: string; no
   return <FullView label="Phone" toolbar={<>
       <Smartphone aria-hidden className="size-4 shrink-0 text-fg-muted" />
       <span role="status" className="min-w-0 flex-1 truncate text-xs text-fg-muted">{setupActive ? 'Setting up' : status?.starting ? 'Starting phone…' : busy ? `${busy}…` : running ? (held ? 'You’re using the phone' : status.active?.status === 'running' ? 'AI is working' : status.control_state === 'recovering' ? 'Reconnecting…' : 'Ready') : status ? 'Phone is off' : 'Connecting…'}</span>
+      {running && status?.active?.run_id != null && <span role="status" className="text-xs text-fg-muted">{String(status.active.phase || status.active.status || 'Working')} · Step {Number(status.active.steps || 0)} / {Number(status.active.max_steps || 0)}</span>}
       {!running && powerControl}
       {running && (held ? <>
         <Button size="sm" onClick={() => void perform('releasing', async () => { await mobileRequest(`${path}/release`, { viewer_id: viewerId, epoch, resume: true }); leaseEpoch.current = null; setEpoch(null); })} disabled={!!busy}>Let AI continue</Button>

@@ -15,6 +15,9 @@
   "android_agent": {
     "icon": "📱"
   },
+  "android_tool": {
+    "skill": "android-phone-skill"
+  },
   "anthropicChatModel": {
     "icon": "lobehub:claude"
   },

@@ -418,6 +418,8 @@ class MobileRuntime:
                 raise MobileError(result.get("code", "device_action_failed"), result.get("error", "Device command failed"))
             if operation not in READS:
                 event("device_action_completed", operation=operation, duration_ms=round((time.monotonic() - started) * 1000))
+            elif operation != "geometry":
+                event("device_read_completed", operation=operation, duration_ms=round((time.monotonic() - started) * 1000))
             if operation == "geometry":
                 self.geometry = result["result"]
             elif operation == "observe":
@@ -457,6 +459,7 @@ class MobileRuntime:
         lease = await self.control.claim("viewer:" + viewer, takeover=True)
         self.viewer = viewer
         event("manual_control_started")
+        await self._publish_progress("Waiting for you")
         return lease
 
     def release(self, viewer: str, *, resume: bool = False):
@@ -486,7 +489,7 @@ class MobileRuntime:
             raise MobileError("queue_full", "The shared device queue is full")
         if any(q["run_id"] == run_id for q in self.queue) or (self.active and self.active["run_id"] == run_id):
             raise MobileError("duplicate_run", "This task is already admitted")
-        entry = {"run_id": run_id, "workflow_id": workflow_id, "node_id": node_id, "execution_id": execution_id, "status": "queued"}
+        entry = {"run_id": run_id, "workflow_id": workflow_id, "node_id": node_id, "execution_id": execution_id, "status": "queued", "steps": 0, "max_steps": params["max_steps"]}
         self.queue.append(entry)
         event("task_queued", run_id=run_id, workflow_id=workflow_id, node_id=node_id)
         try:
@@ -548,6 +551,7 @@ class MobileRuntime:
                         }
                         attempts += 1
                         entry["attempt_steps"] = 0
+                        entry["step_offset"] = params["max_steps"] - steps_remaining
                         started = time.monotonic()
                         try:
                             try:
@@ -589,6 +593,22 @@ class MobileRuntime:
             if entry in self.queue:
                 self.queue.remove(entry)
 
+    async def _publish_progress(self, phase: str) -> None:
+        if not self.active:
+            return
+        entry = self.active
+        entry["phase"] = phase
+        try:
+            from services.status_broadcaster import get_status_broadcaster
+            await get_status_broadcaster().update_node_status(
+                entry["node_id"], "waiting" if entry["status"] == "awaiting_user" else "executing",
+                {"iteration": entry.get("steps", 0), "max_iterations": entry.get("max_steps", 0),
+                 "phase": phase, "execution_id": entry.get("execution_id"), "run_id": entry["run_id"]},
+                workflow_id=entry["workflow_id"],
+            )
+        except Exception as exc:
+            event("progress_delivery_failed", failed=True, error_type=type(exc).__name__)
+
     async def _run_worker(self, config: dict, timeout: float) -> dict:
         entry = Path(__file__).with_name("runtime") / "worker.py"
         self.worker = await asyncio.create_subprocess_exec(
@@ -617,6 +637,7 @@ class MobileRuntime:
         if config.get("provider") == "google":
             scope["model_backend"] = "vertex_express" if config.get("model_env", {}).get("GOOGLE_GENAI_USE_VERTEXAI") == "true" else "gemini_developer"
         event("engine_starting", **scope)
+        await self._publish_progress("Starting Android task")
 
         async def read():
             result = {"success": False, "error": "Mobile worker exited before completing the task"}
@@ -630,6 +651,10 @@ class MobileRuntime:
                           **{key: message.get(key) for key in ("error_type", "code", "stage", "http_status", "provider_status")})
                 elif message.get("type") == "diagnostic":
                     event("engine_stage", **scope, stage=message.get("stage"), error_type=message.get("error_type"))
+                    phase = {"model_request": "Waiting for model", "model_response": "Model responded",
+                             "engine_initialization": "Connecting engine", "task_execution": "Using phone"}.get(message.get("stage"))
+                    if phase and self.active and self.active.get("phase") != phase:
+                        await self._publish_progress(phase)
                 elif message.get("type") == "ready":
                     event("engine_ready", **scope)
                 elif message.get("type") == "usage" and self.active:
@@ -638,6 +663,8 @@ class MobileRuntime:
                     steps = max(self.active.get("attempt_steps", 0), int(message.get("steps", 0)))
                     if steps != self.active.get("attempt_steps", 0):
                         event("task_progress", **scope, steps=steps)
+                        self.active["steps"] = min(self.active.get("max_steps", steps), self.active.get("step_offset", 0) + steps)
+                        await self._publish_progress("Using phone")
                     self.active["attempt_steps"] = steps
             await proc.wait()
             event("engine_exited", failed=proc.returncode not in (0, None), **scope, exit_code=proc.returncode)

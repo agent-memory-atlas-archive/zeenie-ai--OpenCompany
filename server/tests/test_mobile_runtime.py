@@ -60,6 +60,32 @@ async def test_status_during_startup_does_not_query_driver(monkeypatch, tmp_path
     query.assert_not_awaited()
 
 
+async def test_phone_progress_uses_normal_node_status_channel(runtime, monkeypatch):
+    from unittest.mock import AsyncMock
+    from types import SimpleNamespace
+    import services.status_broadcaster as status
+    update = AsyncMock()
+    monkeypatch.setattr(status, "get_status_broadcaster", lambda: SimpleNamespace(update_node_status=update))
+    runtime.active = {"node_id": "phone", "workflow_id": "wf", "execution_id": "exec", "run_id": "run",
+                      "status": "running", "steps": 7, "max_steps": 40}
+    await runtime._publish_progress("Waiting for model")
+    update.assert_awaited_once_with("phone", "executing", {"iteration": 7, "max_iterations": 40,
+        "phase": "Waiting for model", "execution_id": "exec", "run_id": "run"}, workflow_id="wf")
+    assert runtime.snapshot()["active"]["phase"] == "Waiting for model"
+
+
+async def test_status_poll_does_not_queue_behind_input(runtime, monkeypatch):
+    from unittest.mock import AsyncMock
+    import nodes.mobile._runtime as module
+    from nodes.mobile._router import status
+    monkeypatch.setattr(module, "get_runtime", lambda: runtime)
+    query = AsyncMock()
+    monkeypatch.setattr(runtime, "driver_call", query)
+    async with runtime.driver_lock:
+        await status(principal="owner")
+    query.assert_not_awaited()
+
+
 class FakeStdin:
     def __init__(self):
         self.data = b""

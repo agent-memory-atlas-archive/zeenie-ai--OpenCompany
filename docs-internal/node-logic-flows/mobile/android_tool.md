@@ -11,6 +11,8 @@
 
 Give an existing AI agent a natural-language tool for the shared local Android phone. Setup and startup happen explicitly in Workspace → Mobile. This is separate from the legacy Android relay services.
 
+The paired `android-phone-skill` is registered in `nodes/visuals.json` for the auto-add-skill policy. Internal phone steps publish `iteration`, `max_iterations`, `phase`, execution ID and run ID through `update_node_status`, scoped to the Android node and workflow. The square tool node and Workspace display those steps while the parent AI agent remains in its current tool-call turn. Manual takeover changes the phase to “Waiting for you”; resumed tasks retain their consumed step budget.
+
 ## Inputs (handles)
 
 | Handle | Required | Purpose |

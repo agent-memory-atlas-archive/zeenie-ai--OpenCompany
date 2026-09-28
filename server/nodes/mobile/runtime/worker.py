@@ -152,7 +152,7 @@ async def main(config: dict) -> None:
         def on_chain_start(self, serialized, inputs, *, metadata=None, **kwargs):
             step = (metadata or {}).get("langgraph_step")
             if isinstance(step, int):
-                emit("progress", steps=step + 1)
+                emit("progress", steps=max(0, step))
 
         def on_chat_model_start(self, serialized, messages, **kwargs):
             emit("diagnostic", stage="model_request")
