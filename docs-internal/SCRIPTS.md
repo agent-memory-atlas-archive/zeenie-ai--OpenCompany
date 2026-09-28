@@ -34,15 +34,19 @@ deprecation warning; kept for upgrade compatibility).
 | `company dev` | Start in dev mode (Vite HMR + uvicorn). `--force` re-bundles Vite deps (recovers "Outdated Optimize Dep"); `--daemon` binds backend to 0.0.0.0 |
 | `company serve` | Single-port production runtime (uvicorn serves API + WS + built SPA; optional daemons incl. the JS executor sidecar (bun) are backend-spawned on demand) — the systemd `ExecStart` on deployed VMs |
 | `company stop` | Stop all services and free configured ports |
-| `company build` | Full production build (bun install → client → sidecar → uv sync → bytecode → temporal binary). Step [0/6] scaffolds `.env` from `.env.template` when missing, generating fresh random secrets (`secrets.token_hex(24)`) for `SECRET_KEY` / `JWT_SECRET_KEY` / `API_KEY_ENCRYPTION_KEY` instead of the dev placeholders; an existing `.env` is untouched |
+| `company build` | Full production build (bun install → client → sidecar → `uv sync --extra docs` → bytecode → temporal binary). Step [0/6] scaffolds `.env` from `.env.template` when missing, generating fresh random secrets (`secrets.token_hex(24)`) for `SECRET_KEY` / `JWT_SECRET_KEY` / `API_KEY_ENCRYPTION_KEY` instead of the dev placeholders; an existing `.env` is untouched |
 | `company clean` | Stop services, then remove build artifacts, node_modules, `.venv`, repo-local state (preserves `.opencompany/{workflows,deploy,packages}`) |
 | `company deploy up/status/destroy` | Self-deploy a login-gated VM (gcloud preflight + Terraform; see `cli/commands/deploy/`) |
 | `company daemon start/stop/status/restart` | Detached backend management (PID file under user data dir) |
 | `company version sync [tag]` | Write a git tag's version (default: the latest) into every version file: root / client / desktop `package.json`, `pyproject.toml`, `cli/__init__.py`. Never `server/pyproject.toml`, which `server/uv.lock` records. The release procedure is in [ci_cd.md -> Cutting a release](./ci_cd.md#cutting-a-release) |
 | `company docs nodes [--check]` | Regenerate (or verify) the `docs-internal/node-logic-flows/` index |
 
-There is no `help` verb: `company` with no arguments, `company --help`, and
-`company <verb> --help` print Typer's help (`no_args_is_help=True` in `cli/cli.py`).
+Help comes from two places. `company` with no arguments, `company help`,
+`company --help` and `company -h` are answered by the launcher itself
+(`printHelp()` in `bin/cli.js`, its `COMMANDS` table), without starting
+Python. `company <verb> --help` is forwarded to `python -m cli <verb> --help`
+and prints Typer's help for that verb (`cli/cli.py`); `python -m cli` with no
+arguments prints Typer's own command list (`no_args_is_help=True`).
 
 ### Desktop shell scripts (`desktop/package.json`, run from `desktop/`)
 

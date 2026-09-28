@@ -32,12 +32,12 @@ command provisions the Python side (uv, the venvs, bytecode; a minute or two).
 `curl -fsSL https://opencompany.sh/install.sh | bash` (or `install.ps1` on
 Windows) installs bun, Python and uv first and provisions eagerly.
 
-**Known issue on 0.2.0 and 0.2.1**: a registry install provisions but then
-`company start` (and `company serve`) stops with "Project not built", and the
-package ships without the JS executor sidecar bundle; `company build` in the
-installed package works around both. Details and status in
-[errors.md #25 and #26](./errors.md). The desktop app is not affected and is
-the recommended install.
+**Known issue in registry installs (open since 0.2.0; the status line of
+[errors.md #25 and #26](./errors.md) says whether your version is fixed)**: a
+registry install provisions but then `company start` (and `company serve`)
+stops with "Project not built", and the package ships without the JS executor
+sidecar bundle; `company build` in the installed package works around both.
+The desktop app is not affected and is the recommended install.
 
 Open `http://localhost:$PYTHON_BACKEND_PORT` — `company start` is single-port (API +
 WebSocket + built SPA on the backend port).
@@ -213,7 +213,7 @@ built from source; see [docker.md](./docker.md).
 |---------|-------------|
 | `bun run start` | Start the app (backend-owned daemons start on demand) |
 | `bun run stop` | Stop all services |
-| `bun run build` | Full production build (`company build`: bun install, client, sidecar, uv sync, bytecode, Temporal binary) |
+| `bun run build` | Full production build (`company build`: bun install, client, sidecar, `uv sync --extra docs`, bytecode, Temporal binary) |
 | `bun run dev` | Start development server |
 
 ## Troubleshooting

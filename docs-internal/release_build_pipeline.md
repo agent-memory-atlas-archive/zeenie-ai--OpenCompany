@@ -11,7 +11,7 @@ User scope (confirmed before this work): stay on the registry-tarball distributi
 | TypeScript type-check | `typescript@7` (the native Go compiler) at the **repo root** | **5.9× faster** on `--noEmit` — measured 2026-07-26 on this codebase, 3 warm runs each: **~820 ms** vs **~4830 ms** under `tsc` 5.9.3. Type-check only; Vite/esbuild keep producing the actual JS bundles. Lives in root `devDependencies`, exact-pinned, never ships to users. |
 | Vite output | `manualChunks` + `target: 'es2022'` | Split heavy libs (reactflow, radix-ui, lobehub, react-markdown stack) so the main bundle no longer hits the 1500KB warning ceiling. ES2022 unlocks `findLast` / optional-chaining-assignment without polyfills (Chrome 94+, FF 93+, Safari 15.4+ — within React 19 / Tailwind 4 baseline). |
 | JS executor sidecar | `bun build src/index.ts --target=bun --outfile=dist/index.js`, run via `bun dist/index.js` | Drops tsx interpreter startup (~500ms-1s every server boot). `--target=bun` yields a self-contained bundle with Express inlined — no `node_modules` at runtime, which is what lets the desktop bundle copy one file. (The first cut was an esbuild bundle with `--packages=external` run on Node; superseded when bun became the only shipped JavaScript runtime.) |
-| Python | `python -m compileall -q -j 0 <project dirs>` + `[tool.uv] compile-bytecode = true` | Pre-compile bytecode. Implemented as step `[5/6]` in [`cli/commands/build.py`](../cli/commands/build.py) (`COMPILEALL_SOURCE_DIRS` constant lists the dirs); `server/pyproject.toml`'s `compile-bytecode = true` makes `uv sync` (step `[4/6]`) compile `.venv/` site-packages too. No `-O`: every runtime launches python without `-O`, and per PEP 488 a non-optimized interpreter only loads plain `.pyc` — the earlier `-O` invocation produced `.opt-1.pyc` that nothing ever loaded (fixed 2026-07-14; ~30-50s cold-start gain, see [performance.md](performance.md)). |
+| Python | `python -m compileall -q -j 0 <project dirs>` + `[tool.uv] compile-bytecode = true` | Pre-compile bytecode. Implemented as step `[5/6]` in [`cli/commands/build.py`](../cli/commands/build.py) (`COMPILEALL_SOURCE_DIRS` constant lists the dirs); `server/pyproject.toml`'s `compile-bytecode = true` makes step `[4/6]`'s `uv sync --extra docs` compile `.venv/` site-packages too. No `-O`: every runtime launches python without `-O`, and per PEP 488 a non-optimized interpreter only loads plain `.pyc` — the earlier `-O` invocation produced `.opt-1.pyc` that nothing ever loaded (fixed 2026-07-14; ~30-50s cold-start gain, see [performance.md](performance.md)). |
 
 ## Package manager (bun)
 
@@ -128,7 +128,8 @@ Two halves (both required; see [performance.md](performance.md) for the
 2026-07-14 cold-boot measurements that motivated the split):
 
 - `server/pyproject.toml` → `[tool.uv] compile-bytecode = true` makes
-  `uv sync` (step `[4/6]`) compile all `.venv/` site-packages at install
+  every `uv sync` (step `[4/6]` runs `uv sync --extra docs`; `scripts/install.js`
+  runs plain `uv sync`) compile all `.venv/` site-packages at install
   time. uv's default is **false** — without this, every dependency `.py`
   compiles lazily on the first import after a fresh sync.
 - [`cli/commands/build.py`](../cli/commands/build.py) → step `[5/6]`
