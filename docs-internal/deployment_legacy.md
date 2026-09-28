@@ -21,6 +21,13 @@ One command provisions a login-gated OpenCompany VM on a cloud provider. Two sta
    script (`startup.sh.tftpl`) that installs bun + uv (no Node, no npm), `bun add -g`s the package,
    provisions its Python side with `company provision`, and runs `company serve` under systemd.
 
+> **Known issue in 0.2.0 and 0.2.1 ([errors.md #25 and #26](./errors.md))**: on a registry
+> install, `company serve` stops with `Project not built. Run "company build" first.`, so the
+> VM's systemd service fails and keeps restarting, and the package also lacks the JS executor
+> sidecar bundle. Until the fix ships, run `company build` once on the VM as root (the startup
+> script's user), which fixes both, then `systemctl restart opencompany` (`machinaos` on a
+> pre-rebrand deployment).
+
 Login gate = built-in auth (`VITE_AUTH_ENABLED=true`, `AUTH_MODE=single`) with the owner
 credential generated at deploy time and seeded on first boot. `build_app_env`
 (`cli/commands/deploy/_secrets.py`) also sets `DEPLOYMENT_MODE=cloud` on the VM and mints

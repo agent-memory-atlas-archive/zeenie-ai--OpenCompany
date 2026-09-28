@@ -14,7 +14,8 @@ import { existsSync, copyFileSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
-// Prevent recursive execution when npm install runs in subdirectories
+// Prevent recursive execution: the `bun install` this script runs below
+// re-triggers the root postinstall hook, which would call this script again.
 if (
   process.env.OPENCOMPANY_INSTALLING === 'true'
   || process.env.MACHINAOS_INSTALLING === 'true'
@@ -174,11 +175,11 @@ console.log(
     : '  temporal: not on PATH, pooch copy installed below',
 );
 
-// agent-browser is managed by the Python backend
-// (server/nodes/browser/_install.py) — `bun add`ed into the shared
-// <DATA_DIR>/packages/ tree on first use, with the Chromium runtime
-// fetched by ``agent-browser install`` when the browser node first
-// spawns. No dependency here, no postinstall step.
+// The Browser node's runtime is installed by the Python backend on first
+// use: server/nodes/browser/_install_bu.py fetches the pinned browser-use
+// CLI as a uv tool, and _install_chrome.py selects an installed
+// Chrome/Edge/Chromium (it downloads Chrome for Testing only with
+// BROWSER_RUNTIME=testing). No dependency here, no postinstall step.
 
 console.log('');
 console.log('Installing...');
@@ -279,7 +280,7 @@ try {
   console.log(`[${step}/${totalSteps}] Installing Temporal binaries...`);
   // Non-fatal: TemporalServerRuntime._pre_spawn() re-runs this download
   // lazily on first `company start` — a failed fetch must never fail
-  // `npm install`.
+  // provisioning (`bun install` in a checkout, `company provision`).
   try {
     run('uv run python -m services.temporal._install', serverDir, 600000);
   } catch (err) {

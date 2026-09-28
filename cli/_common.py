@@ -77,7 +77,7 @@ def free_all_ports(cfg: Config) -> list[KillResult]:
 # running the lifespan shutdown. uvicorn's default is "forever": a browser
 # WebSocket that dies with a TCP reset can leave its handler task lingering,
 # and then the backend never reaches the teardown that reaps Temporal, the
-# Node sidecar and the WhatsApp bridge. This is only the connection-drain
+# JS executor sidecar (bun) and the WhatsApp bridge. This is only the connection-drain
 # phase, not the full backend shutdown budget. Same value the desktop shell passes.
 UVICORN_GRACEFUL_SHUTDOWN_SECONDS = 5
 BACKEND_CLEANUP_GRACE_SECONDS = 30

@@ -1,7 +1,8 @@
 """``company build`` -- replaces ``scripts/build.js``.
 
-Checks toolchain (node, bun, python, uv), then runs the 6-step
-build: ``.env`` bootstrap -> ``bun install`` -> client build ->
+Checks the toolchain (bun, python, uv; Node is optional and only
+reported), then runs the 6-step build: ``.env`` bootstrap ->
+``bun install`` -> client build ->
 JS executor sidecar bundle (bun build) -> ``uv sync --extra docs`` -> compile Python bytecode
 -> pooch-fetch Temporal binary.
 

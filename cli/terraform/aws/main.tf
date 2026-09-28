@@ -3,8 +3,8 @@ provider "aws" {
 }
 
 # Ubuntu 24.04 LTS (Canonical): Python 3.12 is inside the server's
-# ">=3.11,<3.13" pin, so uv needs no managed download, and apt's Node 18 is
-# enough for install.sh.
+# ">=3.11,<3.13" pin, so uv needs no managed download. install.sh installs
+# bun itself; nothing on the VM needs Node.
 data "aws_ami" "ubuntu" {
   most_recent = true
 

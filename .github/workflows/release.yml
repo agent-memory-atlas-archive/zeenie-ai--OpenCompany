@@ -1,6 +1,8 @@
 # Release workflow: predeploy gate, publish the registry tarball to npmjs and
-# GitHub Packages with bun. No npm CLI and no setup-node: bun packs, authenticates
-# (~/.npmrc written from the job's token) and publishes.
+# GitHub Packages with bun. No npm CLI: bun packs, authenticates (~/.npmrc
+# written from the job's token) and publishes. The jobs have no setup-node step
+# of their own; the composite setup action installs Node, which bun uses to run
+# vite during `bun run build`.
 #
 # Triggers on version tag push. Manual dispatch publishes an EXISTING tag
 # again, to one or both registries (a lapsed token, a failed mirror): the

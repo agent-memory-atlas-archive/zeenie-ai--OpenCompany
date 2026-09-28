@@ -34,7 +34,7 @@ deprecation warning; kept for upgrade compatibility).
 | `company dev` | Start in dev mode (Vite HMR + uvicorn). `--force` re-bundles Vite deps (recovers "Outdated Optimize Dep"); `--daemon` binds backend to 0.0.0.0 |
 | `company serve` | Single-port production runtime (uvicorn serves API + WS + built SPA; optional daemons incl. the JS executor sidecar (bun) are backend-spawned on demand) — the systemd `ExecStart` on deployed VMs |
 | `company stop` | Stop all services and free configured ports |
-| `company build` | Full production build (bun install → client → sidecar → `uv sync --extra docs` → bytecode → temporal binary). Step [0/6] scaffolds `.env` from `.env.template` when missing, generating fresh random secrets (`secrets.token_hex(24)`) for `SECRET_KEY` / `JWT_SECRET_KEY` / `API_KEY_ENCRYPTION_KEY` instead of the dev placeholders; an existing `.env` is untouched |
+| `company build` | Full production build (bun install → client → sidecar → `uv sync --extra docs` → bytecode → temporal binary). Step [0/6] scaffolds `.env` from `.env.template` when missing, generating fresh random secrets (`secrets.token_hex(24)`) for `SECRET_KEY` / `JWT_SECRET_KEY` / `API_KEY_ENCRYPTION_KEY` instead of the dev placeholders; an existing `.env` is untouched (and `bun install` in a checkout or `company provision` usually creates one first, as a plain template copy: see [Credentials Encryption → Placeholder secrets](./credentials_encryption.md#placeholder-secrets)) |
 | `company clean` | Stop services, then remove build artifacts, node_modules, `.venv`, repo-local state (preserves `.opencompany/{workflows,deploy,packages}`) |
 | `company deploy up/status/destroy` | Self-deploy a login-gated VM (gcloud preflight + Terraform; see `cli/commands/deploy/`) |
 | `company daemon start/stop/status/restart` | Detached backend management (PID file under user data dir) |
@@ -46,7 +46,10 @@ Help comes from two places. `company` with no arguments, `company help`,
 (`printHelp()` in `bin/cli.js`, its `COMMANDS` table), without starting
 Python. `company <verb> --help` is forwarded to `python -m cli <verb> --help`
 and prints Typer's help for that verb (`cli/cli.py`); `python -m cli` with no
-arguments prints Typer's own command list (`no_args_is_help=True`).
+arguments prints Typer's own command list (`no_args_is_help=True`). The two
+launcher-only verbs are the exception: `doctor` and `provision` never reach
+Python and ignore `--help`, so `company doctor --help` prints the report and
+`company provision --help` behaves like `company provision`.
 
 ### Desktop shell scripts (`desktop/package.json`, run from `desktop/`)
 
@@ -134,7 +137,7 @@ The Temporal dev server is backend-owned: the FastAPI lifespan starts it via `Te
 
 | File | Purpose |
 |------|---------|
-| `install.js` | End-user provisioning pipeline (`#!/usr/bin/env bun`; run by `company provision` — eagerly from `install.sh` / `install.ps1` / the cloud-init templates, or lazily by `bin/cli.js` on the first `company` command when `.cli-venv` is missing and the tree is not a source checkout; client build only when `client/dist` is missing from the tarball, `uv sync`, bytecode compile, CLI runtime venv, non-fatal Temporal binary fetch; the JS executor sidecar `dist/index.js` ships pre-built in the tarball) — mirrors `company build`; the compileall command shape is locked in sync by `cli/tests/test_release_pipeline_config.py` |
+| `install.js` | End-user provisioning pipeline (`#!/usr/bin/env bun`; run by `company provision` — eagerly from `install.sh` / `install.ps1` / the cloud-init templates, or lazily by `bin/cli.js` on the first `company` command when `.cli-venv` is missing and the tree is not a source checkout; client build only when `client/dist` is missing from the tarball, `uv sync`, bytecode compile, CLI runtime venv, non-fatal Temporal binary fetch; the JS executor sidecar `dist/index.js` is meant to ship pre-built in the tarball, but 0.2.0 and 0.2.1 lack it, see [errors.md #26](./errors.md)) — mirrors `company build`; the compileall command shape is locked in sync by `cli/tests/test_release_pipeline_config.py` |
 | `preinstall.js` | Gates source checkouts to bun; legacy-package/temp cleanup (also runs on uninstall) |
 | `postinstall.js` | Lifecycle entry (`bun install` in a checkout) that guards recursion and invokes install.js |
 | `migrate_icons.py`, `migrate_skill_icons.py` | One-off icon-migration utilities (historical) |

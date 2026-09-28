@@ -1,5 +1,6 @@
 # Reusable validation workflow. Called by ci.yml and release.yml.
-# Four jobs: client build + lint, backend tests, CLI tests, cross-OS build + start smoke test.
+# Jobs: build-and-lint (client build + lint), backend-tests, cli-tests,
+# test-build-start (cross-OS build + start smoke test).
 
 name: Predeploy
 

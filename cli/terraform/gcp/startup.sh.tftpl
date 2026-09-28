@@ -19,7 +19,8 @@ apt-get install -y curl ca-certificates git unzip build-essential pkg-config lib
 # executor sidecar and the plugin CLIs, and the installer for the package.
 export BUN_INSTALL=/usr/local
 curl -fsSL https://bun.sh/install | bash
-# uv on a stable system path (company build uses it to sync the Python venv).
+# uv on a stable system path (`company provision` below uses it to create and
+# sync the Python venvs).
 curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
 # bun resolves its global "project" by walking up from $BUN_INSTALL/install/global
 # to the first package.json; give that dir its own manifest so a stray one

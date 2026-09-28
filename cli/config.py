@@ -5,14 +5,18 @@ Stdlib-only env-var loader. Three env files, lowest precedence first:
   1. ``.env.template`` — canonical production defaults. Ships with every
      install. ``DATA_DIR=~/.opencompany`` (user home) is the daemon
      behaviour: ``company start`` / ``company daemon`` use these.
-  2. ``.env`` — user overrides (created from the template by
-     ``scripts/install.js``, which ``company provision`` runs after
-     ``bun add -g @zeenie-ai/opencompany``, or by ``company build`` in a
-     checkout). Gitignored.
-  3. ``.env.dev`` — dev-mode overrides. Loaded ONLY by ``company dev``
-     via :func:`load_dev_overrides`. Pins ``DATA_DIR=.opencompany`` so
+  2. ``.env`` — user overrides. Gitignored. Created as a plain copy of the
+     template by ``scripts/install.js``, which the root ``postinstall`` hook
+     runs on ``bun install`` in a checkout and ``company provision`` runs
+     after ``bun add -g @zeenie-ai/opencompany``. ``company build`` creates
+     it only when it is still missing, and then generates fresh secrets.
+  3. ``.env.dev`` — dev-mode overrides, layered in by
+     :func:`load_dev_overrides` from ``company dev``, ``company stop`` (so it
+     also frees the dev backend port) and ``company build`` (so the build's
+     ``DATA_DIR`` matches ``dev``'s). Pins ``DATA_DIR=.opencompany`` so
      per-checkout dev state lives at ``<repo>/.opencompany/`` instead of
-     ``~/.opencompany/``. Committed to git. Existing explicit ``.machina``
+     ``~/.opencompany/``. Committed to git, but not shipped in the package,
+     so it is a no-op on a global install. Existing explicit ``.machina``
      values remain valid and are intentionally honoured.
 
 Process env (``os.environ``) wins over all three. Merged file values
@@ -110,7 +114,8 @@ class Config:
 def load_dev_overrides(root: Path | None = None) -> None:
     """Layer ``.env.dev`` on top of ``.env.template`` + ``.env``.
 
-    Called by ``company dev`` BEFORE :func:`load_config` so dev-only env
+    Called by ``company dev`` (and by ``company stop`` and ``company build``)
+    BEFORE :func:`load_config` so dev-only env
     vars (notably ``DATA_DIR=.opencompany``, the per-checkout dev state
     root) land in ``os.environ`` first. ``load_config`` then sees them
     via its own ``setdefault`` pass and skips its template fallbacks.

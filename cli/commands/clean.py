@@ -52,7 +52,7 @@ _TARGETS = [
 # (``company deploy destroy`` could no longer find them) -- only
 # ``deploy destroy`` removes that tree. ``packages/`` holds the
 # OpenCompany-managed binaries (Temporal CLI ~114 MB, Stripe CLI, the
-# shared npm tree with claude/agent-browser/edgymeow): all of it is
+# shared bun-managed packages tree for the plugin CLIs): all of it is
 # re-fetchable but expensive -- wiping it forced a full Temporal
 # re-download on every clean+build cycle, which hard-fails ``company
 # build`` on slow links. Anything else under ``.machina/`` (claude

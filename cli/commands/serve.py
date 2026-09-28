@@ -5,8 +5,8 @@ the built React SPA (via the ``SERVE_STATIC_CLIENT`` block in
 ``server/main.py``). Used locally for a production-shaped run AND as the
 systemd ``ExecStart`` on a VM provisioned by ``company deploy``.
 
-Optional daemons are backend-owned and spawn on demand — the Node.js
-code-exec sidecar (``nodes/code/_runtime.py``), WhatsApp, and the
+Optional daemons are backend-owned and spawn on demand — the JS/TS
+code-exec sidecar on bun (``nodes/code/_runtime.py``), WhatsApp, and the
 Temporal dev server all start from the backend, so ``serve`` supervises
 exactly one process.
 
