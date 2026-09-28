@@ -43,10 +43,18 @@ unavailable, the UI explains how to use the Workspace expand button instead.
 
 ## Discovery and identity
 
-Normal-mode employee summaries include `browser_nodes: [{node_id, label}]`.
-`services/employees/graph_index.py` discovers nodes by the registered plugin's
-`isBrowserPanel` hint, including disabled nodes for manual viewing. Dev uses
-the same NodeSpec hint from the current graph and observes schema hydration.
+Normal-mode employee summaries include two lists. `browser_nodes: [{node_id,
+label}]` comes from `services/employees/graph_index.py`, which discovers nodes
+by the registered plugin's `isBrowserPanel` hint, including disabled nodes for
+manual viewing; Home's Browser tab uses it. `workspace_nodes: [{kind, node_id,
+label}]` comes from `services/workspace_capabilities.py` (`workspace_nodes`),
+which reads each plugin's `ui_hints.workspace.kind` and treats `isBrowserPanel`
+as `browser`; Home's Mobile tab uses its `mobile` entries. Dev reads the same
+NodeSpec hints from the current graph and observes schema hydration:
+`isBrowserPanel` for the Browser tab, and `uiHints.workspace.kind` through
+`components/workspace/descriptors.ts` for the Mobile tab. The Mobile tab's
+value is `android` (`WorkspaceTab` in `WorkspaceTabs.tsx`), which is what the
+persisted tab selection stores.
 The viewer selects one node and keys its session by workflow and node ID.
 Viewing a saved node attaches a session but does not launch Chrome; Start
 browser calls the authorized `browser_session_open` handler. Unsaved workflows
@@ -235,6 +243,8 @@ benchmark script:   283e28a5afa86c16370e39b989b8d800462b940d1e81f6755f29bded129a
   browser discovery integration, tab changes and hidden dock state.
 - `client/src/components/ui/__tests__/WorkspaceDock.test.tsx`: Dev tabs, schema
   hydration and viewer unmount on close.
+- `client/src/components/mobile/__tests__/MobileWorkspace.test.tsx`: the Mobile
+  tab's phone view.
 - `client/src/features/home/__tests__/presentation.test.ts`: Needs you while the
   agent waits in the browser.
 - `client/src/stores/__tests__/canvasDockStore.test.ts`: a Canvas push never
