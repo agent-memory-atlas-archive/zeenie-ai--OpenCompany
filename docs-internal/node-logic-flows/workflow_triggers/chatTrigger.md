@@ -10,7 +10,8 @@
 
 ## Purpose
 
-Fires when the user sends a message from the Console Panel chat tab. The
+Fires when the user sends a chat message: from the editor's chat pane
+(Console Panel chat tab), or from Talk on an employee's Home page. The
 producer [`server/nodes/trigger/chat_trigger/_events.py`](../../../server/nodes/trigger/chat_trigger/_events.py)
 emits a CloudEvents `WorkflowEvent` (`type: com.opencompany.chat.message.received`)
 via `dispatch.emit`. `chatTrigger` is canary-registered
@@ -20,6 +21,16 @@ Signal and spawns a child `MachinaWorkflow` per matching event. Any `chatTrigger
 node whose `session_id` matches (or is `'default'`) receives the event and emits
 it as output. This is the primary way a user feeds an interactive prompt into an
 `aiAgent` or `chatAgent`.
+
+A workflow's chat session id is the workflow id. Home's Talk and the editor's
+chat pane send with `session_id` = that id (`'default'` only when the editor
+has no workflow open), and `send_chat_message` then scopes the event to the
+workflow (`EventWorkflowId`), so only that workflow's listeners receive it.
+The trigger of a talk line (a chat hire's "Chat" trigger, or the "Talk"
+trigger that Hire and Turn on Talk add beside another worker) has
+`session_id` set to the workflow id, and its agent answers through
+[`chatReply`](../chat_utility/chatReply.md) into the same thread. See
+[Normal mode → Talk](../../normal_mode.md#talk).
 
 ## Inputs (handles)
 
@@ -31,7 +42,7 @@ it as output. This is the primary way a user feeds an interactive prompt into an
 
 | Name | Type | Default | Required | displayOptions.show | Description |
 |------|------|---------|----------|---------------------|-------------|
-| `session_id` | string | `default` | no | - | Matches the `session_id` on the incoming chat event. If set to `default`, the filter accepts every event. Otherwise it only accepts events with the same `session_id`. |
+| `session_id` | string | `default` | no | - | Matches the `session_id` on the incoming chat event. If set to `default`, the filter accepts every event. Otherwise it only accepts events with the same `session_id`. Talk lines built by Hire and Turn on Talk use the workflow id. |
 | `placeholder` | string | `Type a message...` | no | - | Frontend display only - not used by the handler. |
 
 ## Outputs (handles)
@@ -42,16 +53,13 @@ it as output. This is the primary way a user feeds an interactive prompt into an
 
 ### Output payload
 
-The exact shape depends on how the dispatcher in
-`routers/websocket.py::send_chat_message` builds the event, but the
-documented fields surfaced to downstream nodes are:
+`routers/websocket.py::handle_send_chat_message` builds the event as:
 
 ```ts
 {
   message: string;
-  timestamp: string;   // ISO 8601
+  timestamp: string;   // ISO 8601; the client's, else the server's time (UTC)
   session_id: string;
-  node_id?: string;    // Optional - set when the client targets a specific chatTrigger
 }
 ```
 
@@ -61,7 +69,10 @@ Wrapped in the standard envelope.
 
 ```mermaid
 flowchart TD
-  P[chat tab sends message] --> Q[_events.py dispatch.emit<br/>WorkflowEvent com.opencompany.chat.message.received]
+  P[chat pane or Home Talk sends a message] --> V{workflow session with no<br/>controller to read it?}
+  V -- yes --> X[not_running: nothing saved or sent]
+  V -- no --> W[chat_thread.record_chat_message]
+  W --> Q[_events.py dispatch.emit<br/>WorkflowEvent com.opencompany.chat.message.received]
   Q --> R[TriggerListenerWorkflow receives via Temporal Signal]
   R --> S[ChatTriggerNode.build_filter:<br/>if session_id != 'default' require exact match]
   S -- match --> T[spawn child MachinaWorkflow<br/>trigger pre-executed with event payload]
@@ -83,8 +94,10 @@ flowchart TD
 
 ## Side Effects
 
-- **Database writes**: none in the trigger plugin itself. (The chat message
-  is separately persisted by `send_chat_message` via `database.add_chat_message`.)
+- **Database writes**: none in the trigger plugin itself. (`send_chat_message`
+  keeps the message in the session's thread first, through
+  `services/chat_thread.record_chat_message`, which stamps the live generation
+  and broadcasts `chat.updated`.)
 - **Broadcasts**: the producer emits a CloudEvents `WorkflowEvent` via
   `dispatch.emit` (Temporal Signal fan-out + in-process WS broadcast). The
   `TriggerListenerWorkflow` emits firing-pulse status via
@@ -105,17 +118,25 @@ flowchart TD
 - `session_id='default'` behaves as a wildcard; setting a unique session ID
   per trigger is the only way to scope messages to a specific node.
 - When multiple `chatTrigger` nodes exist with the same session ID, all of
-  them fire for a matching message.
+  them fire for a matching message, so one message starts one run per
+  trigger. Hire and Turn on Talk never add a second trigger on a workflow's
+  own session: a chat hire's "Chat" trigger is already its talk line.
 - The handler has no timeout; it waits forever until an event arrives or
   the run is cancelled.
-- The chat message's persistence to the DB happens in the WebSocket handler
-  BEFORE the event is dispatched, so even if no `chatTrigger` is waiting
-  the message is still stored in `chat_messages`.
+- For a workflow's session, `send_chat_message` first reads the latest
+  control. While it runs, starts or resumes, the message goes now (response
+  `delivery: "now"`); while it is paused or pausing, the controller keeps it
+  and starts a run on Resume (`delivery: "queued"`). In any other state the
+  handler answers `not_running` and neither saves nor dispatches the message.
+  Session `'default'` is saved and dispatched as before, so a message there is
+  stored even when no `chatTrigger` is waiting.
 
 ## Related
 
 - **Skills using this as a tool**: none.
 - **Sibling triggers**: [`webhookTrigger`](./webhookTrigger.md),
   [`taskTrigger`](./taskTrigger.md).
+- **Answers into the thread**: [`chatReply`](../chat_utility/chatReply.md).
 - **Architecture docs**: [Event Waiter System](../../event_waiter_system.md),
-  [Status Broadcaster](../../status_broadcaster.md)
+  [Status Broadcaster](../../status_broadcaster.md),
+  [Normal mode → Talk](../../normal_mode.md#talk)

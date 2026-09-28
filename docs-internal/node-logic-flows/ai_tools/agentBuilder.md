@@ -3,41 +3,50 @@
 | Field | Value |
 |------|-------|
 | **Category** | ai_tools (dedicated AI tool, group `("tool", "ai")`) |
-| **Backend handler** | [`server/nodes/tool/agent_builder/__init__.py`](../../../server/nodes/tool/agent_builder/__init__.py) — `AgentBuilderNode`, dispatched via `BaseNode.execute()` + one `@Operation` per canvas mutation (`inspect_canvas` / `add_tool` / `add_skill` / `add_subagent` / `create_workflow`) |
-| **Tests** | [`server/tests/nodes/test_ai_tools.py`](../../../server/tests/nodes/test_ai_tools.py) |
+| **Backend handler** | [`server/nodes/tool/agent_builder/__init__.py`](../../../server/nodes/tool/agent_builder/__init__.py) — `AgentBuilderNode`, dispatched via `BaseNode.execute()` + one `@Operation` per action (`inspect_canvas` / `add_tool` / `add_skill` / `add_subagent` / `create_workflow`) |
+| **Tests** | [`test_agent_builder.py`](../../../server/tests/nodes/test_agent_builder.py) (editor-built workflows), [`test_agent_builder_employee.py`](../../../server/tests/nodes/test_agent_builder_employee.py) (hired employees), [`test_agent_builder_atomic_ops.py`](../../../server/tests/nodes/test_agent_builder_atomic_ops.py) (ledger, retries), [`test_rebind_filters.py`](../../../server/tests/services/test_rebind_filters.py) |
 | **Skill (if any)** | [`server/skills/assistant/agent-builder-skill/SKILL.md`](../../../server/skills/assistant/agent-builder-skill/SKILL.md) |
 | **Dual-purpose tool** | tool-only — `ToolNode` exposed to the LLM as `agent_builder` (`tool_name` class attr) |
 
 ## Purpose
 
-Runtime canvas-mutation tool. Wired to an AI agent's `input-tools` handle, it
-lets the LLM inspect the live workflow canvas and grow its own toolset mid-run:
-spawn tool nodes, enable skills on a Master Skill, add delegate agents (team
-leads only), or create a fresh workflow. One node, one `Params` model with an
-`operation: Literal[...]` discriminator, five `@Operation` methods — the LLM
-sees ONE tool with a select-style `operation` field. Each mutation persists to
-the DB and pushes a `workflow_ops_apply` event so the React Flow canvas updates
-live.
+Lets the agent it is wired to inspect the workflow canvas and add to it while
+it runs: tools, skills, and (team leads only) teammates. One node, one
+`Params` model with an `operation: Literal[...]` discriminator, five
+`@Operation` methods; the LLM sees one tool with a select-style `operation`
+field.
+
+Every change is saved through
+[`services/workflow_storage/mutate.py`](../../../server/services/workflow_storage/mutate.py)
+`apply_graph_additions`, the server's one path for growing a saved workflow
+(Turn on Talk uses it too): one transaction, canonical ids, labels unique
+against the graph, the edge handles of
+[`services/graph_build.py`](../../../server/services/graph_build.py), real
+`NodeParameter` rows, and a `workflow_ops_apply` push with `persisted: true`
+so an open editor adopts the change without saving it.
+
+On a hired employee (the workflow has an employee row) it applies the rule
+Hire applies, [`services/employees/policy.py`](../../../server/services/employees/policy.py),
+which is how an employee extends itself from Talk.
 
 ## Inputs (handles)
 
 | Handle | Connection type | Required | Purpose |
 |--------|-----------------|----------|---------|
-| `input-main` | main | no | Passive node - connect `output-tool` to an AI Agent's `input-tools`. Operations walk `ctx.edges` (via `needs_canvas = True`) to resolve the calling agent and mutate the canvas. |
+| `input-main` | main | no | Passive node — connect `output-tool` to an AI agent's `input-tools`. `needs_canvas = True` hands the run's canvas to the tool call, which `add_tool` compares with the saved graph. |
 
 ## Parameters
 
-The `AgentBuilderParams` model fields ARE the LLM-provided tool args (no
-separate `toolName` / `toolDescription` node params — those live on the class
-as `tool_name` / `tool_description`). `model_config = ConfigDict(extra="ignore")`.
+The `AgentBuilderParams` model fields ARE the LLM-provided tool args.
+`model_config = ConfigDict(extra="ignore")`.
 
 | Name | Type | Default | Required | displayOptions.show | Description |
 |------|------|---------|----------|---------------------|-------------|
 | `operation` | enum | `inspect_canvas` | no | - | One of `inspect_canvas`, `add_tool`, `add_skill`, `add_subagent`, `create_workflow` |
-| `node_type` | string | `""` | no | `operation == add_tool` | Tool node type to spawn (must be a registered `component_kind="tool"` or `usable_as_tool=True` node, minus the allowlist blocklist) |
-| `skill_folder` | string | `""` | no | `operation == add_skill` | Skill folder name under `server/skills/**` |
-| `agent_type` | string | `""` | no | `operation == add_subagent` | Agent node type to spawn as a teammate (caller must be a team lead) |
-| `workflow_name` | string | `""` | no | `operation == create_workflow` | Display name (create_workflow is currently disabled) |
+| `node_type` | string | `""` | no | `operation == add_tool` | Tool node type, from `available_tools` |
+| `skill_name` | string | `""` | no | `operation == add_skill` | Skill name (SKILL.md frontmatter `name`, or a library skill's name), from `available_skills` |
+| `agent_type` | string | `""` | no | `operation == add_subagent` | Agent node type to add as a teammate (caller must be a team lead) |
+| `workflow_name` | string | `""` | no | `operation == create_workflow` | Display name (create_workflow is disabled) |
 | `workflow_description` | string | `""` | no | `operation == create_workflow` | Optional one-line description |
 
 ## Outputs (handles)
@@ -51,15 +60,20 @@ as `tool_name` / `tool_description`). `model_config = ConfigDict(extra="ignore")
 ```ts
 {
   operation?: string;
+  // One plain sentence on an employee refusal: the agent passes it on.
   summary?: string;
-  operations?: Array<Record<string, unknown>>;  // workflow-ops batch applied
+  // add_tool / add_subagent: the ops this call saved (as announced), plus a
+  // saved tool the calling agent's run lacks. The agent loop binds every tool
+  // add_node here. Empty for add_skill.
+  operations?: Array<Record<string, unknown>>;
   // inspect_canvas extras:
   nodes?: Array<{ id; type; label; key_params }>;
   edges?: Array<{ source; target; source_handle; target_handle }>;
-  you?: { node_id: string; incoming: unknown[]; outgoing: unknown[] };
-  available_tools?: Array<{ type; display_name; description }>;
+  you?: { node_id: string; incoming: unknown[]; outgoing: unknown[] } | null;
+  employee?: { asks_first: boolean; agents: string[] };   // hired employees only
+  available_tools?: Array<{ type; display_name; description; app?; connected?; read_only? }>;
   available_agents?: Array<{ type; display_name; description }>;
-  available_skills?: Array<{ folder; name; description }>;
+  available_skills?: Array<{ name; description }>;
   // create_workflow extras:
   workflow_id?: string;
 }
@@ -69,64 +83,119 @@ as `tool_name` / `tool_description`). `model_config = ConfigDict(extra="ignore")
 
 ```mermaid
 flowchart TD
-  A[BaseNode.execute -> operation method] --> R{operation}
-  R -- inspect_canvas --> I[reload canvas from DB<br/>resolve caller via input-tools edge<br/>build node/edge summaries + tool/agent/skill catalogues]
-  R -- add_tool --> T{node_type allowed + not already wired?}
-  T -- no --> Tn[Return summary, operations=empty]
-  T -- yes --> Top[mint node id + add_node + add_edge ops]
-  R -- add_skill --> S{masterSkill wired?}
-  S -- yes --> Sy[toggle skill in skills_config via set_node_parameters]
-  S -- no --> Sn[spawn masterSkill node + edge with skill enabled]
-  R -- add_subagent --> G{caller is team lead + agent_type allowed + not dup?}
-  G -- no --> Gn[Return summary, operations=empty]
-  G -- yes --> Gop[mint node id + add_node + add_edge to input-teammates]
-  R -- create_workflow --> C[disabled: return summary, no-op]
-  Top --> B[_broadcast: persist to DB + broadcast_workflow_ops]
-  Sy --> B
-  Sn --> B
-  Gop --> B
-  B --> Z[Return AgentBuilderOutput summary + operations]
-  I --> Z
-  Tn --> Z
-  Gn --> Z
-  C --> Z
+  A[BaseNode.execute -> operation method] --> C[caller = ctx.raw invoking_agent_node_id or parent_node_id<br/>canvas = saved workflow.data<br/>employee = employee row for the workflow]
+  C --> R{operation}
+  R -- inspect_canvas --> I[canvas + key params from rows<br/>catalogues: registry for an editor-built workflow,<br/>policy-allowed tools + library and Discover skills for an employee]
+  R -- add_tool --> T{allowed?<br/>registry catalogue / policy.check_tool}
+  T -- no --> Tn[summary = reason, operations = empty]
+  T -- yes --> Tp[targets: caller, or the employee's worker + talk agent<br/>plan: new node, or edges from the existing one]
+  Tp --> S[apply_graph_additions<br/>ledger key = tool call id scoped to the run]
+  S --> Tb{saved tool missing from this run?}
+  Tb -- yes --> Tbo[prepend a bind-only add_node]
+  R -- add_skill --> K{found? library first, then offered built-ins<br/>employee: policy.check_skill, Discover only}
+  K -- no --> Kn[summary = reason]
+  K -- yes --> Kp[merge into each target's Skills node row<br/>wire the shared one to a target without one, else a new Skills node]
+  Kp --> S
+  R -- add_subagent --> G{editor-built, caller a team lead,<br/>type allowed, not a team lead}
+  G -- no --> Gn[summary = reason]
+  G -- yes --> Gp[agent + its Context + output-top -> input-teammates]
+  Gp --> S
+  R -- create_workflow --> W[disabled: summary only]
 ```
 
 ## Decision Logic
 
-- **Caller resolution**: walks edges for `source == self_id && targetHandle == input-tools`; falls back to self as caller (standalone Run).
-- **Live canvas reload**: `_load_live_canvas` re-reads `workflow.data` from the DB so successive ops in the same run see each other's mutations (the per-tool `ctx` snapshot is frozen at MachinaWorkflow start).
-- **Allowlist gating**: `_allowed_tool_types` / `_allowed_subagent_types` honor `node_allowlist.json` (`disabled_nodes` / `disabled_groups`); `_DENIED_TOOL_TYPES` (`agentBuilder`, `masterSkill`) are never spawnable (recursion guard).
-- **Idempotency**: `add_tool` / `add_subagent` / `add_skill` are no-ops (empty `operations`) when the target is already wired/enabled, surfacing the existing node id in the summary.
-- **add_subagent gate**: only team leads (`orchestrator_agent`, `ai_employee`) may spawn delegates; cannot spawn another team lead.
-- **create_workflow disabled**: `_CREATE_WORKFLOW_ENABLED = False` short-circuits with a "temporarily disabled" summary; the implementation body is intact for one-line re-enable.
-- **Summary suffix**: depends on `ctx.raw["auto_rebind_tools"]` (UserSettings) — "Available immediately" when auto-rebind is on, else "Available on your next turn" (the native agent loop compiles its tool list at turn start, so a mid-run mutation is callable next turn unless auto-rebind refreshes that list in place).
+- **Caller**: `ctx.raw["invoking_agent_node_id"]` (Temporal) or
+  `ctx.raw["parent_node_id"]` (every path), never guessed from edges: one
+  Agent Builder node can serve several agents. In an editor-built workflow
+  the caller is the target, so with none nothing is added ("Only an agent can
+  ask me to add things."); a hired employee's targets are its worker and talk
+  agent from `node_roles`, and the caller only when neither is in the saved
+  graph.
+- **Saved graph**: operations read `workflow.data` fresh, so calls in one run
+  see each other. A workflow that is not saved, or whose caller is not in the
+  saved graph yet, gets "Save the workflow first".
+- **Ledger**: the mutation id is `agent-builder:<execution_id>:<tool_call_id>`
+  (the request's hash when the runtime passes no call id). Every mutating call
+  goes through `apply_graph_additions`, even with nothing to add, so a retried
+  call replays the first attempt's result (and announces it again) instead of
+  adding twice.
+- **Editor-built workflow**: tools from `_allowed_tool_types()` (ToolNodes and
+  `usable_as_tool` plugins, no chat models, minus `agentBuilder` /
+  `masterSkill` / `taskManager` and the allowlist's `disabled_nodes` /
+  `disabled_groups`); skills from the SkillLoader registry outside
+  `disabled_skill_folders`, plus the owner's library. The target is the
+  caller.
+- **Hired employee**: targets are the worker and the talk agent
+  (`node_roles["agent"]`, `["talk_agent"]`). `check_tool` decides tools
+  (registry app tools and the tools every hire gets; nothing that sends or
+  spends while asking first, the browser read-only then; hire allowlist;
+  connected apps); the Clock gets the owner's `profile_timezone`.
+  `check_skill` refuses `skill` and `*-personality`; skills come from the
+  library (all of it, on or off for new hires) and the Discover folder
+  (`server/skills/employee/`), text copied in. `add_subagent` is refused.
+- **One tool of a type per agent**: a target that has one keeps it; the rest
+  get the caller's (else any target's) by a new edge; a new node only when no
+  target has one.
+- **Bind-only**: a deployed run starts from the generation's frozen snapshot.
+  A tool saved earlier (an earlier message) but missing from this run's canvas
+  comes back as an `add_node` op with the saved id and row, and nothing is
+  saved or announced, so the agent can call it now instead of hearing
+  "already wired".
+- **Skills**: each target's Skills node gets the entry; a target without one
+  is wired to the shared node (never a second: two on one agent collide on
+  the Skill tool's own entry), else a new Skills node (`Skills` for an
+  employee, `Master Skill` otherwise). An enabled skill changes nothing. A
+  built-in keeps no text in an editor-built workflow (edits to its SKILL.md
+  apply); a library skill always carries its text (the runtime's fallback
+  reads files only).
+- **When it works**: a tool is bound for the rest of the calling agent's run
+  (`auto_rebind_tools`, on by default; summary "Available immediately" / "You
+  can use it now", else "Available on your next turn"). A skill merged into an
+  existing Skills node applies from the next run; a new node or edge after a
+  restart (Apply, on an employee's page).
+- **add_subagent**: team leads only (`orchestrator_agent`, `ai_employee`),
+  never another team lead; one teammate per type except repeatable `aiAgent`.
+  The new agent gets its own Context (`context_of`) and an `output-top` →
+  `input-teammates` edge.
+- **create_workflow**: `_CREATE_WORKFLOW_ENABLED = False`.
 
 ## Side Effects
 
-- **Database writes**: `_persist_canvas_mutation` applies `add_node` / `add_edge` / `set_node_parameters` ops to `workflow.data` via `database.get_workflow` + `database.save_workflow` (adopts the BE-minted `minted_id` so FE/BE node ids align). `create_workflow` (when enabled) persists a fresh workflow row.
-- **Broadcasts**: `broadcast_workflow_ops` (in `_events.py`) emits a flat `workflow_ops_apply` WS frame consumed by the frontend `useWorkflowOpsListener` hook. NOT a `dispatch.emit` event (no Temporal/event_waiter consumer for canvas mutations). A `WorkflowEvent` envelope (`com.opencompany.workflow.ops.applied`) is constructed for parity but not put on the wire today.
-- **External API calls**: none.
-- **File I/O**: reads `server/skills/**` to validate skill folders (`_skill_folder_exists`) and catalogue skills.
-- **Subprocess**: none.
+- **Database writes**: `apply_graph_additions` — `workflow.data` gains nodes
+  and edges, new nodes get fresh `NodeParameter` rows, Skills rows are merged,
+  and a `RuntimeMutation` ledger row is written, all in one transaction.
+- **Broadcasts**: `workflow_ops_apply` with `persisted: true`
+  (`services.workflow_ops.broadcast_workflow_ops`), then the graph-changed
+  listeners (`notify_graph_changed`: Home's employee summary, with its
+  pending-changes notice). A bind-only result announces nothing.
+- **External API calls**: none. Connection state is read for employees
+  (`services.employees.connections`).
+- **File I/O**: reads SKILL.md files through the SkillLoader.
 
 ## External Dependencies
 
-- **Credentials**: none.
-- **Services**: `database` (via `services.plugin.deps.get_database`), `NodeAllowlistService`, `SkillLoader`, `services.node_registry.registered_node_classes`, `services.workflow_ops`, `services.workflow_naming`.
+- **Services**: `database`, `services.workflow_storage.mutate`,
+  `services.graph_build`, `services.employees` (`store`, `policy`, `apps`,
+  `connections`), `NodeAllowlistService`, `SkillLoader`,
+  `services.node_registry`.
 - **Python packages**: stdlib only.
-- **Environment variables**: none.
 
 ## Edge cases & known limits
 
-- `create_workflow` is disabled behind `_CREATE_WORKFLOW_ENABLED`; the operation returns a guidance summary and performs no mutation.
-- Mid-run mutations are not callable in the SAME turn unless the user's "Auto-Rebind Tools After Canvas Changes" toggle is on (default) — otherwise the LLM must wait for its next turn.
-- `inspect_canvas` is read-only and emits no `operations`.
-- Persist failures are logged at WARN (`exc_info=True`) and do not abort the broadcast — the canvas may diverge from the DB if persistence fails mid-mutation.
-- The `workflow_ops_apply` wire format is flat (`{workflow_id, caller_node_id, operations}`) for FE back-compat, not the CloudEvents envelope.
+- A saved change reaches the current run only through the rebind (tools),
+  and other runs of a deployed workflow only after a restart; skills merged
+  into an existing Skills node apply from the next run.
+- On the Temporal path, calling `add_tool` again in the same run for a tool
+  added earlier in that run returns it to bind again, and `AgentWorkflow`
+  reports the duplicate tool name (the tool stays callable). The in-process
+  loop skips a node it already bound.
+- Roles for tools an employee adds are not recorded in `node_roles`.
+- A Dev canvas Run with unsaved edits cannot be changed ("Save the workflow
+  first").
 
 ## Related
 
 - **Sibling tools**: [`calculatorTool`](./calculatorTool.md), [`currentTimeTool`](./currentTimeTool.md), [`duckduckgoSearch`](./duckduckgoSearch.md), [`taskManager`](./taskManager.md), [`writeTodos`](./writeTodos.md)
 - **Skill using this tool**: [`agent-builder-skill/SKILL.md`](../../../server/skills/assistant/agent-builder-skill/SKILL.md)
-- **Architecture docs**: [Workflow Ops Protocol](../../workflow_ops_protocol.md), [Agent Architecture](../../agent_architecture.md), [Node Creation Guide](../../node_creation.md)
+- **Architecture docs**: [Workflow Ops Protocol](../../workflow_ops_protocol.md), [Agent Architecture](../../agent_architecture.md), [Normal Mode](../../normal_mode.md), [Node Creation Guide](../../node_creation.md)

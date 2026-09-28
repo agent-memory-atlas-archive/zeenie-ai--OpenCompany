@@ -90,15 +90,19 @@ Builder catalogue; historical explicit nodes remain compatible.
 
 ## agentBuilder integration
 
-`agentBuilder` honors the same allowlist when surfacing its spawnable catalogue (`inspect_canvas.available_tools` / `available_agents` / `available_skills`) and rejecting `add_tool` / `add_subagent` / `add_skill` calls:
+`agentBuilder` honors the same allowlist when surfacing its catalogue (`inspect_canvas.available_tools` / `available_agents` / `available_skills`) and refusing `add_tool` / `add_subagent` / `add_skill` calls. Which lists apply depends on the workflow.
+
+In a workflow built in the editor:
 
 | Allowlist field | agentBuilder filter |
 |---|---|
-| `disabled_nodes` | Excluded from `_allowed_tool_types()` + `_allowed_subagent_types()` — the LLM can't spawn or list the type. |
+| `disabled_nodes` | Excluded from `_allowed_tool_types()` + `_allowed_subagent_types()` — the LLM can't add or list the type. |
 | `disabled_groups` | Excluded from both sets via plugin `group` tuple intersection (any matching entry hides every plugin in the group). |
-| `disabled_skill_folders` | Excluded from `_catalogue_skills()` — the LLM doesn't see folders the operator marked. Match is on the SkillMetadata path ancestor (e.g. `disabled_skill_folders: ["android_agent"]` blocks every skill under `server/skills/android_agent/`). |
+| `disabled_skill_folders` | Built-in skills under a marked folder are neither listed nor added. Match is on the SkillMetadata path ancestor (e.g. `disabled_skill_folders: ["android_agent"]` blocks every skill under `server/skills/android_agent/`). |
 
-Read via `services.node_allowlist.get_node_allowlist_service().get_config()` — same singleton the UI hook hits. Adding a node to `disabled_nodes` once propagates to BOTH the UI palette AND the LLM's spawnable surface.
+On a hired employee (the workflow has an employee row), every tool goes through `services/employees/policy.py`, the rule Hire applies: `enabled_nodes` counts too (`is_hire_allowed`), besides the blocklists, the "ask me first" rule, and the app's connection. So a hire can only ever be given what Hire itself could build into one.
+
+Read via `services.node_allowlist.get_node_allowlist_service().get_config()` — same singleton the UI hook hits. Adding a node to `disabled_nodes` once propagates to BOTH the UI palette AND the LLM's catalogue.
 
 ## Filter call sites
 
@@ -106,6 +110,7 @@ Read via `services.node_allowlist.get_node_allowlist_service().get_config()` —
 |---|---|
 | `client/src/components/ui/ComponentPalette.tsx` | `if (isBlocked(name, groups)) return false; if (!showAll && !isAllowed(name)) return false;` where `showAll = featureFlags.normalMode \|\| proMode` |
 | `server/services/employees/builder.py` | every node Hire builds must pass `is_hire_allowed(node_type)` |
+| `server/nodes/tool/agent_builder/__init__.py` | the blocklists in an editor-built workflow; `policy.check_tool` (`is_hire_allowed` and the rest of Hire's rule) on a hired employee |
 | `client/src/components/credentials/CredentialsModal.tsx` | `providers.filter(p => !isCredentialCategoryDisabled(p.category))` + same for `categories` |
 | `client/src/components/parameterPanel/MasterSkillEditor.tsx` | `(foldersQuery.data ?? []).filter(f => !isSkillFolderDisabled(f.name))` |
 

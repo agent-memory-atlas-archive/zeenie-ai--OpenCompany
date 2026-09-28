@@ -121,7 +121,7 @@ Runs payment operations through Stripe and reacts the moment a payment event hap
 
 - **They remember.** An employee keeps facts, preferences, and decisions in a memory you can open and edit.
 - **They pick up where they left off.** Every new message, task, or scheduled run continues the same conversation instead of starting from zero. When the conversation gets long, the employee writes itself a summary and carries on from it.
-- **They add tools when they need them.** Mid-task, an employee can look at its own team, add a tool, attach a skill, or bring in another specialist, and the change stays.
+- **They add tools when they need them.** Ask an employee on its Talk page to take on something new, and it can add a tool or learn a skill from your library, within the rules you hired it with (nothing that sends or spends while it asks you first). A new tool works in that conversation right away; press Apply on its page to make an addition part of all its work.
 - **They check their own work.** The lead reviews every result from the team and sends it back if it is not right, before it ever reaches you.
 - **You coach them.** Skills are short plain-text playbooks. Edit one and the employee follows it on its next turn. Settings > Skills keeps your library of them, and every new hire starts with the ones you have switched on.
 

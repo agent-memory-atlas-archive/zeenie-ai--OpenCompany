@@ -210,20 +210,22 @@ Result Limit. See [memory_compaction.md](memory_compaction.md) and
 
 ### Hot rebind after canvas mutation
 
-When `agentBuilder` (the only canvas-mutating tool today) spawns a new node mid-run via `add_tool` / `add_skill` / `add_subagent`, the operation returns a `workflow_ops` batch in its result's `operations` field. The loop detects the field, calls `rebind_from_operations(ops)`, and extends the bound tool surface so the LLM can invoke the new tool in the very next iteration — no Run-stop-Run cycle.
+When `agentBuilder` (the only canvas-mutating tool today) adds a tool (`add_tool`) or a teammate (`add_subagent`) mid-run, it saves the change (`apply_graph_additions`) and returns the saved `workflow_ops` batch in its result's `operations` field. The loop detects the field, calls `rebind_from_operations(ops)`, and extends the bound tool surface so the LLM can invoke the new tool in the very next iteration — no Run-stop-Run cycle. A deployed run starts from the generation's frozen snapshot, so a tool saved in an earlier run can be missing from a later one; `add_tool` then returns that saved node alone (a bind-only batch, nothing saved) for the loop to bind. `add_skill` returns no operations: a skill is not bound as a tool, and a merge into an existing Skills node applies from the next run.
 
 Closure responsibilities:
 
 - **`_rebind_from_operations(ops) -> List[AgentToolSpec]`** (in
   `execute_agent` / `execute_chat_agent`): filter ops for `add_node` with the
   plugin class's `component_kind == "tool"` OR `usable_as_tool=True`
-  (excluding `component_kind == "model"`), synthesize a `tool_info` dict,
+  (excluding `component_kind == "model"`, and the Skills node, whose
+  `uiHints.isMasterSkillEditor` marks it: tool-kind, but it feeds
+  `input-skill`), skip a node already bound, synthesize a `tool_info` dict,
   call `self._build_tool_from_node(tool_info)`, and return the new specs. Tool
   configs get folded into the captured `tool_configs` dict so
   `tool_executor` can dispatch the new call.
 - The closure is gated on the user toggle: `UserSettings.auto_rebind_tools_after_canvas_change` (default `True`). When off, the LLM is told "Available on your next turn" in the operation summary and the closure isn't wired.
 
-For the F4.B Temporal path, the in-process closure is replaced by the `agent.refresh_tools` activity; see [TEMPORAL_ARCHITECTURE.md](TEMPORAL_ARCHITECTURE.md).
+For the F4.B Temporal path, the in-process closure is replaced by the `agent.refresh_tools` activity, which applies the same filter and also binds agent delegates; see [TEMPORAL_ARCHITECTURE.md](TEMPORAL_ARCHITECTURE.md). It cannot see what the run already holds, so re-adding a tool added earlier in the same run makes `AgentWorkflow` report a duplicate tool name (the tool stays callable).
 
 ### Where it's called
 

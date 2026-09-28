@@ -3,7 +3,8 @@
 The standard wire format any backend service uses to mutate the React
 Flow canvas. A service returns `{operations: [...]}`; the frontend
 walks the list with a single applier (`client/src/lib/workflowOps.ts`)
-that creates / removes nodes + edges and persists parameter changes.
+that creates / removes nodes + edges and saves parameter rows, unless
+the server already saved the batch (see [Persisted batches](#persisted-batches)).
 
 **Why a protocol**: keeps domain rules in the backend (visuals.json
 lookups, plugin-registry checks, canonical config shapes) without
@@ -30,9 +31,9 @@ ids that later ops reference via `client_ref` placeholders.
 
 | Type | Required | Optional | Purpose |
 |---|---|---|---|
-| `add_node` | `client_ref`, `node_type`, `parameters` | `label`, `position`, `minted_id` | Create a new node + persist its initial params. `client_ref` is a batch-local id later ops can target. When `minted_id` is set (BE hot-spawn path — `agentBuilder` mints upfront so status broadcasts route to the same React Flow id), the FE applier adopts the supplied id verbatim instead of calling `newId()`. |
-| `add_edge` | `source`, `target` | `source_handle`, `target_handle` | Wire two nodes. `source` / `target` are either existing node ids (string) or `{client_ref}` references. |
-| `set_node_parameters` | `node_id`, `parameters` | -- | Shallow-merge `parameters` into the node's existing params via `saveNodeParameters`. |
+| `add_node` | `client_ref`, `node_type`, `parameters` | `label`, `position`, `minted_id`, `data` | Create a new node + save its initial params. `client_ref` is a batch-local id later ops can target. When `minted_id` is set (a server-side writer allocated the id, so status broadcasts route to the same React Flow id), the FE applier adopts it verbatim instead of minting one. `data` is node data beyond the label (a Context's `systemManaged` / `agentNodeId` link to its agent). |
+| `add_edge` | `source`, `target` | `source_handle`, `target_handle`, `edge_id`, `condition` | Wire two nodes. `source` / `target` are either existing node ids (string) or `{client_ref}` references. `edge_id` is the server's id for an edge it saved; the applier adopts it. `condition` gates the edge (saved as `edge.data.condition`). |
+| `set_node_parameters` | `node_id`, `parameters` | -- | `parameters` is the node's WHOLE row: the applier saves it with `saveNodeParameters`, which replaces the row, so an op that is not persisted must carry every parameter to keep. In a persisted batch it is the server's merged row, and nothing is saved. |
 | `delete_node` | `node_id` | -- | Remove node; edges to/from it cascade-delete. |
 | `delete_edge` | `edge_id` | -- | Remove a single edge. |
 | `move_node` | `node_id`, `position` | -- | Reposition without changing identity. |
@@ -73,7 +74,40 @@ the same batch.
   has no rollback. Backend services should write op sequences that are
   robust to partial application.
 - **Not a diff reconciler**: re-applying a batch is not assumed safe.
-  The protocol is a one-shot mutation wire format.
+  The protocol is a one-shot mutation wire format. Persisted batches are
+  the exception: they are applied idempotently (below).
+
+## Persisted batches
+
+A server-side writer that changes a saved workflow goes through
+`services/workflow_storage/mutate.py::apply_graph_additions`: one
+transaction appends the nodes and edges to `workflow.data`, writes a fresh
+parameter row for each new node, merges into existing rows (a Skills
+node's `skills_config`), and records a ledger row keyed by the caller's
+mutation id, so a retry returns the first result instead of adding twice.
+After the commit it pushes the batch with `persisted: true`:
+
+```json
+{"type": "workflow_ops_apply",
+ "data": {"workflow_id": "7", "caller_node_id": "7:aiAgent:2",
+          "operations": [...], "persisted": true}}
+```
+
+The ops carry the server's node ids (`minted_id`), edge ids (`edge_id`),
+absolute positions, node `data`, edge `condition`, and full parameter rows.
+An editor adopts them as they are:
+
+- nothing is saved: the server wrote the nodes, edges and rows itself (an
+  editor that re-saved a row would REPLACE it, which is how a hire's copied
+  library skills used to be wiped);
+- ids the canvas already has are skipped, because the same batch can
+  arrive twice (a retried write announces it again);
+- `set_node_parameters` goes to the parameter cache, not the graph.
+
+Unlike `save_workflow` this never replaces the graph, so it cannot drop what
+an editor saved meanwhile. An editor holding unsaved changes made before the
+push can still overwrite it on its next save (saves carry no revision check);
+adopting the batch into the editor's working copy narrows that window.
 
 ## Backend usage
 
@@ -122,7 +156,9 @@ failures (toast, log, retry, etc.).
 | Service | Trigger | Module |
 |---|---|---|
 | Auto-add Skill on tool connect | WS request `evaluate_auto_skill` (frontend on edge connect/disconnect) | `server/services/auto_skill.py` |
-| Agent Builder runtime tools | WS broadcast `workflow_ops_apply` (backend, mid-execution) + DB persist via `database.save_workflow` so subsequent runs and in-run reload see the mutation | `server/nodes/tool/agent_builder/__init__.py` |
+| Agent Builder runtime tools | `apply_graph_additions`, then the persisted `workflow_ops_apply` push (mid-execution, from the agent's tool call) | `server/nodes/tool/agent_builder/__init__.py` |
+| Turn on Talk (any employee on Home, hired or built in Dev mode) | `apply_graph_additions`, then the persisted push | `server/services/employees/handlers.py` |
+| Vertex managed agent cloud-tool nodes | whole-graph `database.save_workflow`, then a push that is NOT persisted (the editor saves the parameter rows) | `server/nodes/agent/vertex_managed_agent/_ops.py` |
 
 ## Two delivery modes
 
@@ -136,13 +172,24 @@ directions:
 
 * **Push broadcast** (Agent Builder pattern). Backend code (often
   inside an LLM tool execution) calls
-  `services.status_broadcaster.send_custom_event('workflow_ops_apply',
-  {workflow_id, caller_node_id, operations})`. The frontend's
-  `useWorkflowOpsListener` hook (mounted in `Dashboard`) subscribes
-  via `WebSocketContext.addEventListener('workflow_ops_apply', ...)`,
-  filters by current `workflow_id`, and pipes ops through
-  `applyOperations`. Events targeting other workflows surface as a
-  sonner toast with a "Switch" action.
+  `services.workflow_ops.broadcast_workflow_ops(workflow_id=...,
+  caller_node_id=..., operations=..., persisted=...)`, which sends the
+  flat `{workflow_id, caller_node_id, operations, persisted?}` frame;
+  `apply_graph_additions` calls it for every batch it saves. Two
+  frontend listeners subscribe through
+  `addEventListener('workflow_ops_apply', ...)`:
+  - `useWorkflowOpsListener` (mounted in `Dashboard`) applies a batch
+    for the open workflow to the canvas: a persisted one by adopting it
+    (`addSavedNodes` / `addSavedEdges`), any other through
+    `applyOperations`. A batch for another workflow shows a toast,
+    "{Name} updated their tools" (the name from the workflow list).
+  - `useSavedGraphSync` (mounted in the app shell, so it also runs while
+    Home is showing) adopts a persisted batch into the app store's
+    working copy of the workflow the editor holds
+    (`adoptSavedOperations`), leaving the unsaved flag alone, and puts
+    its parameter rows in the parameter cache. A workflow left open in
+    Dev while an employee changes it from Talk then keeps the server's
+    additions, and the editor's next save cannot drop them.
 
 ## Adding a new consumer
 
@@ -152,9 +199,13 @@ directions:
    * Request/response: add a thin `@ws_handler` that returns
      `{success: True, operations: [...]}`. On the frontend send the
      WS request and pipe the result into `applyOperations`.
-   * Push broadcast: call `send_custom_event('workflow_ops_apply',
-     {workflow_id, caller_node_id, operations})`. No frontend code
-     -- the existing listener handles it.
+   * Push broadcast, for a change to a saved workflow: describe it as
+     `services.graph_build.GraphAdditions` and call
+     `apply_graph_additions`, which saves it and pushes the persisted
+     batch. No frontend code -- the existing listeners handle it.
+   * Push broadcast of a batch the server did not save: call
+     `broadcast_workflow_ops(...)`; the editor applies it and saves the
+     parameter rows.
 3. If you need a new op type, follow the steps in the docstring of
    `server/services/workflow_ops.py` (mirror the TypedDict in TS,
    add an apply branch, document here).

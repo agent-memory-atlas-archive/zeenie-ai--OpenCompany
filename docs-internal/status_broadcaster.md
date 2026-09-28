@@ -152,24 +152,32 @@ Broadcasts are sent to all connected clients without a request-response correlat
 | `compaction_completed` | Memory compaction ends | `{session_id, success, tokens_before, tokens_after}` |
 | `context.updated` | A conversation durably saved (`save_conversation` upsert), or cleared from the panel / workflow Reset — emitted from the store's save boundary via `register_conversation_listener`, so every writer (in-process loop, Temporal LLM activity, specialized-provider bridge) is covered without call-site code. Frontend invalidates `['agentContext']`. | `{specversion: "1.0", id, source: "opencompany://nodes/context", type: "com.opencompany.context.updated", subject: agent_node_id, time, data: {workflow_id, generation, agent_node_id, message_count}}` |
 | `memory.updated` | A durable Memory mutation (remember / update / forget / clear) from either writer — the agent's tool call or the panel handlers. Frontend invalidates `['memoryItems']` + `['memoryItem']`. | `{specversion: "1.0", id, source: "opencompany://nodes/simple_memory", type: "com.opencompany.memory.updated", subject: memory_node_id, time, data: {workflow_id, memory_node_id, operation}}` |
+| `chat.updated` | A chat row added or a thread cleared, sent after every insert and clear by `services/chat_thread.py` (`record_chat_message` / `clear_chat_thread`), the one write path for chat rows: `send_chat_message`, `save_chat_message`, `clear_chat_messages` and the `chatReply` node all go through it. Frontend invalidates Home's thread (`queryKeys.chatThread.bySession`) and reloads the editor's chat pane when the session is the open workflow's. | `{specversion: "1.0", id, source: "opencompany://services/chat_thread", type: "com.opencompany.chat.updated", subject: session_id, time, data: {workflow_id, session_id, role}}` (`workflow_id` null for session `"default"`, `role` null for a clear) |
+| `workflow_ops_apply` | A workflow-ops batch for open editors, sent by the core factory `services/workflow_ops.broadcast_workflow_ops`. `services/workflow_storage/mutate.apply_graph_additions` (Turn on Talk, the Agent Builder) sends every batch it saved with `persisted: true`: the ops carry the server's node and edge ids, positions and full parameter rows, and editors adopt them without saving. The Vertex managed agent's cloud-tool nodes send the same frame from `nodes/agent/vertex_managed_agent/_ops.py`, not persisted. See [workflow_ops_protocol.md](./workflow_ops_protocol.md#persisted-batches). | The event's flat data, not the envelope: `{workflow_id, caller_node_id, operations, persisted?}` (the event is built as `com.opencompany.workflow.ops.applied`) |
 | `browser_updated` | A Browser profile's control state changes (`idle` / `agent` / `awaiting_user` / `user`), from `nodes/browser/_session.py`. Identity and state only; the live viewer reads the details over `/ws/browser`. Frontend opens the Dev dock on its Browser tab when the open workflow's browser reaches `awaiting_user`. | `{specversion: "1.0", id, source: "opencompany://nodes/browser", type: "com.opencompany.browser.updated", subject: session_id, time, data: {workflow_id, node_id, session_id, state, revision}}` |
 | `browser_profiles_updated` | A Browser profile is added, renamed, deleted or gets new logins. Frontend invalidates `['browserProfiles']` (the Credentials "Web browser" panel). | `{specversion: "1.0", id, source: "opencompany://nodes/browser", type: "com.opencompany.browser.profiles.updated", subject: "profiles", time, data: {revision}}` |
 | `browser_runtime` | Chrome for Testing download progress (`BROWSER_RUNTIME=testing` only; `_install_chrome.py`). No frontend case; the viewer polls `browser_runtime_status` while it waits. | `{specversion: "1.0", id, source: "opencompany://nodes/browser", type: "com.opencompany.browser.runtime.progress", subject: component, time, data: {component, phase, percent, version, error}}` |
 
-`context.updated` and `memory.updated` call
-`get_status_broadcaster().broadcast(...)` directly rather than
+`context.updated`, `memory.updated`, `chat.updated` and `workflow_ops_apply`
+call `get_status_broadcaster().broadcast(...)` directly rather than
 `services.events.dispatch.emit`. `emit` exists to reach Temporal consumers and
 pays a Visibility `ListWorkflowExecutions` query to find them; no node type
 registers a canary consumer for `com.opencompany.context.*` /
-`com.opencompany.memory.*`, so that query can only ever match nothing — once
-per save. Same pattern as `nodes/telegram/_events.py`. See
+`com.opencompany.memory.*` / `com.opencompany.chat.updated` /
+`com.opencompany.workflow.ops.*`, so that query can only ever match nothing —
+once per save. Same pattern as `nodes/telegram/_events.py`. See
 [event_framework.md → UI-only lifecycle events](./event_framework.md).
 
-Payloads are identity + count only — no message bodies, no item content —
-because `StatusBroadcaster.broadcast()` fans out to **every** connected socket with no
+The `context.updated`, `memory.updated` and `chat.updated` payloads are
+identity only (plus a count, an operation or a role) — no message bodies, no
+item content — because
+`StatusBroadcaster.broadcast()` fans out to **every** connected socket with no
 per-workflow filtering. The panels refetch through the authorized
 `get_agent_context` / `list_memory_items` handlers, which is where ownership
-is enforced.
+is enforced; chat views refetch through `get_chat_messages`, which reads a
+session by id (threads are per workflow, not per user). `workflow_ops_apply`
+is the exception: it carries the ops themselves, parameter rows included,
+because an editor applies them as they arrive.
 
 ## Execution correlation IDs
 

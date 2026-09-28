@@ -215,7 +215,11 @@ Plugin-specific events (e.g. `com.opencompany.telegram.message.received`)
 live in `nodes/<plugin>/_events.py`. Cross-cutting factories
 (`credential`, `oauth_completed`, `agent_progress`, `agent_capability`, `task_completed`,
 `workflow_lifecycle`, `deployment_snapshot`, `team_event`,
-`node_parameters_updated`) stay in `services/events/envelope.py`.
+`node_parameters_updated`) stay in `services/events/envelope.py`. A core
+service that owns its event keeps the factory beside it, so core code never
+imports a plugin's `_events.py`: `services/chat_thread.py` (`chat_updated`)
+and `services/workflow_ops.py` (`workflow_ops_applied`, sent by
+`broadcast_workflow_ops`).
 
 See RFC §6.4 for the classification rule + the canonical
 `telegram/_events.py` example.
@@ -242,6 +246,23 @@ identity only). See [normal_mode.md](./normal_mode.md#wire-contract). So do
 the Browser plugin's `browser_updated`, `browser_profiles_updated` and
 `browser_runtime` (`com.opencompany.browser.*`, in `nodes/browser/_events.py`;
 identity and state only, never a URL, a page title or cookie data).
+
+Two core events follow it too. `chat.updated` (`com.opencompany.chat.updated`,
+in `services/chat_thread.py`) goes out after every chat row insert and clear,
+with data `{workflow_id, session_id, role}` (`role` null for a clear,
+`workflow_id` null for session `"default"`): identity only, so Home's thread
+and the editor's chat pane refetch through `get_chat_messages`. The
+workflow-ops push `workflow_ops_apply` (`com.opencompany.workflow.ops.applied`,
+built and sent by `services/workflow_ops.broadcast_workflow_ops`) is the one
+whose frame is the event's flat data,
+`{workflow_id, caller_node_id, operations, persisted?}`, the shape
+`useWorkflowOpsListener` reads.
+`persisted: true` marks a batch the server already saved
+(`services/workflow_storage/mutate.apply_graph_additions`: Turn on Talk, the
+Agent Builder); its ops carry the server's ids and full parameter rows, and
+editors adopt them without saving. (The Vertex managed agent's cloud-tool
+nodes still send their own frame of the same shape, never persisted.) See
+[workflow_ops_protocol.md](./workflow_ops_protocol.md#persisted-batches).
 
 Rule of thumb: **if no `register_canary_trigger_type` call names your event
 type, broadcast it directly.** Reach for `emit` only when a Temporal workflow
