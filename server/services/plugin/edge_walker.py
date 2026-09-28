@@ -38,7 +38,7 @@ import re
 from collections import Counter
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
-from constants import AI_AGENT_TYPES
+from services.workspace_capabilities import is_registered_agent
 from core.logging import get_logger
 
 if TYPE_CHECKING:
@@ -75,7 +75,7 @@ def build_teammate_descriptors(node_id: str, context: Dict[str, Any]) -> List[Di
         if edge.get("target") != node_id or edge_target_handle(edge) != TEAMMATE_HANDLE:
             continue
         source = node_by_id.get(edge.get("source"))
-        if not source or source.get("type") not in AI_AGENT_TYPES:
+        if not source or not is_registered_agent(source.get("type")):
             continue
         node_type = source.get("type", "")
         raw_label = (source.get("data") or {}).get("label")
@@ -460,7 +460,7 @@ async def _append_tool_entry(
         "label": source_node.get("data", {}).get("label", tool_type),
     }
 
-    if tool_type in AI_AGENT_TYPES:
+    if is_registered_agent(tool_type):
         child_tools: List[Dict[str, Any]] = []
         child_incoming_edges = [e for e in edges if e.get("target") == source_node_id]
         child_tool_edges = [e for e in child_incoming_edges if edge_target_handle(e) == "input-tools"]

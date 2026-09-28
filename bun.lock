@@ -31,6 +31,9 @@
         "@types/react-dom": "^19.2.3",
         "@uiw/react-json-view": "2.0.0-alpha.41",
         "@vitejs/plugin-react": "^5.2.0",
+        "@yume-chan/scrcpy": "3.0.0-beta.3",
+        "@yume-chan/scrcpy-decoder-webcodecs": "3.0.0-beta.2",
+        "@yume-chan/stream-extra": "3.0.0-beta.3",
         "class-variance-authority": "^0.7.1",
         "clsx": "^2.1.1",
         "cmdk": "^1.1.1",
@@ -959,6 +962,24 @@
     "@vitest/spy": ["@vitest/spy@4.1.11", "", {}, "sha512-apNa/prQy2qCeywhnixOHPRCgGNhvg7T4Dapfl1GahLp/R+uhBm5cPyFoNVyqsNd2h1nJxL6BqqdIjiABL60YA=="],
 
     "@vitest/utils": ["@vitest/utils@4.1.11", "", { "dependencies": { "@vitest/pretty-format": "4.1.11", "convert-source-map": "^2.0.0", "tinyrainbow": "^3.1.0" } }, "sha512-zTCVGpyFsGWBhllOyKlTw/vnr6D9qxsfSDyfbyZmTyjHw5N/VuvzHpHoQjm2ZJzn4RJgx5w4r7V0er69CmLgPQ=="],
+
+    "@yume-chan/async": ["@yume-chan/async@4.1.3", "", {}, "sha512-0vzhNJMkWUPyjKzUK4rqHEeCU6YQtF78RsB1kFRB6Y2BLupmEQNxcSb0mjKabPL9jZpCCiLa5KL8oTOJClUVaw=="],
+
+    "@yume-chan/event": ["@yume-chan/event@3.0.0-beta.3", "", { "dependencies": { "@yume-chan/async": "^4.1.3" } }, "sha512-d9nQ0su78cV7OAV9Y1Ue/W2ZyF9JaWbFSU6kjQC/IoPCkov127Zv4m/5x7OC35MSAGcJvG5jkIcicNBD5mwr7A=="],
+
+    "@yume-chan/media-codec": ["@yume-chan/media-codec@3.0.0-beta.2", "", { "dependencies": { "@yume-chan/no-data-view": "3.0.0-beta.2" } }, "sha512-SY8Vk0BQk79O1LvXBjX83mDygEB+gVjKByEz6DbEF630Ak5Ks5WNAhGpe39PH0dXrod4nrNA47LJzvl/PsJa+A=="],
+
+    "@yume-chan/no-data-view": ["@yume-chan/no-data-view@3.0.0-beta.3", "", {}, "sha512-VozbKnaUjnL8zF+TkioqHGRhP5w1/dAeRTytroO9VJQJat9acSoc9yXvyABb90hS0ZS+qgN2suyE8Xf+2KfVnA=="],
+
+    "@yume-chan/scrcpy": ["@yume-chan/scrcpy@3.0.0-beta.3", "", { "dependencies": { "@yume-chan/async": "^4.1.3", "@yume-chan/event": "3.0.0-beta.3", "@yume-chan/no-data-view": "3.0.0-beta.3", "@yume-chan/stream-extra": "3.0.0-beta.3", "@yume-chan/struct": "3.0.0-beta.3" } }, "sha512-YcXffFvcWJW/FoogoeELdvzB1PtJ7aUDgb5OK6q0ivVfY/cqjpKm+15dADooHMJ9oLH5NUXI/ttHUkIhBsWZPQ=="],
+
+    "@yume-chan/scrcpy-decoder-shared": ["@yume-chan/scrcpy-decoder-shared@3.0.0-beta.2", "", { "dependencies": { "@yume-chan/async": "^4.1.3", "@yume-chan/event": "3.0.0-beta.2", "@yume-chan/scrcpy": "3.0.0-beta.2", "@yume-chan/stream-extra": "3.0.0-beta.2" } }, "sha512-YH22RYdxxi5qKJF8UE+llfquhGjqSFFvf7iVOn92JSQOZU2yEeSG/45ma/vAxqhBOrSj+2aqX47mdhxjHgQ7aQ=="],
+
+    "@yume-chan/scrcpy-decoder-webcodecs": ["@yume-chan/scrcpy-decoder-webcodecs@3.0.0-beta.2", "", { "dependencies": { "@yume-chan/async": "^4.1.3", "@yume-chan/event": "3.0.0-beta.2", "@yume-chan/media-codec": "3.0.0-beta.2", "@yume-chan/no-data-view": "3.0.0-beta.2", "@yume-chan/scrcpy": "3.0.0-beta.2", "@yume-chan/scrcpy-decoder-shared": "3.0.0-beta.2", "@yume-chan/stream-extra": "3.0.0-beta.2" } }, "sha512-uBPpg5K79+2eUGzrtg17KELoOf6dH0I69FEChk8sKS1ZXQIcKYYequpoU7vMLEDNfHE3dhgVbUYQsheS+bUyDg=="],
+
+    "@yume-chan/stream-extra": ["@yume-chan/stream-extra@3.0.0-beta.3", "", { "dependencies": { "@yume-chan/async": "^4.1.3", "@yume-chan/struct": "3.0.0-beta.3" } }, "sha512-7Jkm8UYZmWloRqfVunPtDFOF3oO1WkzTuv9h2gUNr1T6o5vAYKfDlsc59bvv+rX4BWsiPkD8DHn2U6DUYbS29g=="],
+
+    "@yume-chan/struct": ["@yume-chan/struct@3.0.0-beta.3", "", { "dependencies": { "@yume-chan/async": "^4.1.3", "@yume-chan/no-data-view": "3.0.0-beta.3" } }, "sha512-cACtkzk1+czRVM/uWUAmr/rdUFQ/dISa7ocXfRU6tpV44pBKe9jP08lDnZiSohqR1fkPSJtPERfPViN5oxCuag=="],
 
     "accepts": ["accepts@2.0.0", "", { "dependencies": { "mime-types": "3.0.2", "negotiator": "1.0.0" } }, "sha512-5cvg6CtKwfgdmVqY1WIiXKc3Q1bkRqGLi+2W/6ao+6Y7gu/RCwRuAhGEzh5B4KlszSuTLgZYuqFqo5bImjNKng=="],
 
@@ -2776,6 +2797,22 @@
 
     "@typescript-eslint/utils/@eslint-community/eslint-utils": ["@eslint-community/eslint-utils@4.10.1", "", { "dependencies": { "eslint-visitor-keys": "3.4.3" }, "peerDependencies": { "eslint": "^6.0.0 || ^7.0.0 || >=8.0.0" } }, "sha512-cuadcxVFE8sDK6iWJbs8Sn0av2Nrh2QSGQhVlBW9AaAHqHwjWsZHT8LJ4hFGPh7ASBV2deFdM7H/DPjulmh8rg=="],
 
+    "@yume-chan/media-codec/@yume-chan/no-data-view": ["@yume-chan/no-data-view@3.0.0-beta.2", "", {}, "sha512-+YaNDEhEiW6JM4DTeIkr7twls+bLjZlRqi9KFR17y9hASAnRNGVUVwYntvozCw5cfCDxjRgFdGYRRSThGq3x+A=="],
+
+    "@yume-chan/scrcpy-decoder-shared/@yume-chan/event": ["@yume-chan/event@3.0.0-beta.2", "", { "dependencies": { "@yume-chan/async": "^4.1.3" } }, "sha512-Lihf7J1lNQNgyx/FFl7u55gVVmvSXv+Z2heYZjz0gFq8zGN6WNOKBtXnaJVGuXnumTWmcm9seLqcWc15RaOlPA=="],
+
+    "@yume-chan/scrcpy-decoder-shared/@yume-chan/scrcpy": ["@yume-chan/scrcpy@3.0.0-beta.2", "", { "dependencies": { "@yume-chan/async": "^4.1.3", "@yume-chan/event": "3.0.0-beta.2", "@yume-chan/no-data-view": "3.0.0-beta.2", "@yume-chan/stream-extra": "3.0.0-beta.2", "@yume-chan/struct": "3.0.0-beta.2" } }, "sha512-9iDyPF/K7r6jjRNvQ//Tz2VY3m9vNNz3d2hqFLpN5BI7uwrpdScqXH848u9MXukplgr+25dWXGOeqTbByVzscg=="],
+
+    "@yume-chan/scrcpy-decoder-shared/@yume-chan/stream-extra": ["@yume-chan/stream-extra@3.0.0-beta.2", "", { "dependencies": { "@yume-chan/async": "^4.1.3", "@yume-chan/struct": "3.0.0-beta.2" } }, "sha512-94YT3d1+DlrGrKIlwB9o9YTPs7yf2+C+tjPi9cAWviANGixAv+K8V27iDIC4FKO6HUaAvRNdHai0MuXufiW8Zg=="],
+
+    "@yume-chan/scrcpy-decoder-webcodecs/@yume-chan/event": ["@yume-chan/event@3.0.0-beta.2", "", { "dependencies": { "@yume-chan/async": "^4.1.3" } }, "sha512-Lihf7J1lNQNgyx/FFl7u55gVVmvSXv+Z2heYZjz0gFq8zGN6WNOKBtXnaJVGuXnumTWmcm9seLqcWc15RaOlPA=="],
+
+    "@yume-chan/scrcpy-decoder-webcodecs/@yume-chan/no-data-view": ["@yume-chan/no-data-view@3.0.0-beta.2", "", {}, "sha512-+YaNDEhEiW6JM4DTeIkr7twls+bLjZlRqi9KFR17y9hASAnRNGVUVwYntvozCw5cfCDxjRgFdGYRRSThGq3x+A=="],
+
+    "@yume-chan/scrcpy-decoder-webcodecs/@yume-chan/scrcpy": ["@yume-chan/scrcpy@3.0.0-beta.2", "", { "dependencies": { "@yume-chan/async": "^4.1.3", "@yume-chan/event": "3.0.0-beta.2", "@yume-chan/no-data-view": "3.0.0-beta.2", "@yume-chan/stream-extra": "3.0.0-beta.2", "@yume-chan/struct": "3.0.0-beta.2" } }, "sha512-9iDyPF/K7r6jjRNvQ//Tz2VY3m9vNNz3d2hqFLpN5BI7uwrpdScqXH848u9MXukplgr+25dWXGOeqTbByVzscg=="],
+
+    "@yume-chan/scrcpy-decoder-webcodecs/@yume-chan/stream-extra": ["@yume-chan/stream-extra@3.0.0-beta.2", "", { "dependencies": { "@yume-chan/async": "^4.1.3", "@yume-chan/struct": "3.0.0-beta.2" } }, "sha512-94YT3d1+DlrGrKIlwB9o9YTPs7yf2+C+tjPi9cAWviANGixAv+K8V27iDIC4FKO6HUaAvRNdHai0MuXufiW8Zg=="],
+
     "antd/@babel/runtime": ["@babel/runtime@7.29.7", "", {}, "sha512-Nq8OhGWiZIZGV6hLHoyAKLLcJihP/xFeBMGJoUrxTX2psI8dCifzLhZISFb+VWS3wFMRDmCGw5R+dOySCqPLhw=="],
 
     "antd/dayjs": ["dayjs@1.11.21", "", {}, "sha512-98IT+HOahAisibz/yjKbzuOBwYcjJ7BCLPzARyHiyEBmRz4fatF+KPJszEHXsGYjUG234aH/cOjW1wwTbKUZlA=="],
@@ -3010,6 +3047,16 @@
 
     "@typescript-eslint/utils/@eslint-community/eslint-utils/eslint-visitor-keys": ["eslint-visitor-keys@3.4.3", "", {}, "sha512-wpc+LXeiyiisxPlEkUzU6svyS1frIO3Mgxj1fdy7Pm8Ygzguax2N3Fa/D/ag1WqbOprdI+uY6wMUl8/a2G+iag=="],
 
+    "@yume-chan/scrcpy-decoder-shared/@yume-chan/scrcpy/@yume-chan/no-data-view": ["@yume-chan/no-data-view@3.0.0-beta.2", "", {}, "sha512-+YaNDEhEiW6JM4DTeIkr7twls+bLjZlRqi9KFR17y9hASAnRNGVUVwYntvozCw5cfCDxjRgFdGYRRSThGq3x+A=="],
+
+    "@yume-chan/scrcpy-decoder-shared/@yume-chan/scrcpy/@yume-chan/struct": ["@yume-chan/struct@3.0.0-beta.2", "", { "dependencies": { "@yume-chan/async": "^4.1.3", "@yume-chan/no-data-view": "3.0.0-beta.2" } }, "sha512-6wyW1i3IGlRurdFt2jzfE1FSq+lsgp7ccbzBWUW/7O1+GtRRFjMUljnoeqcbcmerRhCb6rHI6GRxk2EOKrUNLw=="],
+
+    "@yume-chan/scrcpy-decoder-shared/@yume-chan/stream-extra/@yume-chan/struct": ["@yume-chan/struct@3.0.0-beta.2", "", { "dependencies": { "@yume-chan/async": "^4.1.3", "@yume-chan/no-data-view": "3.0.0-beta.2" } }, "sha512-6wyW1i3IGlRurdFt2jzfE1FSq+lsgp7ccbzBWUW/7O1+GtRRFjMUljnoeqcbcmerRhCb6rHI6GRxk2EOKrUNLw=="],
+
+    "@yume-chan/scrcpy-decoder-webcodecs/@yume-chan/scrcpy/@yume-chan/struct": ["@yume-chan/struct@3.0.0-beta.2", "", { "dependencies": { "@yume-chan/async": "^4.1.3", "@yume-chan/no-data-view": "3.0.0-beta.2" } }, "sha512-6wyW1i3IGlRurdFt2jzfE1FSq+lsgp7ccbzBWUW/7O1+GtRRFjMUljnoeqcbcmerRhCb6rHI6GRxk2EOKrUNLw=="],
+
+    "@yume-chan/scrcpy-decoder-webcodecs/@yume-chan/stream-extra/@yume-chan/struct": ["@yume-chan/struct@3.0.0-beta.2", "", { "dependencies": { "@yume-chan/async": "^4.1.3", "@yume-chan/no-data-view": "3.0.0-beta.2" } }, "sha512-6wyW1i3IGlRurdFt2jzfE1FSq+lsgp7ccbzBWUW/7O1+GtRRFjMUljnoeqcbcmerRhCb6rHI6GRxk2EOKrUNLw=="],
+
     "cytoscape-fcose/cose-base/layout-base": ["layout-base@2.0.1", "", {}, "sha512-dp3s92+uNI1hWIpPGH3jK2kxE2lMjdXdr+DH8ynZHpd6PUlH6x6cbuXnoMmiNumznqaNO31xu9e79F0uuZ0JFg=="],
 
     "d3-sankey/d3-array/internmap": ["internmap@1.0.1", "", {}, "sha512-lDB5YccMydFBtasVtxnZ3MRBHuaoE8GKsppq+EchKL2U4nK/DmEpPHNH8MZe5HkMtpSiTSOZwfN0tzYjO/lJEw=="],
@@ -3027,6 +3074,8 @@
     "react-flow-client/@types/node/undici-types": ["undici-types@7.16.0", "", {}, "sha512-Zz+aZWSj8LE6zoxD+xrjh4VfkIG8Ya6LvYkZqtUQGJPZjYl53ypCaUwWqo7eI0x66KBGeRo+mlBEkMSeSZ38Nw=="],
 
     "shadcn/@babel/parser/@babel/types": ["@babel/types@7.29.8", "", { "dependencies": { "@babel/helper-string-parser": "7.29.7", "@babel/helper-validator-identifier": "7.29.7" } }, "sha512-Vj1jF3cPfxg7OAfoI7QnVKLoILlm2JF9pnVHrX8qx7AHMiYWT+NDAA7jChlNgRS4WTLc/fD1lXLmPixluj+3Gg=="],
+
+    "@yume-chan/scrcpy-decoder-shared/@yume-chan/stream-extra/@yume-chan/struct/@yume-chan/no-data-view": ["@yume-chan/no-data-view@3.0.0-beta.2", "", {}, "sha512-+YaNDEhEiW6JM4DTeIkr7twls+bLjZlRqi9KFR17y9hASAnRNGVUVwYntvozCw5cfCDxjRgFdGYRRSThGq3x+A=="],
 
     "pkg-up/find-up/locate-path/p-locate": ["p-locate@3.0.0", "", { "dependencies": { "p-limit": "2.3.0" } }, "sha512-x+12w/To+4GFfgJhBEpiDcLozRJGegY+Ei7/z0tSLkMmxGZNybVMSfWj9aJn8Z5Fc7dBUNJOOVgPv2H7IwulSQ=="],
 

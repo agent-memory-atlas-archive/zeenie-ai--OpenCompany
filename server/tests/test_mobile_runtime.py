@@ -1,0 +1,218 @@
+"""Runtime orchestration without an emulator, SDK, or model request."""
+
+import asyncio
+import json
+
+import pytest
+
+from nodes.mobile._runtime import MobileRuntime
+
+
+class FakeStdin:
+    def __init__(self):
+        self.data = b""
+
+    def write(self, data):
+        self.data += data
+
+    async def drain(self):
+        pass
+
+    def close(self):
+        pass
+
+
+class FakeProcess:
+    def __init__(self):
+        self.stdin = FakeStdin()
+        self.stdout = asyncio.StreamReader()
+        self.returncode = None
+        self.terminated = asyncio.Event()
+
+    def terminate(self):
+        self.returncode = -15
+        self.stdout.feed_eof()
+        self.terminated.set()
+
+    def kill(self):
+        self.terminate()
+
+    async def wait(self):
+        await self.terminated.wait()
+        return self.returncode
+
+
+@pytest.fixture
+def runtime(monkeypatch, tmp_path):
+    import nodes.mobile._runtime as module
+
+    value = MobileRuntime()
+    value.serial = "emulator-5560"
+    monkeypatch.setattr(module, "mobile_root", lambda: tmp_path)
+    monkeypatch.setattr(value, "driver_env", lambda: {})
+
+    async def geometry(*_args, **_kwargs):
+        return {"width": 1080, "height": 1920}
+
+    monkeypatch.setattr(value, "driver_call", geometry)
+    return value
+
+
+def run_args():
+    return dict(
+        principal="owner",
+        workflow_id="workflow",
+        node_id="agent",
+        run_id="run",
+        params={"prompt": "test", "max_steps": 3, "timeout_s": 30},
+        model={},
+        broker_url="http://127.0.0.1/broker",
+    )
+
+
+async def test_takeover_stops_worker_then_resumes_with_fresh_capability(runtime, monkeypatch):
+    processes = []
+    spawned = asyncio.Queue()
+
+    async def spawn(*_args, **_kwargs):
+        proc = FakeProcess()
+        processes.append(proc)
+        spawned.put_nowait(proc)
+        return proc
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
+    task = asyncio.create_task(runtime.run(**run_args()))
+    first = await asyncio.wait_for(spawned.get(), 1)
+    await asyncio.sleep(0)
+    first_config = json.loads(first.stdin.data)
+    human = await runtime.takeover("browser")
+    assert first.terminated.is_set()
+    assert not runtime.capabilities
+    assert human.owner == "viewer:browser"
+    assert runtime.active["status"] == "awaiting_user"
+    runtime.release("browser", resume=True)
+    second = await asyncio.wait_for(spawned.get(), 1)
+    await asyncio.sleep(0)
+    second_config = json.loads(second.stdin.data)
+    assert second_config["epoch"] > first_config["epoch"]
+    assert second_config["capability"] != first_config["capability"]
+    second.stdout.feed_data(b'{"type":"completed","result":"done"}\n')
+    second.returncode = 0
+    second.stdout.feed_eof()
+    second.terminated.set()
+    assert (await asyncio.wait_for(task, 1))["response"] == "done"
+    assert runtime.active is None
+    assert not runtime.capabilities
+
+
+async def test_cancel_while_waiting_for_human_releases_task(runtime):
+    await runtime.takeover("browser")
+    task = asyncio.create_task(runtime.run(**run_args()))
+    await asyncio.sleep(0)
+    assert runtime.active["status"] == "awaiting_user"
+    await runtime.cancel("workflow", "agent")
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, 1)
+    assert runtime.active is None
+    assert runtime.queue == []
+    assert runtime.control.owner == "viewer:browser"
+
+
+async def test_queued_cancel_is_scoped_to_run_and_never_starts_worker(runtime, monkeypatch):
+    async def unexpected_spawn(*_args, **_kwargs):
+        pytest.fail("A cancelled queued task must never spawn a worker")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", unexpected_spawn)
+    await runtime.task_lock.acquire()
+    first = asyncio.create_task(runtime.run(**run_args()))
+    second_args = {**run_args(), "run_id": "other-run"}
+    second = asyncio.create_task(runtime.run(**second_args))
+    await asyncio.sleep(0)
+    assert len(runtime.queue) == 2
+    await runtime.cancel("workflow", "agent", run_id="run")
+    assert [entry["status"] for entry in runtime.queue] == ["cancelled", "queued"]
+    await runtime.cancel("workflow", "agent", run_id="other-run")
+    runtime.serial = None  # Cancellation must win over offline validation.
+    runtime.task_lock.release()
+    for task in (first, second):
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, 1)
+    assert runtime.queue == []
+    assert runtime.active is None
+
+
+async def test_takeover_waits_for_already_accepted_mutation(runtime):
+    lease = await runtime.control.claim("run:run")
+    entered, finish = asyncio.Event(), asyncio.Event()
+
+    async def mutation():
+        entered.set()
+        await finish.wait()
+
+    action = asyncio.create_task(runtime.control.perform(lease, "write", mutation))
+    await entered.wait()
+    takeover = asyncio.create_task(runtime.takeover("browser"))
+    await asyncio.sleep(0)
+    assert not takeover.done()
+    assert runtime.control.owner is None
+    finish.set()
+    await action
+    assert (await takeover).owner == "viewer:browser"
+
+
+async def test_cancel_during_geometry_no_spawn(runtime, monkeypatch):
+    entered, finish = asyncio.Event(), asyncio.Event()
+
+    async def geometry(*_args, **_kwargs):
+        entered.set()
+        await finish.wait()
+        return {"width": 1080, "height": 1920}
+
+    async def unexpected_spawn(*_args, **_kwargs):
+        pytest.fail("Cancelled task must not launch after geometry resolves")
+
+    monkeypatch.setattr(runtime, "driver_call", geometry)
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", unexpected_spawn)
+    task = asyncio.create_task(runtime.run(**run_args()))
+    await asyncio.wait_for(entered.wait(), 1)
+    await runtime.cancel("workflow", "agent")
+    finish.set()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, 1)
+    assert runtime.active is None
+
+
+async def test_takeover_during_spawn_does_not_send_config(runtime, monkeypatch):
+    entered, finish = asyncio.Event(), asyncio.Event()
+    process = FakeProcess()
+
+    async def spawn(*_args, **_kwargs):
+        entered.set()
+        await finish.wait()
+        return process
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
+    task = asyncio.create_task(runtime.run(**run_args()))
+    await asyncio.wait_for(entered.wait(), 1)
+    await runtime.takeover("browser")
+    finish.set()
+    try:
+        await asyncio.wait_for(process.terminated.wait(), 1)
+        assert process.stdin.data == b""
+        assert runtime.control.owner == "viewer:browser"
+    finally:
+        await runtime.cancel("workflow", "agent")
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, 1)
+
+
+async def test_stop_preserves_epoch_monotonicity_and_clears_viewer(runtime):
+    lease = await runtime.takeover("browser")
+    runtime.resume_event.set()
+    await runtime.stop()
+    assert runtime.control.owner is None
+    assert runtime.control.epoch > lease.epoch
+    assert runtime.viewer is None
+    assert not runtime.resume_event.is_set()
+    next_lease = await runtime.control.claim("viewer:browser")
+    assert next_lease.epoch > lease.epoch

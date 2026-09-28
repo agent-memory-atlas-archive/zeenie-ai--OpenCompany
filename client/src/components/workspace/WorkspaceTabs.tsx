@@ -18,7 +18,7 @@ export function WorkspaceTabs({ tab, onTabChange, browser, board, android }: {
         {([
           ['browser', 'Browser', Globe],
           ['board', 'Canvas', PanelsTopLeft],
-          ['android', 'Android', Smartphone],
+          ['android', 'Mobile', Smartphone],
         ] as const).map(([value, label, Icon]) => (
           <TabsPrimitive.Trigger key={value} value={value} className="flex h-10 items-center gap-1.75 whitespace-nowrap border-b-2 border-transparent px-2.5 text-sm font-medium text-fg-muted outline-none transition-colors hover:text-fg-default focus-visible:ring-3 focus-visible:ring-ring/50 data-[state=active]:border-node-agent data-[state=active]:text-fg-default">
             <Icon aria-hidden className="size-3.75" strokeWidth={1.75} />{label}

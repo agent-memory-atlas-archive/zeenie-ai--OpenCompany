@@ -14,7 +14,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
-from constants import AI_AGENT_TYPES, WORKFLOW_TRIGGER_TYPES
+from constants import WORKFLOW_TRIGGER_TYPES
+from services.workspace_capabilities import is_registered_agent
 from services.employees.apps import AppSpec, app_for_node_type
 from services.node_registry import get_node_class
 
@@ -88,7 +89,7 @@ def index_graph(graph: Optional[Mapping[str, Any]]) -> GraphIndex:
             browsers.append(node_id)
         if isinstance(data, Mapping) and data.get("disabled"):
             continue
-        if node_type in AI_AGENT_TYPES:
+        if is_registered_agent(node_type):
             agents.append(node_id)
         if node_type in WORKFLOW_TRIGGER_TYPES:
             triggers.append(node_id)

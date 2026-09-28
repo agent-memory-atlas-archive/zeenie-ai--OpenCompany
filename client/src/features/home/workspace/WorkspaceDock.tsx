@@ -17,6 +17,7 @@ import type { LucideIcon } from 'lucide-react';
 import { Code, Maximize2, Minimize2, Monitor, PanelsTopLeft, X } from 'lucide-react';
 import BrowserWorkspace from '@/components/browser/BrowserWorkspace';
 import { WorkspaceTabs } from '@/components/workspace/WorkspaceTabs';
+import MobileWorkspace from '@/components/mobile/MobileWorkspace';
 import { Suspense, lazy, useCallback, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -120,6 +121,7 @@ function DockTabs({ employee, visible }: { employee: EmployeeSummary; visible: b
       tab={tab}
       onTabChange={setTab}
       browser={<BrowserWorkspace key={employee.workflow_id} workflowId={employee.workflow_id} nodes={employee.browser_nodes} visible={visible && tab === 'browser'} />}
+      android={<MobileWorkspace key={employee.workflow_id} workflowId={employee.workflow_id} nodes={employee.workspace_nodes.filter((node) => node.kind === 'mobile')} visible={visible && tab === 'android'} />}
       board={<CanvasTab employee={employee} />}
     />
   );

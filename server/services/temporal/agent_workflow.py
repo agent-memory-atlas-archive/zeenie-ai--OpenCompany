@@ -91,6 +91,44 @@ TOOL_STEP_TIMEOUT = timedelta(minutes=10)
 TOOL_HEARTBEAT_TIMEOUT = timedelta(minutes=2)
 LLM_STEP_HEARTBEAT_TIMEOUT = timedelta(minutes=1)
 
+
+async def _execute_plugin_tool_activity(
+    activity_name: str,
+    activity_id: str,
+    tool_payload: Dict[str, Any],
+    context: Dict[str, Any],
+) -> Any:
+    """Preserve legacy commands; honor embedded task engines' execution policy.
+
+    These plugins can perform irreversible device actions. Temporal's implicit
+    retry defaults must not override their explicitly declared attempt limit.
+    Routing comes from frozen workflow input, never live process settings.
+    """
+    options: Dict[str, Any] = {
+        "start_to_close_timeout": TOOL_STEP_TIMEOUT,
+        "heartbeat_timeout": TOOL_HEARTBEAT_TIMEOUT,
+    }
+    cls = get_node_class(tool_payload["node_type"])
+    if getattr(cls, "workspace_task", False) and workflow.patched("workspace-task-activity-policy-v1"):
+        options.update(
+            start_to_close_timeout=cls.start_to_close_timeout,
+            heartbeat_timeout=cls.heartbeat_timeout,
+            retry_policy=cls.retry_policy.to_temporal(),
+            cancellation_type=ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
+        )
+        if context.get("temporal_worker_pool_enabled") is True:
+            options["task_queue"] = cls.task_queue
+        # The caller's authenticated principal is not a model argument. Keep
+        # it on the leaf context so owner-only plugins cannot inherit the
+        # legacy default principal accidentally.
+        tool_payload = {**tool_payload, "user_id": str(context.get("user_id") or "owner")}
+    return await workflow.execute_activity(
+        activity_name,
+        args=[tool_payload],
+        activity_id=activity_id,
+        **options,
+    )
+
 # Bounded loop count to defend against a runaway LLM. Plugin classes
 # override via ``payload["max_iterations"]`` (set by
 # ``prepare_agent_payload`` from Settings.agent_recursion_limit). This
@@ -1846,12 +1884,11 @@ class AgentWorkflow:
                                 raise tool_result
                         else:
                             await self._wait_until_resumed()
-                            tool_result = await workflow.execute_activity(
+                            tool_result = await _execute_plugin_tool_activity(
                                 tool_activity_name,
-                                args=[tool_payload],
-                                activity_id=tool_activity_id,
-                                start_to_close_timeout=TOOL_STEP_TIMEOUT,
-                                heartbeat_timeout=TOOL_HEARTBEAT_TIMEOUT,
+                                tool_activity_id,
+                                tool_payload,
+                                context,
                             )
                         if (
                             tool_info["node_type"] == "taskManager"

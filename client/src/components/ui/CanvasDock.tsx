@@ -38,6 +38,8 @@ import {
 import CanvasContent from '../parameterPanel/canvas/CanvasContent';
 import BrowserWorkspace from '../browser/BrowserWorkspace';
 import { WorkspaceTabs } from '../workspace/WorkspaceTabs';
+import { workspaceNodes } from '../workspace/descriptors';
+import MobileWorkspace from '../mobile/MobileWorkspace';
 import { queryClient } from '../../lib/queryClient';
 
 interface CanvasDockProps {
@@ -76,7 +78,7 @@ const CanvasDock: React.FC<CanvasDockProps> = ({ nodes }) => {
     }),
     () => nodes.map((node) => {
       const hints = resolveNodeDescription(node.type || '')?.uiHints;
-      return `${node.id}:${!!hints?.isCanvasPanel}:${!!hints?.isBrowserPanel}`;
+      return `${node.id}:${!!hints?.isCanvasPanel}:${!!hints?.isBrowserPanel}:${hints?.workspace?.kind ?? ''}`;
     }).join('|'),
   );
   // eslint-disable-next-line react-hooks/exhaustive-deps -- hintsVersion tracks external schema hydration.
@@ -87,6 +89,7 @@ const CanvasDock: React.FC<CanvasDockProps> = ({ nodes }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- hintsVersion tracks external schema hydration.
     [nodes, hintsVersion]);
   const shownWidth = wide ? Math.min(1100, window.innerWidth - 160) : Math.min(widthPx, window.innerWidth - 40);
+  const mobileNodes = workspaceNodes(nodes).filter((node) => node.kind === 'mobile');
 
   // A stale selection (workflow switch, node deleted) falls back to the
   // first Canvas node rather than a dead board.
@@ -164,6 +167,7 @@ const CanvasDock: React.FC<CanvasDockProps> = ({ nodes }) => {
           tab={tab}
           onTabChange={setTab}
           browser={<BrowserWorkspace key={workflowId ?? 'unsaved'} workflowId={workflowId} nodes={browserNodes} visible={open && tab === 'browser'} />}
+          android={<MobileWorkspace key={workflowId ?? 'unsaved'} workflowId={workflowId} nodes={mobileNodes} visible={open && tab === 'android'} />}
           board={<>
         <div className="mb-2 flex shrink-0 items-center gap-2">
           {mode === 'ephemeral' ? (

@@ -53,7 +53,10 @@ def _framework_workflows() -> list:
     from services.temporal.polling_trigger_workflow import PollingTriggerWorkflow
     from services.temporal.workflow_control_workflow import WorkflowControlWorkflow
 
+    from services.temporal.node_invocation import NodeInvocationWorkflow
+
     return [
+        NodeInvocationWorkflow,
         MachinaWorkflow,
         AgentWorkflow,
         DelegatedTaskWorkflow,

@@ -229,6 +229,8 @@ async def _summary(
     pending: int,
     done_today: int,
 ) -> Dict[str, Any]:
+    from services.workspace_capabilities import workspace_nodes
+
     graph = index_graph(getattr(workflow, "data", None))
     control = serialize_control(control_row)
     control.setdefault("workflow_id", workflow.id)
@@ -270,6 +272,7 @@ async def _summary(
         "control": control,
         "watch_node_ids": watch,
         "canvas_node_id": canvas_node_id,
+        "workspace_nodes": workspace_nodes(getattr(workflow, "data", None) or {}),
         "browser_nodes": [{"node_id": node_id, "label": graph.labels.get(node_id) or "Browser"} for node_id in graph.browser_ids],
         #: A browser node waiting for the owner ({node_id, reason, since}),
         #: else None. Read live, so it changes without a new revision.

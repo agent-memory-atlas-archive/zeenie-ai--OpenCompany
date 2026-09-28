@@ -11,7 +11,7 @@ import hashlib
 from typing import Dict, Any, Optional, List, Tuple, TYPE_CHECKING
 
 from core.logging import get_logger
-from constants import AI_AGENT_TYPES, ANDROID_SERVICE_NODE_TYPES
+from constants import ANDROID_SERVICE_NODE_TYPES
 
 if TYPE_CHECKING:
     pass
@@ -200,7 +200,9 @@ async def _dispatch_tool(tool_name: str, tool_args: Dict[str, Any], config: Dict
     # ----------------------------------------------------------------
     from services.node_registry import get_node_class
 
-    plugin_cls = None if node_type in AI_AGENT_TYPES else get_node_class(node_type)
+    from services.workspace_capabilities import is_registered_agent
+
+    plugin_cls = None if is_registered_agent(node_type) else get_node_class(node_type)
     if plugin_cls is not None:
         from services.plugin import NodeContext
 
@@ -254,7 +256,7 @@ async def _dispatch_tool(tool_name: str, tool_args: Dict[str, Any], config: Dict
     # ``AI_AGENT_TYPES`` (imported above from ``constants``) is the
     # canonical 18-entry frozenset; a new agent type added there picks
     # up delegation support without touching this dispatcher.
-    if node_type in AI_AGENT_TYPES:
+    if is_registered_agent(node_type):
         return await _execute_delegated_agent(tool_args, config)
 
     # Generic fallback for unknown node types
