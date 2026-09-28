@@ -23,6 +23,7 @@ and walks each ``ast.Call`` node looking for bare ``print(...)``.
 from __future__ import annotations
 
 import ast
+import os
 from pathlib import Path
 from typing import List, Tuple
 
@@ -30,6 +31,8 @@ SERVER_ROOT = Path(__file__).resolve().parents[1]
 
 # Directories whose ``print()`` calls are out of scope.
 _EXCLUDED_DIRS = {
+    ".opencompany",  # installed runtimes belong to isolated subprocesses
+    ".machina",  # legacy runtime data directory
     ".venv",
     "tests",  # tests themselves can print freely
     "scripts",  # CLI smoke tests are intentional stdout tools
@@ -53,17 +56,17 @@ _SANCTIONED: List[Tuple[str, str]] = [
     # its pins. Same role as the Temporal installer above.
     ("nodes/browser/_install.py", "_main"),
     ("nodes/browser/_pin.py", "main"),
+    # JSON wire replies to the parent process, not application log messages.
+    ("nodes/mobile/runtime/device_server.py", "main"),
 ]
 
 
 def _iter_python_files() -> List[Path]:
     """Yield every .py file under ``server/`` outside the exclusion set."""
     files: List[Path] = []
-    for path in SERVER_ROOT.rglob("*.py"):
-        rel_parts = path.relative_to(SERVER_ROOT).parts
-        if any(part in _EXCLUDED_DIRS for part in rel_parts):
-            continue
-        files.append(path)
+    for root, dirs, names in os.walk(SERVER_ROOT):
+        dirs[:] = [name for name in dirs if name not in _EXCLUDED_DIRS]
+        files.extend(Path(root) / name for name in names if name.endswith(".py"))
     return files
 
 

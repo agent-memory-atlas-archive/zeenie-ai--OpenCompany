@@ -33,6 +33,7 @@ class AndroidTool(ToolNode):
     annotations = {"destructive": True, "readonly": False, "open_world": True}
     task_queue = MobileUseAgent.task_queue
     retry_policy = MobileUseAgent.retry_policy
+    # Share the mobile agent's allowance for queueing and manual-control waits.
     start_to_close_timeout = MobileUseAgent.start_to_close_timeout
     Params = MobileParams
     ToolInput = AndroidTaskInput

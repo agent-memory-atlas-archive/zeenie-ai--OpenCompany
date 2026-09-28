@@ -137,6 +137,7 @@ async def main(config: dict) -> None:
     from minitap.mobile_use.sdk.agent import Agent
     from minitap.mobile_use.sdk.builders.agent_config_builder import AgentConfigBuilder
     from minitap.mobile_use.sdk.types.task import AgentProfile, TaskRequest
+    # Only this isolated engine process uses LangChain; the server does not.
     from langchain_core.callbacks import BaseCallbackHandler
 
     class Progress(BaseCallbackHandler):

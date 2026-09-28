@@ -127,6 +127,7 @@ class MobileUseAgent(ActionNode):
     ui_hints = {"workspace": {"kind": "mobile"}, "width": 300, "height": 200}
     task_queue = TaskQueue.ANDROID
     retry_policy = RetryPolicy(maximum_attempts=1)
+    # Allow shared-phone queueing and manual-control waits before the bounded task.
     start_to_close_timeout = timedelta(hours=3)
     Params = MobileParams
     Output = MobileOutput

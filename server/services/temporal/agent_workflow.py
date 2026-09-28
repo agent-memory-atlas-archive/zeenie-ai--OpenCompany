@@ -1712,9 +1712,9 @@ class AgentWorkflow:
                         **(tool_info.get("parameters") or {}),
                         **call_args,
                     }
-                    # Canvas-aware tools (currently only agentBuilder, which
-                    # walks edges to resolve its calling agent + mutates
-                    # the canvas) opt in via the BaseNode.needs_canvas
+                    # Canvas-aware tools (agentBuilder/taskManager for caller
+                    # resolution and Android for its connected model) opt in
+                    # via the BaseNode.needs_canvas
                     # ClassVar. Default tools execute against their own
                     # params alone and don't see the parent canvas.
                     plugin_cls = get_node_class(tool_info["node_type"])

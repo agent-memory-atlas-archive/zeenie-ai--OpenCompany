@@ -348,10 +348,11 @@ class TestNeedsCanvasContract:
         for cls in _all_plugin_classes():
             if not issubclass(cls, ToolNode):
                 continue
-            if cls.type in {"agentBuilder", "taskManager"}:
+            # Android needs edges to resolve its optional connected model.
+            if cls.type in {"agentBuilder", "taskManager", "android_tool"}:
                 continue
             assert cls.needs_canvas is False, (
-                f"{cls.__qualname__} declares needs_canvas=True but isn't agentBuilder. "
+                f"{cls.__qualname__} declares needs_canvas=True but isn't allowlisted. "
                 f"Add the plugin to the canvas-aware allowlist in the "
                 f"AgentWorkflow tool-dispatch comment if this is intentional, "
                 f"or remove the override if accidental."

@@ -2,8 +2,9 @@
 
 This file replaces ``test_legacy_langchain_boundary.py``, which allowed
 LangChain inside a named set of pre-cutover compatibility scopes. Those scopes
-were deleted along with the dependency, so the invariant inverts: nothing in
-the server may import LangChain, and it must not be declared or installed.
+were deleted along with the dependency. The server environment must neither
+import nor install LangChain. The isolated mobile-use subprocess has one
+explicit callback adapter exception in its own dependency environment.
 
 The AST walk (rather than a text grep) is deliberate -- it catches
 ``importlib.import_module("langchain_core")`` and ``__import__(...)``, which a
@@ -27,6 +28,13 @@ pytestmark = pytest.mark.unit
 SERVER_ROOT = Path(__file__).resolve().parents[2]
 
 FORBIDDEN_PREFIXES = ("langchain", "langgraph", "langsmith", "deepagents")
+
+# This entrypoint is launched with the mobile engine's Python, never imported
+# by the server. Permit only its progress callback adapter, not arbitrary
+# LangChain usage elsewhere in the mobile plugin or the server.
+ISOLATED_IMPORTS = {
+    ("nodes/mobile/runtime/worker.py", "main", "langchain_core.callbacks"),
+}
 
 
 class _ImportUse(NamedTuple):
@@ -98,11 +106,14 @@ def _imports(path: Path) -> Iterable[_ImportUse]:
 
 
 def _production_sources() -> list[Path]:
-    return [
-        path
-        for path in SERVER_ROOT.rglob("*.py")
-        if "tests" not in path.parts and ".venv" not in path.parts
-    ]
+    # Installed mobile engines are isolated subprocess dependencies, not server
+    # source. Prune runtime trees before walking their SDKs and virtualenvs.
+    excluded = {"tests", ".venv", ".opencompany", ".machina", "__pycache__"}
+    sources = []
+    for root, dirs, files in os.walk(SERVER_ROOT):
+        dirs[:] = [name for name in dirs if name not in excluded]
+        sources.extend(Path(root) / name for name in files if name.endswith(".py"))
+    return sources
 
 
 def test_no_module_imports_langchain():
@@ -114,6 +125,8 @@ def test_no_module_imports_langchain():
         for path in sources
         for use in _imports(path)
         if use.module.startswith(FORBIDDEN_PREFIXES)
+        and (path.relative_to(SERVER_ROOT).as_posix(), use.scope, use.module)
+        not in ISOLATED_IMPORTS
     ]
 
     assert not violations, (

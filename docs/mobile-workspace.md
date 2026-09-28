@@ -133,6 +133,8 @@ Minitap's [platform](https://www.minitap.ai/platform#slack-cli-mcp) and [miniTes
 
 ## Validation and limitations
 
+Run backend validation with a boolean `DEBUG` environment value (for example, `$env:DEBUG='false'` in PowerShell). Values such as `release` fail settings validation in subprocess tests. Source-boundary checks exclude installed runtime data in `.opencompany` and legacy `.machina`; the mobile engine runs in its own dependency environment. The Android tool intentionally receives canvas edges to resolve its connected model, and the device driver's JSON wire replies are protocol output rather than application logs.
+
 Automated tests exercise fencing, successful-operation deduplication, cancellation while draining, takeover and resume with fake subprocesses, queued cancellation, source-patch compatibility, and Python syntax compilation of the patched upstream package. Additional tests use the actual loopback HTTP broker with a fake driver, reject unsafe archives and checksum mismatches, and verify that SDK tools run through Java arguments without a command shell. Patch tests require `.tmp/mobile-use-upstream` or `MOBILE_USE_UPSTREAM_SOURCE` pointing to the pinned checkout; they skip when that fixture is absent.
 
 An earlier local smoke test executed `worker.main` profile construction, SDK initialization, a fake task, and cleanup using the actual pinned dependency environment in `.tmp/engine-smoke` and a fake controller. It made no model request and connected to no emulator.
