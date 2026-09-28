@@ -15,6 +15,7 @@ export interface BrowserWorkspaceProps {
 type Phase = 'connecting' | 'idle' | 'live' | 'error';
 interface BrowserState {
   state: string;
+  challenge_required?: boolean;
   controller?: string | null;
   request?: { message?: string; reason?: string } | null;
 }
@@ -81,7 +82,7 @@ function BrowserSessionView({ workflowId, nodeId, visible }: { workflowId: strin
     controlRef.current = false;
     setTakingControl(false);
     setState((previous) => ({ ...previous, controller: null }));
-    send({ type: 'control_release' });
+    send({ type: 'control_release', outcome: 'control_lost' });
   }, [send]);
 
   useEffect(() => {
@@ -221,7 +222,7 @@ function BrowserSessionView({ workflowId, nodeId, visible }: { workflowId: strin
     document.addEventListener('visibilitychange', onVisibility);
     return () => {
       disposed = true; window.removeEventListener('blur', releaseControl); clearTimeout(retryTimer); observer.disconnect(); document.removeEventListener('visibilitychange', onVisibility);
-      if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'control_release' }));
+      if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'control_release', outcome: 'control_lost' }));
       socket.close(); if (socketRef.current === socket) socketRef.current = null;
       if (pendingImage) { pendingImage.onerror?.(new Event('error')); pendingImage.src = ''; }
       for (const objectUrl of urls) URL.revokeObjectURL(objectUrl);
@@ -310,7 +311,7 @@ function BrowserSessionView({ workflowId, nodeId, visible }: { workflowId: strin
     send({ type: 'key', action, key: event.key, code: event.code, key_code: event.keyCode, location: event.location, repeat: event.repeat, modifiers: browserModifiers(event) });
   };
   const navigate = (action: string) => send({ type: 'navigate', action, ...(action === 'goto' ? { url: address } : {}) });
-  const statusLabel = phase === 'connecting' ? 'Connecting…' : phase === 'idle' ? 'Browser is stopped' : phase === 'error' ? 'Disconnected' : control ? 'You have control' : state.state === 'agent' ? 'Employee is browsing' : state.state === 'awaiting_user' ? 'Your help is needed' : state.controller === 'other' ? 'Another viewer has control' : 'Live browser';
+  const statusLabel = phase === 'connecting' ? 'Connecting…' : phase === 'idle' ? 'Browser is stopped' : phase === 'error' ? 'Disconnected' : control ? 'You have control' : state.challenge_required ? 'Paused for site verification' : state.state === 'agent' ? 'Employee is browsing' : state.state === 'awaiting_user' ? 'Your help is needed' : state.controller === 'other' ? 'Another viewer has control' : 'Live browser';
 
   return (
     <FullView label="Browser">
@@ -320,7 +321,7 @@ function BrowserSessionView({ workflowId, nodeId, visible }: { workflowId: strin
           setError('');
           if (control) send({ type: 'control_release' });
           else { setTakingControl(true); send({ type: 'control_request', ...(state.controller === 'other' ? { force: true } : {}) }); }
-        }}>{control ? 'Hand back' : takingControl ? 'Taking control…' : state.controller === 'other' ? 'Take over here' : 'Take control'}</Button>}
+        }}>{control ? (state.challenge_required ? 'Hand back and resume' : 'Hand back') : takingControl ? 'Taking control…' : state.controller === 'other' ? 'Take over here' : 'Take control'}</Button>}
       </div>
       {state.request && <div className="rounded border border-border-default p-2 text-sm text-fg-default">{state.request.message || state.request.reason || 'The employee needs your help.'}</div>}
       {error && <div role="alert" className="flex items-start gap-2 text-xs text-destructive"><span className="min-w-0 flex-1 break-words">{error}</span><button aria-label="Dismiss browser error" onClick={() => setError('')}>×</button></div>}

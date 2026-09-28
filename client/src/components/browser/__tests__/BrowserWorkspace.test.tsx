@@ -88,7 +88,7 @@ describe('BrowserWorkspace session lifecycle', () => {
     expect(screen.getByRole('textbox', { name: 'Browser address' })).toBeEnabled();
     fireEvent.keyDown(screen.getByRole('group', { name: 'Live browser page' }), { key: 'Enter', code: 'Enter', keyCode: 13 });
     expect(socket.sent.at(-1)).toMatchObject({ type: 'key', action: 'down', key: 'Enter', key_code: 13 });
-    unmount(); expect(socket.sent.at(-1)).toEqual({ type: 'control_release' });
+    unmount(); expect(socket.sent.at(-1)).toEqual({ type: 'control_release', outcome: 'control_lost' });
   });
   it('acknowledges malformed binary frames so a bad frame cannot stall the stream', async () => {
     render(<BrowserWorkspace workflowId="wf" nodes={nodes} />);
@@ -153,6 +153,18 @@ describe('BrowserWorkspace session lifecycle', () => {
 
 
 describe('browser frame and input lifecycle boundaries', () => {
+  it('distinguishes an explicit challenge resume from losing browser focus', () => {
+    render(<BrowserWorkspace workflowId="wf" nodes={nodes} />);
+    const socket = MockSocket.instances[0];
+    act(() => { socket.open(); socket.message({ type: 'state', state: 'awaiting_user', challenge_required: true, request: { reason: 'captcha', message: 'Finish the site verification.' } }); });
+    expect(screen.getByRole('status')).toHaveTextContent('Paused for site verification');
+    expect(screen.getByText('Finish the site verification.')).toBeInTheDocument();
+    act(() => socket.message({ type: 'state', state: 'user', controller: 'you', challenge_required: true }));
+    fireEvent.click(screen.getByRole('button', { name: 'Hand back and resume' }));
+    expect(socket.sent.at(-1)).toEqual({ type: 'control_release' });
+    fireEvent(window, new Event('blur'));
+    expect(socket.sent.at(-1)).toEqual({ type: 'control_release', outcome: 'control_lost' });
+  });
   it('does not reset an unchanged canvas backing store', async () => {
     const { frame, draw } = mockFrameRenderer();
     const width = vi.spyOn(HTMLCanvasElement.prototype, 'width', 'set');
@@ -207,7 +219,7 @@ describe('browser frame and input lifecycle boundaries', () => {
     fireEvent.keyDown(surface, { key: 'Shift', code: 'ShiftLeft' });
     if (kind === 'blur') fireEvent(window, new Event('blur'));
     else fireEvent.pointerCancel(surface);
-    expect(socket.sent.at(-1)).toEqual({ type: 'control_release' });
+    expect(socket.sent.at(-1)).toEqual({ type: 'control_release', outcome: 'control_lost' });
     const count = socket.sent.length;
     fireEvent.keyDown(surface, { key: 'a', code: 'KeyA' });
     expect(socket.sent).toHaveLength(count);
@@ -220,7 +232,7 @@ describe('browser frame and input lifecycle boundaries', () => {
     expect(socket.sent.at(-1)).toEqual({ type: 'control_request' });
     vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
     fireEvent(document, new Event('visibilitychange'));
-    expect(socket.sent.slice(-2)).toEqual([{ type: 'visibility', visible: false }, { type: 'control_release' }]);
+    expect(socket.sent.slice(-2)).toEqual([{ type: 'visibility', visible: false }, { type: 'control_release', outcome: 'control_lost' }]);
     expect(screen.getByRole('button', { name: 'Take control' })).toBeEnabled();
   });
   it('bounds decoding when a sender exceeds its two-frame credit', async () => {

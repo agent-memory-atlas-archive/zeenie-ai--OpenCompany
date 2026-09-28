@@ -3,7 +3,9 @@
 Each call spawns ``browser-use`` with the operation's script on stdin. The
 CLI hands the work to a daemon that stays up per profile and holds its own
 CDP connection to the profile's Chrome (``BU_CDP_URL``), so a warm call costs
-about 0.3 s. On a timeout only the CLI process is killed, never the daemon.
+about 0.3 s. A timeout or interruption stops the CLI and its daemon so an
+abandoned script cannot keep issuing input. Already dispatched actions may
+still have happened; the caller must inspect the page before acting again.
 
 The environment is built from an allowlist, never inherited, because the CLI
 executes scripts and loads plugins from its surroundings:
@@ -48,6 +50,14 @@ class BrowserUnavailable(RuntimeError):
     """The CLI could not reach the profile's Chrome."""
 
 
+class BrowserStepOutcomeUnknown(NodeUserError):
+    """The command's outcome is unknown; it must not be replayed blindly."""
+
+
+class BrowserStepTimeout(BrowserStepOutcomeUnknown):
+    """The command did not return a confirmed result before its deadline."""
+
+
 @dataclass
 class CliResult:
     ok: bool
@@ -77,7 +87,7 @@ def parse_output(stdout: str, stderr: str, exit_code: int, nonce: str) -> CliRes
             data = json.loads(payload)
         except ValueError:
             data = None
-        if isinstance(data, dict):
+        if isinstance(data, dict) and isinstance(data.get("ok"), bool) and (data["ok"] or isinstance(data.get("error"), dict)):
             error = data.get("error") or {}
             return CliResult(
                 ok=bool(data.get("ok")),
@@ -90,9 +100,12 @@ def parse_output(stdout: str, stderr: str, exit_code: int, nonce: str) -> CliRes
                 exit_code=exit_code,
             )
     low = stderr.lower()
-    if "unreachable" in low or "fatal:" in low or "connection refused" in low or "devtools" in low:
+    if payload is None and ("unreachable" in low or "fatal:" in low or "connection refused" in low or "devtools" in low):
         raise BrowserUnavailable(f"the browser could not be reached: {stderr.strip()[-400:]}")
-    raise RuntimeError(f"browser-use exited {exit_code} without a result: {(stderr or output).strip()[-800:]}")
+    raise BrowserStepOutcomeUnknown(
+        f"The browser step exited {exit_code} without a valid result. Its action may already have happened. "
+        f"Take a snapshot before another action. {(stderr or output).strip()[-800:]}"
+    )
 
 
 class BrowserUseCli:
@@ -104,6 +117,7 @@ class BrowserUseCli:
         self.profile_id = profile_id
         self.cdp_http_url = cdp_http_url
         self._proc: Optional[asyncio.subprocess.Process] = None
+        self._interrupt_version = 0
 
     # -- environment -----------------------------------------------------------
 
@@ -167,6 +181,7 @@ class BrowserUseCli:
         return result
 
     async def _exec(self, argv: list[str], stdin: Optional[str], *, timeout: float) -> tuple[str, str, int]:
+        interrupt_version = self._interrupt_version
         d = self.dirs()
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -181,15 +196,25 @@ class BrowserUseCli:
             raise BrowserUnavailable("the browser-use CLI is missing; it reinstalls on the next step") from exc
         self._proc = proc
         try:
+            # A takeover can happen while process creation is in flight.
+            if interrupt_version != self._interrupt_version:
+                await self._kill(proc)
+                self.stop_daemon()
+                raise BrowserStepOutcomeUnknown("The browser step was interrupted. Its action may already have happened. Take a snapshot before another action.")
             out, err = await asyncio.wait_for(proc.communicate(stdin.encode("utf-8") if stdin is not None else None), timeout=timeout)
+            if interrupt_version != self._interrupt_version:
+                raise BrowserStepOutcomeUnknown("The browser step was interrupted. Its action may already have happened. Take a snapshot before another action.")
         except asyncio.TimeoutError:
             await self._kill(proc)
-            raise NodeUserError(f"The browser step took longer than {int(timeout)} s and was stopped. Take a snapshot to see where it got to.") from None
+            self.stop_daemon()
+            raise BrowserStepTimeout(f"The browser step exceeded {int(timeout)} s. Its action may already have happened. Take a snapshot before another action.") from None
         except asyncio.CancelledError:
             await self._kill(proc)
+            self.stop_daemon()
             raise
         finally:
-            self._proc = None
+            if self._proc is proc:
+                self._proc = None
         return (
             out[:_MAX_OUTPUT_BYTES].decode("utf-8", errors="replace"),
             err[-_MAX_OUTPUT_BYTES:].decode("utf-8", errors="replace"),
@@ -212,9 +237,11 @@ class BrowserUseCli:
 
     async def interrupt(self) -> None:
         """Stop the running step (the owner took control)."""
+        self._interrupt_version += 1
         proc = self._proc
         if proc is not None:
             await self._kill(proc)
+            self.stop_daemon()
 
     async def doctor(self) -> Dict[str, Any]:
         """browser-harness's own health report (``doctor --json``)."""
@@ -252,4 +279,4 @@ class BrowserUseCli:
                 pass
 
 
-__all__ = ["BrowserUnavailable", "BrowserUseCli", "CliResult", "USER_ERROR_TYPES", "parse_output"]
+__all__ = ["BrowserStepOutcomeUnknown", "BrowserStepTimeout", "BrowserUnavailable", "BrowserUseCli", "CliResult", "USER_ERROR_TYPES", "parse_output"]

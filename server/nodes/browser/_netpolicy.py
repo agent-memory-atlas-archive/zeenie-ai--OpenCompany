@@ -83,11 +83,15 @@ def parse_allowed_domains(raw: Union[str, Iterable[str], None]) -> Tuple[str, ..
 
 def domain_allowed(host: str, allowed: Tuple[str, ...]) -> bool:
     """Suffix match on label boundaries: ``example.com`` allows
-    ``www.example.com`` but not ``badexample.com``."""
+    ``www.example.com`` but not ``badexample.com``. IP entries match only
+    the exact address, never a numeric suffix or a domain beneath it."""
     if not allowed:
         return True
     host = host.lower().rstrip(".")
-    return any(host == d or host.endswith("." + d) for d in allowed)
+    literal = _literal_ip(host)
+    if literal is not None:
+        return any(_literal_ip(d) == literal for d in allowed)
+    return any(_literal_ip(d) is None and (host == d.rstrip(".") or host.endswith("." + d.rstrip("."))) for d in allowed)
 
 
 def _literal_ip(host: str) -> Optional[IPAddress]:
@@ -122,7 +126,7 @@ def host_block_reason(host: str, policy: NetPolicy) -> Optional[str]:
         return "no host"
     if host in _METADATA_HOSTS:
         return "cloud metadata addresses are never reachable"
-    if _literal_ip(host) is None and not domain_allowed(host, policy.allowed_domains):
+    if not domain_allowed(host, policy.allowed_domains):
         return f"{host} is not in this Browser node's allowed domains"
     if host == "localhost" or host.endswith(".localhost"):
         if not policy.allow_private_network:

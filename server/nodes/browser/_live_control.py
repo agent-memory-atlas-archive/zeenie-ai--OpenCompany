@@ -205,7 +205,7 @@ class LiveControlQueue:
         if self._takeover_viewer == viewer_id and self._takeover is not None:
             self._takeover.cancel()
 
-    def release(self, viewer, *, outcome="handed_back", note="") -> None:
+    def release(self, viewer, *, outcome="control_lost", note="") -> None:
         self.invalidate(viewer.id)
         if getattr(self.controller, "controller_viewer", None) != viewer.id and getattr(self.controller, "state", None) != "awaiting_user":
             return

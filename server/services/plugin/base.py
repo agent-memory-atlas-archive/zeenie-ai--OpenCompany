@@ -201,6 +201,11 @@ class BaseNode:
 
     component_kind: ClassVar[str] = "generic"
     usable_as_tool: ClassVar[bool] = False
+    # Opt-in public error metadata for AI-tool callers. The default retains
+    # the historical error-only response. Plugins select a small explicit
+    # set from their validated output rather than forwarding the envelope
+    # (which may carry internal execution details or unrelated payloads).
+    tool_error_fields: ClassVar[frozenset[str]] = frozenset()
     # Explicit agent capability used by graph validation/migration. Rendering
     # kind and palette group are intentionally not proxies: several
     # non-agents render with componentKind="agent", while Codex-style agents
@@ -672,7 +677,8 @@ class BaseNode:
         Unwraps the :meth:`_wrap_success` envelope to a flat dict —
         tool-call responses fed back into an LLM shouldn't include
         execution_time / timestamp chrome. Errors surface as
-        ``{"error": "..."}`` the LLM can reason about.
+        ``{"error": "..."}`` the LLM can reason about. Plugins may opt into
+        additional non-null output fields with ``tool_error_fields``.
 
         ToolNode overrides :meth:`_wrap_success` to return flat, so this
         method is idempotent there. ActionNode+``usable_as_tool`` classes
@@ -692,9 +698,7 @@ class BaseNode:
             if "success" not in envelope:
                 return envelope
             if envelope.get("success") is False:
-                return {
-                    "error": envelope.get("error", "tool execution failed")
-                }
+                return self._tool_error_payload(envelope)
             result = envelope.get("result")
             return result if isinstance(result, dict) else {"result": result}
 
@@ -762,11 +766,19 @@ class BaseNode:
         if "success" not in envelope:
             return envelope
         if envelope.get("success") is False:
-            return {"error": envelope.get("error", "tool execution failed")}
+            return self._tool_error_payload(envelope)
         result = envelope.get("result")
         if isinstance(result, dict):
             return result
         return {"result": result}
+
+    def _tool_error_payload(self, envelope: Dict[str, Any]) -> Dict[str, Any]:
+        """Copy only explicitly declared public metadata from a tool error."""
+        result = {"error": envelope.get("error", "tool execution failed")}
+        for name in self.tool_error_fields:
+            if name != "error" and name in envelope and envelope[name] is not None:
+                result[name] = envelope[name]
+        return result
 
     # ---- internals --------------------------------------------------------
 

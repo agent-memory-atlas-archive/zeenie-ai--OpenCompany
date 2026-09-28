@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from nodes.browser._cli import CliResult
+from nodes.browser._controls import ActionGuard
 from nodes.browser._netpolicy import NetPolicy
 from nodes.browser._profiles import Profile
 from nodes.browser._session import ControlState, ProfileController
@@ -56,7 +57,7 @@ class FakeWebMcp:
     def count(self, target_id):
         return 2
 
-    async def invoke(self, target_id, name, tool_input, *, frame_id=None, mode="read_only"):
+    async def invoke(self, target_id, name, tool_input, *, frame_id=None, mode="read_only", timeout=60):
         if mode == "read_only" and name == "buy":
             from services.plugin.base import NodeUserError
 
@@ -67,6 +68,7 @@ class FakeWebMcp:
 
 class FakeRuntime:
     def __init__(self, tmp_path) -> None:
+        self.action_guard = ActionGuard()
         self.controller = ProfileController("bp_1", "Work")
         self.controller.active_target_id = "T1"
         self.controller.tabs["T1"] = dict(PAGE)
@@ -110,7 +112,9 @@ def _ctx(**raw) -> NodeContext:
 
 
 async def _run(params: Dict[str, Any], **raw) -> Dict[str, Any]:
-    return await BrowserNode().execute("n1", params, _ctx(**raw))
+    # Most contract tests are about ordering, not wall-clock pacing. Tests
+    # for admission explicitly select the production timing below.
+    return await BrowserNode().execute("n1", {"min_action_interval_ms": 0, **params}, _ctx(**raw))
 
 
 async def test_navigate_runs_the_script_and_reports_the_page(runtime):
@@ -235,3 +239,122 @@ async def test_the_profile_dropdown_lists_the_callers_profiles_not_a_client_name
     with patch("nodes.browser._handlers.ProfileStore", Store), patch("nodes.browser._handlers.get_database", lambda: None):
         await dispatch_load_options("browserProfiles", {"user_id": "someone-else"}, principal="alice")
     assert listed == ["alice"]
+
+
+async def test_success_keeps_the_flat_tool_contract(runtime):
+    result = await _run({"operation": "page_info"})
+    assert "success" not in result
+    assert BrowserNode.interpret_result(result) == (True, result, None)
+
+
+@pytest.mark.parametrize("params", [{"operation": "navigate", "url": "https://example.com"}, {"operation": "tabs", "tab_action": "new", "url": "https://example.com"}, {"operation": "tabs", "tab_action": "close", "tab_id": "T1"}])
+async def test_navigation_and_tab_changes_are_not_replayed_by_temporal(runtime, params):
+    with patch("nodes.browser.browser._attempt", return_value=2):
+        result = await _run(params)
+    assert result["success"] is False
+    assert not runtime.cli.calls
+
+
+@pytest.mark.parametrize("error_class", ["BrowserUnavailable", "BrowserStepOutcomeUnknown", "BrowserStepTimeout"])
+async def test_uncertain_navigation_is_not_replayed_and_requires_observation(runtime, error_class):
+    from nodes.browser import _cli
+
+    runtime.cli.run = AsyncMock(side_effect=getattr(_cli, error_class)("lost reply"))
+    result = await _run({"operation": "navigate", "url": "https://example.com"})
+    assert result["error_type"] == "outcome_unknown"
+    assert runtime.cli.run.await_count == 1
+    denied = await _run({"operation": "click", "x": 4, "y": 4})
+    assert denied["error_type"] == "outcome_unknown"
+    assert runtime.cli.run.await_count == 1
+    runtime.cli.run.side_effect = None
+    runtime.cli.run.return_value = CliResult(ok=True, value={}, page=dict(PAGE))
+    await _run({"operation": "snapshot"})
+    assert not runtime.controller.needs_observation
+    allowed = await _run({"operation": "click", "x": 4, "y": 4})
+    assert allowed.get("success") is not False
+
+
+async def test_site_rate_limit_does_not_block_observations(runtime):
+    first = await _run({"operation": "navigate", "url": "https://example.com", "min_action_interval_ms": 60000})
+    assert first.get("success") is not False
+    denied = await _run({"operation": "click", "x": 2, "y": 2, "min_action_interval_ms": 60000})
+    assert denied["error_type"] == "rate_limited" and denied["retry_after"] > 0
+    assert len(runtime.cli.calls) == 1
+    observed = await _run({"operation": "snapshot", "min_action_interval_ms": 60000})
+    assert observed.get("success") is not False
+
+
+async def test_irrelevant_fields_cannot_evade_repeat_limit(runtime):
+    params = {"operation": "navigate", "url": "https://example.com", "max_repeat_actions": 1}
+    await _run(params)
+    denied = await _run({**params, "max_chars": 50000})
+    assert denied["error_type"] == "repeat_limit"
+    assert len(runtime.cli.calls) == 1
+
+
+async def test_challenge_pauses_operations_until_explicit_owner_handback(runtime):
+    runtime.cli.results.append(CliResult(ok=False, error_type="challenge_required", error="Please finish the site verification.", page=dict(PAGE)))
+    result = await _run({"operation": "navigate", "url": "https://example.com"})
+    assert result["error_type"] == "challenge_required" and result["next_action"] == "request_user"
+    assert runtime.controller.state == ControlState.AWAITING_USER
+    assert runtime.controller.pending.reason == "captcha"
+    denied = await _run({"operation": "click", "x": 4, "y": 4})
+    assert denied["error_type"] == "challenge_required" and len(runtime.cli.calls) == 1
+    await runtime.controller.take_over("viewer")
+    await runtime.controller.hand_back("viewer", outcome="control_lost")
+    assert runtime.controller.challenge_required
+    await runtime.controller.take_over("viewer")
+    await runtime.controller.hand_back("viewer")
+    assert not runtime.controller.challenge_required
+    assert (await _run({"operation": "snapshot"})).get("success") is not False
+
+
+async def test_webmcp_cannot_bypass_challenge_detection(runtime):
+    runtime.cli.results.append(CliResult(ok=False, error_type="challenge_required", error="Please finish verification.", page=dict(PAGE)))
+    result = await _run({"operation": "webmcp_call", "webmcp_tool": "search"})
+    assert result["error_type"] == "challenge_required"
+    assert not runtime.prt.webmcp.invoked
+
+
+@pytest.mark.parametrize("config", [{"interaction": "read_only"}, {"webmcp_mode": "disabled"}])
+async def test_webmcp_listing_matches_enforced_permissions(runtime, config):
+    listed = await _run({"operation": "webmcp_list", **config})
+    assert all(not tool["callable"] for tool in listed["webmcp_tools"])
+
+
+async def test_tool_arguments_cannot_raise_saved_action_limits(runtime):
+    saved = {"min_action_interval_ms": 0, "max_actions_per_minute": 1}
+    database = SimpleNamespace(get_node_parameters=AsyncMock(return_value=saved))
+    args = {"operation": "navigate", "url": "https://example.com", "max_actions_per_minute": 300}
+    with patch("services.plugin.deps.get_database", return_value=database):
+        first = await BrowserNode().execute_as_tool(args, {**saved, **args}, _ctx())
+        second = await BrowserNode().execute_as_tool({**args, "url": "https://example.com/next"}, {**saved, **args}, _ctx())
+    assert first.get("success") is not False
+    assert second["error_type"] == "rate_limited"
+    assert len(runtime.cli.calls) == 1
+
+
+async def test_webmcp_unknown_outcome_requires_observation(runtime):
+    from nodes.browser._webmcp import WebMcpOutcomeUnknown
+
+    runtime.prt.webmcp.invoke = AsyncMock(side_effect=WebMcpOutcomeUnknown("The invocation reply was lost."))
+    failed = await _run({"operation": "webmcp_call", "webmcp_tool": "search", "op_timeout_s": 7})
+    assert failed["error_type"] == "outcome_unknown"
+    assert runtime.controller.needs_observation
+    assert runtime.prt.webmcp.invoke.call_args.kwargs["timeout"] <= 7
+    blocked = await _run({"operation": "navigate", "url": "https://example.com/next"})
+    assert blocked["error_type"] == "outcome_unknown"
+    assert len(runtime.cli.calls) == 1  # only the preflight observation
+
+
+@pytest.mark.parametrize("operation", ["navigate", "webmcp_call"])
+async def test_cancelled_site_action_requires_observation(runtime, operation):
+    if operation == "navigate":
+        runtime.cli.run = AsyncMock(side_effect=asyncio.CancelledError)
+    else:
+        runtime.prt.webmcp.invoke = AsyncMock(side_effect=asyncio.CancelledError)
+    with pytest.raises(asyncio.CancelledError):
+        await _run({"operation": operation, "url": "https://example.com", "webmcp_tool": "search"})
+    assert runtime.controller.needs_observation
+    blocked = await _run({"operation": "click", "x": 4, "y": 4})
+    assert blocked["error_type"] == "outcome_unknown"

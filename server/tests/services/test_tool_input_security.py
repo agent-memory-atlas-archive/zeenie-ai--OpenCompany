@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
+import pytest
 from pydantic import BaseModel, ConfigDict
 
 from nodes.tool.current_time_tool import CurrentTimeToolNode
@@ -203,6 +205,44 @@ async def test_action_node_tools_keep_their_existing_merge_contract():
         "endpoint": "https://model.example",
         "query": "hello",
     }
+
+
+@pytest.mark.parametrize("node_cls", [_ConfiguredToolNode, _DualPurposeActionNode])
+async def test_tool_errors_keep_the_default_error_only_contract(node_cls, monkeypatch):
+    node = node_cls()
+    envelope = {"success": False, "error": "Wait before continuing.", "error_type": "rate_limited", "retry_after": 3}
+    monkeypatch.setattr(node, "execute", AsyncMock(return_value=envelope))
+    result = await node.execute_as_tool({"endpoint": "https://configured.example"}, {"endpoint": "https://configured.example"}, NodeContext(node_id="test", node_type=node_cls.type))
+    assert result == {"error": "Wait before continuing."}
+    assert envelope["success"] is False and envelope["retry_after"] == 3
+
+
+@pytest.mark.parametrize("node_cls", [_ConfiguredToolNode, _DualPurposeActionNode])
+async def test_tool_errors_copy_only_declared_non_null_fields(node_cls, monkeypatch):
+    monkeypatch.setattr(node_cls, "tool_error_fields", frozenset({"success", "error_type", "retry_after", "next_action", "url", "absent"}))
+    node = node_cls()
+    envelope = {
+        "success": False, "error": "Inspect the page.", "error_type": "outcome_unknown",
+        "retry_after": 0, "next_action": "snapshot", "url": None,
+        "internal_token": "do-not-expose", "result": {"private": "payload"},
+    }
+    monkeypatch.setattr(node, "execute", AsyncMock(return_value=envelope))
+    result = await node.execute_as_tool({"endpoint": "https://configured.example"}, {"endpoint": "https://configured.example"}, NodeContext(node_id="test", node_type=node_cls.type))
+    assert result == {
+        "success": False, "error": "Inspect the page.", "error_type": "outcome_unknown",
+        "retry_after": 0, "next_action": "snapshot",
+    }
+    assert "internal_token" in envelope and "url" in envelope
+
+
+@pytest.mark.parametrize("node_cls", [_ConfiguredToolNode, _DualPurposeActionNode])
+async def test_opted_in_error_metadata_does_not_change_success_results(node_cls, monkeypatch):
+    monkeypatch.setattr(node_cls, "tool_error_fields", frozenset({"success", "error_type"}))
+    node = node_cls()
+    payload = {"endpoint": "https://configured.example", "query": "hello"}
+    envelope = payload if issubclass(node_cls, ToolNode) else {"success": True, "result": payload}
+    monkeypatch.setattr(node, "execute", AsyncMock(return_value=envelope))
+    assert await node.execute_as_tool({"endpoint": "https://configured.example"}, {"endpoint": "https://configured.example"}, NodeContext(node_id="test", node_type=node_cls.type)) == payload
 
 
 async def test_memory_panel_scope_is_resolved_from_workflow_and_auth(

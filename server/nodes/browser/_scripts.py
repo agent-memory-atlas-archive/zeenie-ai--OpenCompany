@@ -30,8 +30,11 @@ MARKER = "OCR1"
 PRELUDE = r'''
 import json as _oc_json
 import sys as _oc_sys
+import re as _oc_re
+from urllib.parse import urlsplit as _oc_urlsplit
 _oc_args = _oc_json.loads(__ARGS__)
 _oc_nonce = __NONCE__
+_oc_operation = __OPERATION__
 
 
 class _OcError(Exception):
@@ -51,6 +54,41 @@ def _oc_page():
 def _oc_emit(payload):
     payload["page"] = _oc_page()
     print("__MARKER__:" + _oc_nonce + ":" + _oc_json.dumps(payload, default=str), flush=True)
+
+
+def _oc_google_challenge(url):
+    try:
+        parsed = _oc_urlsplit(str(url or "")[:8192])
+        host = (parsed.hostname or "").lower().rstrip(".")
+        google = _oc_re.fullmatch(r"(?:[a-z0-9-]+\.)*google\.(?:com|cat|[a-z]{2}|(?:co|com)\.[a-z]{2})", host)
+        return bool(google and (parsed.path == "/sorry" or parsed.path.startswith("/sorry/")))
+    except ValueError:
+        return False
+
+
+def _oc_check_challenge():
+    # Return only bounded metadata and marker booleans, never body text.
+    # A normal reCAPTCHA/Turnstile widget or a page discussing CAPTCHAs is
+    # not an interstitial. Cloudflare needs both its title and its markers.
+    page = _oc_page() or {}
+    if _oc_google_challenge(page.get("url")):
+        raise _OcError("challenge_required", "This page requires human verification. Take control of the browser to continue.")
+    facts = js("""(() => ({
+        url: String(location.href).slice(0, 8192),
+        title: String(document.title).slice(0, 200),
+        challengeForm: !!document.querySelector('#challenge-form'),
+        challengeScript: !!document.querySelector('script[src*="/cdn-cgi/challenge-platform/"]'),
+        challengeOptions: '_cf_chl_opt' in window
+    }))()""")
+    if not isinstance(facts, dict):
+        raise _OcError("cdp", "Could not inspect the current page. Take a new snapshot before continuing.")
+    title = str(facts.get("title") or "").strip().lower()
+    cloudflare = title in {"just a moment...", "just a moment…", "attention required! | cloudflare"} and (
+        facts.get("challengeOptions") is True or
+        (facts.get("challengeForm") is True and facts.get("challengeScript") is True)
+    )
+    if _oc_google_challenge(facts.get("url")) or cloudflare:
+        raise _OcError("challenge_required", "This page requires human verification. Take control of the browser to continue.")
 
 
 def _oc_node_center(backend_id):
@@ -105,11 +143,52 @@ def _oc_object(a):
     raise _OcError("script", "Give a ref from snapshot or a CSS selector.")
 
 
+def _oc_click_point(a):
+    if a.get("backend_node_id") is None and not a.get("selector"):
+        return _oc_point(a)
+    obj = _oc_object(a)
+    try:
+        result = cdp(
+            "Runtime.callFunctionOn", objectId=obj, returnByValue=True, _response_timeout=10,
+            functionDeclaration="""function() {
+                if (!this.isConnected) return {error: 'detached'};
+                if (this.matches(':disabled') || this.closest('[aria-disabled="true"], [inert]')) return {error: 'disabled'};
+                this.scrollIntoView({block: 'center', inline: 'center', behavior: 'instant'});
+                if (this.checkVisibility && !this.checkVisibility({checkOpacity: true, checkVisibilityCSS: true})) return {error: 'hidden'};
+                const b = this.getBoundingClientRect(), x = b.left + b.width / 2, y = b.top + b.height / 2;
+                if (!(b.width > 0 && b.height > 0)) return {error: 'hidden'};
+                const doc = this.ownerDocument, root = this.getRootNode();
+                const hit = root.elementFromPoint ? root.elementFromPoint(x, y) : doc.elementFromPoint(x, y);
+                if (!hit || (hit !== this && !this.contains(hit))) return {error: 'covered'};
+                // Check outside a shadow root too: its own hit test cannot
+                // see an overlay elsewhere in the containing document.
+                let ancestor = this;
+                while (ancestor.getRootNode().host) ancestor = ancestor.getRootNode().host;
+                const outer = doc.elementFromPoint(x, y);
+                if (!outer || (outer !== ancestor && !ancestor.contains(outer))) return {error: 'covered'};
+                return {x, y};
+            }""",
+        )
+        value = (result.get("result") or {}).get("value") or {}
+        if result.get("exceptionDetails") or value.get("error") or "x" not in value or "y" not in value:
+            raise _OcError("not_found", "The target is not ready to receive a click. Take a new snapshot before trying again.")
+        return float(value["x"]), float(value["y"])
+    finally:
+        try:
+            cdp("Runtime.releaseObject", objectId=obj, _response_timeout=5)
+        except Exception:
+            pass
+
+
 def _oc_settle(seconds):
     try:
-        wait_for_load(seconds)
-    except Exception:
-        pass
+        loaded = wait_for_load(seconds)
+    except TimeoutError:
+        _oc_check_challenge()
+        raise _OcError("timeout", "Timed out waiting for the page to finish loading.")
+    if loaded is False:
+        _oc_check_challenge()
+        raise _OcError("timeout", "Timed out waiting for the page to finish loading.")
 '''
 
 EPILOGUE = r'''
@@ -120,9 +199,17 @@ try:
             _oc_current = current_tab()
             if (_oc_current.get("targetId") or _oc_current.get("target_id")) != _oc_target:
                 switch_tab(_oc_target)
+                _oc_current = current_tab()
+                if (_oc_current.get("targetId") or _oc_current.get("target_id")) != _oc_target:
+                    raise RuntimeError("target did not switch")
         except Exception:
-            pass
-    _oc_emit({"ok": True, "value": _oc_main(_oc_args)})
+            raise _OcError("stale_ref", "The requested browser tab is unavailable. Take a new snapshot before continuing.")
+    if _oc_args.get("_guard_actions"):
+        _oc_check_challenge()
+    _oc_value = _oc_main(_oc_args)
+    if _oc_operation != "screenshot":
+        _oc_check_challenge()
+    _oc_emit({"ok": True, "value": _oc_value})
 except _OcError as _oc_e:
     _oc_emit({"ok": False, "error": {"type": _oc_e.kind, "message": str(_oc_e)}})
 except SystemExit:
@@ -216,10 +303,9 @@ def _oc_main(a):
 
 _OPS["click"] = r'''
 def _oc_main(a):
-    x, y = _oc_point(a)
+    x, y = _oc_click_point(a)
     click_at_xy(x, y, button=a.get("button") or "left", clicks=int(a.get("clicks") or 1))
-    wait(0.3)
-    _oc_settle(5)
+    _oc_settle(float(a.get("timeout", 5)))
     return {"x": round(x, 1), "y": round(y, 1)}
 '''
 
@@ -249,7 +335,7 @@ def _oc_main(a):
         type_text(text)
     if a.get("submit"):
         press_key("Enter")
-        _oc_settle(10)
+        _oc_settle(float(a.get("timeout", 10)))
     return {"typed_chars": len(text), "submitted": bool(a.get("submit"))}
 '''
 
@@ -311,7 +397,7 @@ def _oc_main(a):
     action = a.get("tab_action") or "list"
     if action == "new":
         new_tab(a.get("url") or "about:blank")
-        _oc_settle(15)
+        _oc_settle(float(a.get("timeout", 15)))
     elif action == "switch":
         switch_tab(a["tab_id"], activate=True)
     elif action == "close":
@@ -334,7 +420,7 @@ def _oc_main(a):
         if not 0 <= index < len(entries):
             raise _OcError("not_found", "There is no page to go " + ("back" if action == "back" else "forward") + " to.")
         cdp("Page.navigateToHistoryEntry", entryId=entries[index]["id"])
-    _oc_settle(15)
+    _oc_settle(float(a.get("timeout", 15)))
     return page_info()
 '''
 
@@ -407,6 +493,7 @@ def build_script(op: str, args: Dict[str, Any], nonce: str) -> str:
     # The arguments go in LAST: a replacement after them could rewrite text
     # inside the argument literal (an argument containing "__NONCE__").
     prelude = PRELUDE.replace("__MARKER__", MARKER).replace("__NONCE__", repr(nonce))
+    prelude = prelude.replace("__OPERATION__", repr(op))
     prelude = prelude.replace("__ARGS__", repr(json.dumps(args, default=str)), 1)
     return prelude + body + EPILOGUE
 

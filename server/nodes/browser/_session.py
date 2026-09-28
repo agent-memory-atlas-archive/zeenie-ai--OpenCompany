@@ -24,6 +24,10 @@ the holder's last step.
 
 Pending ``request_user`` calls live in memory: a backend restart kills the
 profile's Chrome anyway, and the retried step simply asks again.
+
+A detected challenge is a separate latch: automatic hand-back, a request
+deadline, or a released workflow lease never admits the agent again. Only
+the owner explicitly handing back their control clears it.
 """
 
 from __future__ import annotations
@@ -138,6 +142,9 @@ class ProfileController:
         self.controller_viewer: Optional[str] = None
         self.user_input_deadline = 0.0
         self.pending: Optional[UserRequest] = None
+        self.challenge_required = False
+        self.needs_observation = False
+        self._challenge_message = ""
         self.viewers: set[str] = set()
         self.active_target_id: Optional[str] = None
         self.tabs: Dict[str, Dict[str, Any]] = {}
@@ -188,6 +195,7 @@ class ProfileController:
             "controller": controller,
             "profile": {"id": self.profile_id, "name": self.profile_name},
             "request": self.pending.to_wire() if self.pending else None,
+            "challenge_required": self.challenge_required,
             "revision": self.revision,
         }
 
@@ -265,6 +273,11 @@ class ProfileController:
             # Keep the latest policy (the node's settings may have changed).
             self.lease_session = session
         self.lease_renewed = time.monotonic()
+        if self.challenge_required and self.pending is not None and self.pending.session_id != session.session_id:
+            # A workflow may release its lease while Chrome still displays
+            # the challenge. The next profile user inherits the pause.
+            self.pending.session_id = session.session_id
+            await self._broadcast()
 
     async def release_lease(self, session_id: Optional[str] = None) -> None:
         if session_id is None or (self.lease_session and self.lease_session.session_id == session_id):
@@ -277,7 +290,8 @@ class ProfileController:
             if self.state != ControlState.IDLE:
                 self._cancel_viewer_drop(self.controller_viewer)
                 self.controller_viewer = None
-                await self._set_state(ControlState.IDLE, reason="released")
+                state = ControlState.AWAITING_USER if self.challenge_required else ControlState.IDLE
+                await self._set_state(state, reason="released")
             async with self._changed:
                 self._changed.notify_all()
 
@@ -289,10 +303,14 @@ class ProfileController:
     ) -> AsyncIterator[None]:
         """Run one agent step with the profile leased and control held."""
         await self.acquire_lease(session)
+        if self.challenge_required:
+            raise NodeUserError("This browser is paused for a challenge. The owner must take control, finish it, and explicitly hand it back.")
         ok = await self._wait_for(lambda: not self._user_blocks_agent(), USER_CONTROL_WAIT_SECONDS)
         if not ok:
             raise NodeUserError("The owner is controlling this browser. Call request_user to wait for them to hand it back.")
         async with self._op_lock:
+            if self.challenge_required:
+                raise NodeUserError("This browser is paused for a challenge. The owner must take control, finish it, and explicitly hand it back.")
             if self._user_blocks_agent():
                 raise NodeUserError("The owner took control of this browser. Call request_user to wait for them.")
             self._interrupt_op = interrupt
@@ -305,16 +323,23 @@ class ProfileController:
                 if self.state == ControlState.AGENT:
                     await self._set_state(ControlState.IDLE, reason="agent step finished")
 
-    async def request_user(
-        self, session: BrowserSession, *, reason: str, message: str, timeout: float, wait: float
-    ) -> Dict[str, Any]:
-        """Ask the owner to take over. Returns ``{"status", "note"}``.
+    async def pause_for_challenge(self, session: BrowserSession, *, message: str, timeout: float) -> None:
+        """Latch a challenge without acquiring the agent operation lock.
 
-        Waits at most ``wait`` seconds (the tool-call budget); when that runs
-        out first the request stays open and ``status`` is ``still_waiting``,
-        so the agent can call again and pick the same request back up.
+        Safe to call while ``agent_op`` holds that lock. The pending request
+        supplies the existing workspace help UI even after its wait expires.
         """
         await self.acquire_lease(session)
+        self.challenge_required = True
+        self._challenge_message = message.strip()[:500] or "Please finish the challenge in the browser, then hand control back."
+        # A previous ordinary request must not hide the challenge's reason.
+        if self.pending is not None and self.pending.reason != "captcha":
+            self._resolve_pending("superseded", "The browser needs help with a challenge.")
+        await self._ensure_user_request(session, reason="captcha", message=self._challenge_message, timeout=timeout)
+
+    async def _ensure_user_request(self, session: BrowserSession, *, reason: str, message: str, timeout: float) -> UserRequest:
+        if self.challenge_required:
+            reason, message = "captcha", self._challenge_message
         request = self.pending
         if request is None or request.session_id != session.session_id or request.future.done():
             now = time.monotonic()
@@ -332,6 +357,19 @@ class ProfileController:
             else:
                 await self._broadcast()
             await self.emit("request", {"request": request.to_wire()})
+        return request
+
+    async def request_user(
+        self, session: BrowserSession, *, reason: str, message: str, timeout: float, wait: float
+    ) -> Dict[str, Any]:
+        """Ask the owner to take over. Returns ``{"status", "note"}``.
+
+        Waits at most ``wait`` seconds (the tool-call budget); when that runs
+        out first the request stays open and ``status`` is ``still_waiting``,
+        so the agent can call again and pick the same request back up.
+        """
+        await self.acquire_lease(session)
+        request = await self._ensure_user_request(session, reason=reason, message=message, timeout=timeout)
         remaining = max(0.0, min(wait, request.deadline - time.monotonic()))
         end = time.monotonic() + remaining
         while not request.future.done():
@@ -355,14 +393,18 @@ class ProfileController:
         return {"status": "still_waiting", "note": ""}
 
     def _resolve_pending(self, status: str, note: str) -> None:
-        request, self.pending = self.pending, None
+        request = self.pending
+        # Keep the message visible until explicit owner resume, even though
+        # this particular tool invocation has finished waiting.
+        if not self.challenge_required:
+            self.pending = None
         if request is not None and not request.future.done():
             request.future.set_result({"status": status, "note": note.strip()[:1000]})
 
     # -- user side --------------------------------------------------------------
 
     def _user_blocks_agent(self) -> bool:
-        return self._user_claim or self.state in (ControlState.USER, ControlState.AWAITING_USER)
+        return self.challenge_required or self._user_claim or self.state in (ControlState.USER, ControlState.AWAITING_USER)
 
     async def take_over(self, viewer_id: str, *, force: bool = False, valid: Optional[Callable[[], bool]] = None) -> tuple[bool, str]:
         if valid is not None and not valid():
@@ -419,11 +461,20 @@ class ProfileController:
         # settled. Never release a newer viewer's control.
         if self.state == ControlState.USER and viewer_id is not None and viewer_id != self.controller_viewer:
             return False
+        if self.challenge_required and outcome == "handed_back":
+            # Only the controlling owner's explicit hand-back resumes a
+            # challenge. Automatic release paths use a distinct outcome.
+            if self.state == ControlState.USER and viewer_id is not None and viewer_id == self.controller_viewer:
+                self.challenge_required = False
+                self._challenge_message = ""
+            else:
+                outcome = "control_lost"
         self._resolve_pending(outcome, note)
         self._cancel_viewer_drop(self.controller_viewer)
         self.controller_viewer = None
         self.lease_renewed = self.last_activity = time.monotonic()
-        await self._set_state(ControlState.IDLE, reason=outcome)
+        state = ControlState.AWAITING_USER if self.challenge_required else ControlState.IDLE
+        await self._set_state(state, reason=outcome)
         return True
 
     def can_inject_input(self, viewer_id: str) -> bool:
@@ -449,7 +500,7 @@ class ProfileController:
             async def _drop() -> None:
                 await asyncio.sleep(VIEWER_DROP_GRACE_SECONDS)
                 if self.controller_viewer == viewer_id and viewer_id not in self.viewers:
-                    await self.hand_back(viewer_id, outcome="handed_back", note="the owner closed the live view")
+                    await self.hand_back(viewer_id, outcome="viewer_disconnected", note="the owner closed the live view")
 
             self._viewer_drop_tasks[viewer_id] = asyncio.create_task(_drop())
 
@@ -462,7 +513,7 @@ class ProfileController:
         """Periodic housekeeping (the fleet reaper calls this)."""
         now = time.monotonic()
         if self.state == ControlState.USER and now > self.user_input_deadline:
-            await self.hand_back(self.controller_viewer, outcome="handed_back", note="auto: no input for 10 minutes")
+            await self.hand_back(self.controller_viewer, outcome="idle_timeout", note="auto: no input for 10 minutes")
         request = self.pending
         if request is not None and now >= request.deadline and not request.future.done():
             if self.state in (ControlState.AWAITING_USER, ControlState.USER):

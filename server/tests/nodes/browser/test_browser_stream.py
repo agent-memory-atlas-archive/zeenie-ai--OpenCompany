@@ -8,6 +8,7 @@ import pytest
 
 from nodes.browser import _stream
 from nodes.browser._cdp import CDPDisconnected
+from nodes.browser._session import ProfileController
 
 
 def make_hub(*, failures=0, fail_start=False):
@@ -23,6 +24,18 @@ def make_hub(*, failures=0, fail_start=False):
     hub = _stream.ScreencastHub(runtime)
     viewer = _stream.Viewer(None, "owner")
     return hub, viewer, runtime, session
+
+
+@pytest.mark.parametrize("challenge_required", [False, True])
+async def test_live_state_preserves_the_challenge_pause_flag(challenge_required):
+    hub, viewer, _, _ = make_hub()
+    hub.controller = ProfileController("bp_1", "Work")
+    hub.controller.challenge_required = challenge_required
+    hub.viewers[viewer.id] = viewer
+    await hub._on_controller("state", {})
+    message = viewer.control.get_nowait()
+    assert message["type"] == "state"
+    assert message["challenge_required"] is challenge_required
 
 
 async def test_initial_attach_failure_recovers_without_viewer_resize(monkeypatch):

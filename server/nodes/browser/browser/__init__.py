@@ -19,19 +19,23 @@ path the call arguments arrive merged over the saved parameters, so a model
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 import uuid
 from datetime import timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Union
+from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer, model_validator
 
 from core.logging import get_logger
 from services.plugin import NodeContext, Operation, TaskQueue, ToolNode
 from services.plugin.base import NodeUserError
 from services.plugin.scaling import RetryPolicy
+
+from .._controls import is_retry_safe, is_site_action
 
 logger = get_logger(__name__)
 
@@ -83,8 +87,8 @@ NodeOperation = Literal[
     "close",
 ]
 
-#: Operations that can change a page or a site. Refused in read-only mode,
-#: and never re-run by a retry (the first attempt's outcome is unknown).
+#: Permission policy. Retry safety and traffic accounting are separate:
+#: navigation can be permitted in read-only mode but cannot be blindly replayed.
 MUTATING = frozenset({"click", "type", "press", "select", "back", "forward", "reload", "webmcp_call", "evaluate", "run_python"})
 #: Operations with a target element.
 _TARGETED = {"click", "hover", "type", "select", "scroll", "page_text"}
@@ -194,6 +198,9 @@ class BrowserParams(BrowserToolInput):
     )
     op_timeout_s: int = Field(default=45, ge=5, le=300, description="Seconds one browser step may take.")
     request_user_timeout_s: int = Field(default=600, ge=60, le=1800, description="How long to wait for you when the agent asks for help.")
+    min_action_interval_ms: int = Field(default=1000, ge=0, le=60000, description="Minimum time between agent actions on the same site, shared across browser profiles. Human control is unaffected.")
+    max_actions_per_minute: int = Field(default=30, ge=1, le=300, description="Maximum agent actions per site in 60 seconds, shared across profiles. Reading snapshots does not consume this budget.")
+    max_repeat_actions: int = Field(default=3, ge=1, le=20, description="Maximum identical agent actions on a page in 60 seconds before the agent must stop and inspect it.")
     expression: str = Field(default="", description="JavaScript to evaluate in the page.", json_schema_extra={"rows": 4, **_show("evaluate")})
     code: str = Field(
         default="",
@@ -238,8 +245,23 @@ class BrowserOutput(BaseModel):
     handback: Optional[Dict[str, Any]] = None
     data: Optional[Any] = None
     notice: Optional[str] = None
+    success: Optional[bool] = None
+    error_type: Optional[str] = None
+    error: Optional[str] = None
+    retry_after: Optional[float] = None
+    next_action: Optional[str] = None
 
     model_config = ConfigDict(extra="allow")
+
+    @model_serializer(mode="wrap")
+    def _wire(self, handler):
+        payload = handler(self)
+        # ToolNode successes are flat payloads with no success key. A null
+        # success field would otherwise turn every successful activity into
+        # a failure when its result is interpreted by Temporal.
+        if payload.get("success") is None:
+            payload.pop("success", None)
+        return payload
 
 
 def _attempt() -> int:
@@ -311,12 +333,14 @@ class BrowserNode(ToolNode):
     component_kind = "square"
     tool_name = "browser"
     tool_schema_locked = True
+    tool_error_fields = frozenset({"success", "error_type", "retry_after", "next_action", "session_id", "profile", "url", "title", "tab_id"})
     tool_description = (
         "Use a real web browser. Start with snapshot: it lists the page's controls as [eN] refs, plus any tools the page "
         "offers through WebMCP. Act on refs (click, type with submit, select), navigate to URLs, read with page_text, and "
         "prefer webmcp_call when the page offers a tool for the job. Take a new snapshot after the page changes. When a "
         "person must act (log in, a CAPTCHA, two-factor, a final purchase or send), call request_user with clear "
-        "instructions and wait; never ask for passwords in chat."
+        "instructions and wait; never ask for passwords in chat. Respect retry_after when rate_limited; do not repeat "
+        "a blocked action. On outcome_unknown, inspect a fresh snapshot before deciding what remains to do."
     )
     handles = (
         {"name": "input-main", "kind": "input", "position": "left", "label": "Input", "role": "main"},
@@ -333,7 +357,7 @@ class BrowserNode(ToolNode):
     # turns on the base 30 s heartbeat loop while a step runs.
     start_to_close_timeout = timedelta(minutes=35)
     server_controlled_fields = frozenset(
-        {"profile_id", "interaction", "webmcp_mode", "allowed_domains", "allow_private_network", "op_timeout_s", "request_user_timeout_s", "code", "expression"}
+        {"profile_id", "interaction", "webmcp_mode", "allowed_domains", "allow_private_network", "op_timeout_s", "request_user_timeout_s", "min_action_interval_ms", "max_actions_per_minute", "max_repeat_actions", "code", "expression"}
     )
 
     Params = BrowserParams
@@ -371,7 +395,7 @@ class BrowserNode(ToolNode):
             raise NodeUserError(f"'{op}' is not available to agents.")
         if cfg.interaction == "read_only" and op in MUTATING:
             raise NodeUserError(_read_only_refusal(op))
-        if op in MUTATING and _attempt() > 1:
+        if is_site_action(op, call.tab_action) and _attempt() > 1:
             raise NodeUserError(
                 "The previous attempt of this browser step did not report back, so it may have happened already. "
                 "Take a snapshot to see the page before trying again."
@@ -426,28 +450,94 @@ class BrowserNode(ToolNode):
                 out.notice = "The owner has not answered yet. Call request_user again to keep waiting."
             return out
 
+        if controller.challenge_required:
+            _fill_page(out, controller)
+            return _failure(out, "challenge_required", "This browser is paused for a site challenge. The owner must take control and explicitly hand it back.", next_action="request_user")
+        if controller.needs_observation and is_site_action(op, call.tab_action):
+            return _failure(out, "outcome_unknown", "The previous action may already have happened. Inspect a fresh snapshot before taking another action.", next_action="snapshot")
+
         async with controller.agent_op(session, interrupt=prt.cli.interrupt):
+            if controller.needs_observation and is_site_action(op, call.tab_action):
+                return _failure(out, "outcome_unknown", "The previous action may already have happened. Inspect a fresh snapshot before taking another action.", next_action="snapshot")
+            if is_site_action(op, call.tab_action):
+                decision = runtime.action_guard.admit(
+                    origin=_action_origin(op, call, controller), profile_id=profile.id, operation=op,
+                    arguments=_action_arguments(op, call, cfg, controller), min_interval_ms=cfg.min_action_interval_ms,
+                    max_actions_per_minute=cfg.max_actions_per_minute, max_repeat_actions=cfg.max_repeat_actions,
+                )
+                if decision is not None:
+                    _fill_page(out, controller)
+                    return _failure(out, decision.error_type, decision.error, retry_after=decision.retry_after, next_action=decision.next_action)
             if op == "webmcp_list":
                 tools = prt.webmcp.tools(controller.active_target_id)
                 out.webmcp_tools = [dict(t, callable=_webmcp_callable(t, cfg)) for t in tools]
                 _fill_page(out, controller)
                 return out
             if op == "webmcp_call":
+                from .._webmcp import WebMcpOutcomeUnknown
                 if not call.webmcp_tool:
                     raise NodeUserError("webmcp_tool is required; see webmcp_list")
-                mode = "read_only" if cfg.interaction == "read_only" else cfg.webmcp_mode
+                # Page-provided tools pass the same challenge gate as UI input.
+                checked = await _run_cli_op(ctx, prt, controller, "page_info", BrowserToolInput(operation="page_info"), cfg, out, timeout=min(float(cfg.op_timeout_s), remaining()))
+                if checked.success is False:
+                    return checked
+                mode = cfg.webmcp_mode
                 tool_input = call.webmcp_input if isinstance(call.webmcp_input, dict) else {}
-                out.webmcp_result = await prt.webmcp.invoke(
-                    controller.active_target_id, call.webmcp_tool, tool_input, frame_id=call.frame_id or None, mode=mode
-                )
+                try:
+                    out.webmcp_result = await prt.webmcp.invoke(
+                        controller.active_target_id, call.webmcp_tool, tool_input, frame_id=call.frame_id or None, mode=mode,
+                        timeout=min(float(cfg.op_timeout_s), remaining()),
+                    )
+                except WebMcpOutcomeUnknown as exc:
+                    controller.needs_observation = True
+                    return _failure(out, "outcome_unknown", str(exc), next_action="snapshot")
+                except asyncio.CancelledError:
+                    controller.needs_observation = True
+                    raise
                 _fill_page(out, controller)
                 return out
             return await _run_cli_op(ctx, prt, controller, op, call, cfg, out, timeout=min(float(cfg.op_timeout_s), remaining()))
 
 
 def _webmcp_callable(tool: Dict[str, Any], cfg: BrowserParams) -> bool:
-    mode = "read_only" if cfg.interaction == "read_only" else cfg.webmcp_mode
+    if cfg.interaction == "read_only" or cfg.webmcp_mode == "disabled":
+        return False
+    mode = cfg.webmcp_mode
     return mode == "all" or (mode == "read_only" and bool(tool.get("read_only")))
+
+
+def _failure(out: BrowserOutput, kind: str, message: str, *, retry_after: Optional[float] = None, next_action: str = "snapshot") -> BrowserOutput:
+    out.success, out.error_type, out.error = False, kind, message
+    out.retry_after, out.next_action = retry_after, next_action
+    return out
+
+
+def _action_origin(op: str, call: BrowserToolInput, controller: Any) -> str:
+    tab = controller.tabs.get(controller.active_target_id or "") or {}
+    url = call.url if op == "navigate" or (op == "tabs" and call.tab_action == "new") else str(tab.get("url") or "")
+    parts = urlsplit(url)
+    return f"{parts.scheme.lower()}://{(parts.hostname or '').lower()}:{parts.port or (443 if parts.scheme == 'https' else 80)}"
+
+
+def _action_arguments(op: str, call: BrowserToolInput, cfg: BrowserParams, controller: Any) -> Dict[str, Any]:
+    # Only values actually used by this operation participate. Changing an
+    # irrelevant field such as max_chars cannot evade repeat suppression.
+    fields = {
+        "navigate": ("url",), "click": ("ref", "selector", "x", "y"), "hover": ("ref", "selector", "x", "y"),
+        "type": ("ref", "selector", "text", "clear", "submit"), "select": ("ref", "selector", "values"),
+        "press": ("key", "modifiers"), "scroll": ("ref", "selector", "direction", "amount"),
+        "tabs": ("tab_action", "tab_id", "url"), "webmcp_call": ("webmcp_tool", "webmcp_input", "frame_id"),
+    }.get(op, ())
+    args = {name: getattr(call, name) for name in fields}
+    if op == "evaluate":
+        args["expression"] = cfg.expression
+    if op == "run_python":
+        args["code"] = cfg.code
+    args["target"] = controller.active_target_id
+    # Navigation counts the destination, not its changing source page.
+    if op != "navigate":
+        args["page"] = (controller.tabs.get(controller.active_target_id or "") or {}).get("url")
+    return args
 
 
 def _fill_page(out: BrowserOutput, controller: Any) -> None:
@@ -458,7 +548,7 @@ def _fill_page(out: BrowserOutput, controller: Any) -> None:
 
 
 def _cli_args(op: str, call: BaseModel, cfg: BrowserParams, controller: Any) -> Dict[str, Any]:
-    args: Dict[str, Any] = {"_target_id": controller.active_target_id}
+    args: Dict[str, Any] = {"_target_id": controller.active_target_id, "_guard_actions": is_site_action(op, getattr(call, "tab_action", "list"))}
     ref = (getattr(call, "ref", "") or "").strip()
     selector = (getattr(call, "selector", "") or "").strip()
     if not ref and selector.startswith("@e") and selector[2:].isdigit():
@@ -482,12 +572,14 @@ def _cli_args(op: str, call: BaseModel, cfg: BrowserParams, controller: Any) -> 
 
 
 async def _run_cli_op(ctx: NodeContext, prt: Any, controller: Any, op: str, call: BaseModel, cfg: BrowserParams, out: BrowserOutput, *, timeout: float) -> BrowserOutput:
-    from .._cli import BrowserUnavailable
+    from .._cli import BrowserStepOutcomeUnknown, BrowserStepTimeout, BrowserUnavailable
 
     script_op = {"back": "history", "forward": "history", "reload": "history"}.get(op, op)
     if op in ("evaluate", "run_python") and not (cfg.expression if op == "evaluate" else cfg.code).strip():
         raise NodeUserError(f"{'expression' if op == 'evaluate' else 'code'} is required for {op}")
     args = _cli_args(op, call, cfg, controller)
+    args["timeout"] = max(1.0, timeout - 1.0)
+    retry_safe = is_retry_safe(op, getattr(call, "tab_action", "list"))
     if script_op == "history":
         args["history_action"] = op
     shot: Optional[Path] = None
@@ -496,24 +588,49 @@ async def _run_cli_op(ctx: NodeContext, prt: Any, controller: Any, op: str, call
         args["path"] = str(shot)
 
     try:
-        result = await prt.cli.run(script_op, args, timeout=timeout)
-    except BrowserUnavailable:
-        if op in MUTATING:
-            raise
-        # A read can safely run again once the CLI's daemon is replaced.
-        prt.cli.stop_daemon()
-        result = await prt.cli.run(script_op, args, timeout=timeout)
+        try:
+            result = await prt.cli.run(script_op, args, timeout=timeout)
+        except BrowserUnavailable:
+            if not retry_safe:
+                raise
+            # Only an observation may be replayed after losing its reply.
+            prt.cli.stop_daemon()
+            result = await prt.cli.run(script_op, args, timeout=timeout)
+    except (BrowserUnavailable, BrowserStepOutcomeUnknown) as exc:
+        if not retry_safe:
+            prt.cli.stop_daemon()
+            controller.needs_observation = True
+            return _failure(out, "outcome_unknown", str(exc), next_action="snapshot")
+        kind = "timeout" if isinstance(exc, BrowserStepTimeout) else "browser_unavailable" if isinstance(exc, BrowserUnavailable) else "outcome_unknown"
+        return _failure(out, kind, str(exc), next_action="snapshot")
+    except asyncio.CancelledError:
+        if not retry_safe:
+            controller.needs_observation = True
+        raise
 
     if result.page and result.page.get("target_id"):
         controller.active_target_id = result.page["target_id"]
         tab = controller.tabs.setdefault(result.page["target_id"], {"target_id": result.page["target_id"]})
+        if tab.get("url") != result.page.get("url") or op in ("navigate", "back", "forward", "reload"):
+            controller.refs.pop(result.page["target_id"], None)
         tab.update(url=result.page.get("url"), title=result.page.get("title"))
         await controller.emit("page", dict(result.page))
     if result.page:
         out.url, out.title, out.tab_id = result.page.get("url"), result.page.get("title"), result.page.get("target_id")
 
     if not result.ok:
-        raise NodeUserError(result.error or f"The browser step '{op}' failed")
+        kind = result.error_type or "script"
+        message = result.error or f"The browser step '{op}' failed"
+        if kind == "challenge_required":
+            await controller.pause_for_challenge(controller.lease_session, message=message, timeout=float(cfg.request_user_timeout_s))
+            return _failure(out, kind, message, next_action="request_user")
+        if not retry_safe and kind in ("timeout", "cdp", "script"):
+            controller.needs_observation = True
+            return _failure(out, "outcome_unknown", message + " Inspect a fresh snapshot before another action.", next_action="snapshot")
+        return _failure(out, kind, message, next_action="snapshot")
+
+    if op in ("snapshot", "page_info", "page_text"):
+        controller.needs_observation = False
 
     value = result.value
     if op == "snapshot" and isinstance(value, dict):

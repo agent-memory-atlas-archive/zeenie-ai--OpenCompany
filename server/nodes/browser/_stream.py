@@ -246,7 +246,11 @@ class ScreencastHub:
 
     def state_message(self, viewer: Viewer) -> Dict[str, Any]:
         snap = self.controller.snapshot(viewer.id)
-        return {"type": "state", "state": snap["state"], "controller": snap["controller"], "request": snap["request"], "profile": snap["profile"]}
+        return {
+            "type": "state", "state": snap["state"], "controller": snap["controller"],
+            "request": snap["request"], "profile": snap["profile"],
+            "challenge_required": snap["challenge_required"],
+        }
 
     def tabs_message(self) -> Dict[str, Any]:
         active = self.controller.active_target_id
@@ -739,7 +743,8 @@ async def browser_live_view(websocket: WebSocket) -> None:
             elif kind == "control_request":
                 hub.commands.enqueue(viewer, message, session)
             elif kind == "control_release":
-                outcome = "declined" if message.get("outcome") == "declined" else "handed_back"
+                requested = message.get("outcome")
+                outcome = requested if requested in ("declined", "control_lost") else "handed_back"
                 hub.commands.release(viewer, outcome=outcome, note=str(message.get("note") or "")[:1000])
             elif kind in ("mouse", "wheel", "key", "insert_text", "navigate", "tab", "dialog_reply", "copy"):
                 hub.commands.enqueue(viewer, message, session)

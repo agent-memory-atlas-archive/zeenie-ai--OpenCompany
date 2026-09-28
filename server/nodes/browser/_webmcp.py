@@ -34,6 +34,10 @@ OUTPUT_LIMIT_BYTES = 32 * 1024
 INVOKE_TIMEOUT = 60.0
 
 
+class WebMcpOutcomeUnknown(NodeUserError):
+    """The invocation may have taken effect even though its reply was lost."""
+
+
 def _cap(value: Any) -> tuple[Any, bool]:
     text = value if isinstance(value, str) else json.dumps(value, default=str, ensure_ascii=False)
     if len(text.encode("utf-8")) <= OUTPUT_LIMIT_BYTES:
@@ -167,9 +171,13 @@ class WebMcpTracker:
         if not isinstance(tool_input, dict):
             raise NodeUserError("WebMCP tool input must be a JSON object.")
 
-        result = await session.send(
-            "WebMCP.invokeTool", {"frameId": tool["frame_id"], "toolName": name, "input": tool_input}, timeout=15
-        )
+        started = asyncio.get_running_loop().time()
+        try:
+            result = await session.send(
+                "WebMCP.invokeTool", {"frameId": tool["frame_id"], "toolName": name, "input": tool_input}, timeout=min(15, timeout)
+            )
+        except (TimeoutError, ConnectionError) as exc:
+            raise WebMcpOutcomeUnknown("The page tool may have started, but its reply was lost. Inspect the page before another action.") from exc
         invocation = result.get("invocationId") or ""
         future = asyncio.get_running_loop().create_future()
         early = self._early.pop(invocation, None)
@@ -177,13 +185,13 @@ class WebMcpTracker:
             future.set_result(early)
         self._pending[invocation] = future
         try:
-            response = await asyncio.wait_for(future, timeout=timeout)
+            response = await asyncio.wait_for(future, timeout=max(0.0, timeout - (asyncio.get_running_loop().time() - started)))
         except asyncio.TimeoutError:
             try:
                 await session.send("WebMCP.cancelInvocation", {"invocationId": invocation}, timeout=5)
             except Exception:  # noqa: BLE001
                 pass
-            raise NodeUserError(f"The page's {name!r} tool did not answer within {int(timeout)} s.") from None
+            raise WebMcpOutcomeUnknown(f"The page's {name!r} tool did not answer within {int(timeout)} s. Its action may already have happened.") from None
         finally:
             self._pending.pop(invocation, None)
 

@@ -31,6 +31,7 @@ from ._cdp import CDPConnection, CDPDisconnected, CDPError, CDPSession
 from ._chrome import ChromeProcess, VIEWPORT_HEIGHT, VIEWPORT_WIDTH, user_agent
 from ._cli import BrowserUseCli
 from ._config import get_config
+from ._controls import ActionGuard
 from ._egress import EgressProxy
 from ._host import sandbox_disabled, shm_small
 from ._install_bu import get_browser_use_installer
@@ -117,6 +118,8 @@ class ProfileRuntime:
 
 class BrowserRuntime:
     def __init__(self) -> None:
+        # Destination budgets are shared by every profile in this backend.
+        self.action_guard = ActionGuard()
         self._profiles: Dict[str, ProfileRuntime] = {}
         self._controllers: Dict[str, ProfileController] = {}
         self._chromes: Dict[str, ChromeProcess] = {}
@@ -337,11 +340,15 @@ class BrowserRuntime:
             info = params.get("targetInfo") or {}
             if info.get("type") != "page":
                 return
+            previous = controller.tabs.get(info["targetId"])
+            if previous and previous.get("url") != info.get("url"):
+                controller.refs.pop(info["targetId"], None)
             controller.tabs[info["targetId"]] = {"target_id": info["targetId"], "url": info.get("url"), "title": info.get("title")}
             asyncio.ensure_future(controller.emit("tabs", {"tabs": list(controller.tabs.values())}))
 
         def on_destroyed(params: Dict[str, Any]) -> None:
             target_id = params.get("targetId")
+            controller.refs.pop(target_id, None)
             if controller.tabs.pop(target_id, None) is not None:
                 runtime.webmcp.detach(target_id)
                 if controller.active_target_id == target_id:

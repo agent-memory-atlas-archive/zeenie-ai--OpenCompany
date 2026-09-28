@@ -79,6 +79,11 @@ debugging endpoint.
 
 ## Profiles, ownership and control
 
+Agent traffic limits, challenge pauses, uncertain-action handling and the
+comparison of established browser products are documented in
+[Browser controls](browser-controls.md). These controls do not make
+automation undetectable; system Chrome still uses the selected launch mode.
+
 OpenCompany reuses the user's installed browser executable and its normal
 update mechanism. It launches a separate OpenCompany process with a dedicated
 data directory, then reuses that running process for agent actions and the

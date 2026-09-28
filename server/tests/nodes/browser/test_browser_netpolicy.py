@@ -11,6 +11,7 @@ from nodes.browser._netpolicy import (
     NetPolicy,
     address_block_reason,
     domain_allowed,
+    host_block_reason,
     own_ports_from_env,
     parse_allowed_domains,
     url_block_reason,
@@ -81,6 +82,29 @@ def test_allowed_domains_match_on_label_boundaries():
     assert not domain_allowed("badexample.com", allowed)
     assert url_block_reason("https://evil.test/", _policy(allowed_domains=allowed)) is not None
     assert url_block_reason("https://a.docs.io/", _policy(allowed_domains=allowed)) is None
+
+
+@pytest.mark.parametrize("host", ["8.8.8.8", "2001:4860:4860::8888"])
+def test_public_literal_ips_do_not_bypass_the_domain_allowlist(host):
+    policy = _policy(allowed_domains=("example.com",))
+    url_host = f"[{host}]" if ":" in host else host
+    assert "allowed domains" in host_block_reason(host, policy)
+    assert "allowed domains" in url_block_reason(f"https://{url_host}/", policy)
+
+
+def test_ip_allowlist_entries_match_only_the_exact_address():
+    policy = _policy(allowed_domains=("8.8.8.8", "2001:4860:4860::8888"))
+    assert url_block_reason("https://8.8.8.8/", policy) is None
+    assert url_block_reason("https://[2001:4860:4860:0:0:0:0:8888]/", policy) is None
+    assert url_block_reason("https://8.8.4.4/", policy) is not None
+    assert not domain_allowed("8.8.8.8", ("8.8",))
+    assert not domain_allowed("attacker.8.8.8.8", ("8.8.8.8",))
+
+
+def test_an_explicit_ip_allowlist_cannot_override_private_or_metadata_rules():
+    assert url_block_reason("http://127.0.0.1:3000/", _policy(allowed_domains=("127.0.0.1",))) is not None
+    assert url_block_reason("http://127.0.0.1:3000/", _policy(allowed_domains=("127.0.0.1",), allow_private_network=True)) is None
+    assert url_block_reason("http://169.254.169.254/", _policy(allowed_domains=("169.254.169.254",), allow_private_network=True)) is not None
 
 
 def test_own_ports_come_from_every_port_variable():

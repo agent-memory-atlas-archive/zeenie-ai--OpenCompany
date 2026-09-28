@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from nodes.browser._chrome import build_chrome_argv, user_agent
-from nodes.browser._cli import BrowserUnavailable, BrowserUseCli, parse_output
+from nodes.browser._cli import BrowserStepOutcomeUnknown, BrowserUnavailable, BrowserUseCli, parse_output
 from nodes.browser._scripts import MARKER, OPERATIONS, build_script
 from services.workflow_migrations import migrate_legacy_browser_params, normalize_legacy_browser_nodes
 
@@ -36,16 +36,22 @@ def test_the_result_line_cannot_be_forged_by_page_output():
     result = parse_output(f"page text\n{forged}\nmore\n{real}\n", "", 0, nonce)
     assert result.value == "real" and result.output == "page text\nmore"
     # A line tagged with any other nonce is not a result at all.
-    with pytest.raises(RuntimeError):
+    with pytest.raises(BrowserStepOutcomeUnknown):
         parse_output(f"{MARKER}:othernonce:" + json.dumps({"ok": True}), "", 0, nonce)
 
 
 def test_missing_result_is_classified_by_cause():
     with pytest.raises(BrowserUnavailable):
         parse_output("", "browser-harness: fatal: BU_CDP_URL=... unreachable after 30s", 1, "n")
-    with pytest.raises(RuntimeError) as err:
+    with pytest.raises(BrowserStepOutcomeUnknown) as err:
         parse_output("", "Traceback: some error", 1, "n")
     assert not isinstance(err.value, BrowserUnavailable)
+
+
+@pytest.mark.parametrize("payload", ["", "{", "[]", "{}", '{"ok": "yes"}', '{"ok": false, "error": "failure"}'])
+def test_invalid_cli_result_requires_observation(payload):
+    with pytest.raises(BrowserStepOutcomeUnknown, match="Take a snapshot"):
+        parse_output(f"{MARKER}:n:{payload}", "", 0, "n")
 
 
 def test_a_script_error_is_reported_not_raised():
@@ -74,6 +80,113 @@ def test_testing_browser_flags_are_explicit(tmp_path):
     argv = build_chrome_argv(Path("chrome"), user_data_dir=tmp_path, proxy_port=4000, major=154, no_sandbox=False, small_shm=False, platform="linux", headless=True, override_user_agent=True)
     assert "--headless=new" in argv and "--password-store=basic" in argv
     assert any(a.startswith("--user-agent=") for a in argv)
+
+
+async def test_cli_timeout_stops_the_daemon_and_reports_uncertain_outcome(monkeypatch, tmp_path):
+    import asyncio
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, Mock
+
+    from nodes.browser._cli import BrowserStepTimeout
+
+    cli = BrowserUseCli(cli_path=Path("bu"), python_path=Path("py"), profile_id="test", cdp_http_url="http://127.0.0.1:9")
+    monkeypatch.setattr(cli, "dirs", lambda: {"workspace": tmp_path})
+    monkeypatch.setattr(cli, "env", lambda: {})
+    process = SimpleNamespace(communicate=AsyncMock(side_effect=asyncio.TimeoutError))
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", AsyncMock(return_value=process))
+    monkeypatch.setattr(cli, "_kill", AsyncMock())
+    monkeypatch.setattr(cli, "stop_daemon", Mock())
+    with pytest.raises(BrowserStepTimeout, match="may already have happened"):
+        await cli._exec(["bu"], "script", timeout=1)
+    cli._kill.assert_awaited_once_with(process)
+    cli.stop_daemon.assert_called_once()
+    assert cli._proc is None
+
+
+@pytest.mark.parametrize("returned_output", [b"", b"a complete result arrived as the step was interrupted"])
+async def test_cli_interruption_reports_uncertain_outcome_and_does_not_poison_next_step(monkeypatch, tmp_path, returned_output):
+    import asyncio
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, Mock
+
+    cli = BrowserUseCli(cli_path=Path("bu"), python_path=Path("py"), profile_id="test", cdp_http_url="http://127.0.0.1:9")
+    monkeypatch.setattr(cli, "dirs", lambda: {"workspace": tmp_path})
+    monkeypatch.setattr(cli, "env", lambda: {})
+    entered, killed = asyncio.Event(), asyncio.Event()
+
+    async def communicate(_):
+        entered.set()
+        await killed.wait()
+        return returned_output, b""
+
+    process = SimpleNamespace(communicate=communicate, returncode=None)
+
+    async def kill(proc):
+        proc.returncode = -9
+        killed.set()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", AsyncMock(return_value=process))
+    monkeypatch.setattr(cli, "_kill", AsyncMock(side_effect=kill))
+    monkeypatch.setattr(cli, "stop_daemon", Mock())
+    task = asyncio.create_task(cli._exec(["bu"], "script", timeout=1))
+    await entered.wait()
+    await cli.interrupt()
+    with pytest.raises(BrowserStepOutcomeUnknown, match="interrupted"):
+        await task
+    cli._kill.assert_awaited_once_with(process)
+    cli.stop_daemon.assert_called_once()
+    assert cli._proc is None
+
+    process.communicate = AsyncMock(return_value=(b"next result", b""))
+    process.returncode = 0
+    assert await cli._exec(["bu"], "next", timeout=1) == ("next result", "", 0)
+
+
+async def test_cli_interruption_during_spawn_stops_step_before_sending_script(monkeypatch, tmp_path):
+    import asyncio
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, Mock
+
+    cli = BrowserUseCli(cli_path=Path("bu"), python_path=Path("py"), profile_id="test", cdp_http_url="http://127.0.0.1:9")
+    monkeypatch.setattr(cli, "dirs", lambda: {"workspace": tmp_path})
+    monkeypatch.setattr(cli, "env", lambda: {})
+    spawning, finish_spawn = asyncio.Event(), asyncio.Event()
+    process = SimpleNamespace(communicate=AsyncMock())
+
+    async def spawn(*args, **kwargs):
+        spawning.set()
+        await finish_spawn.wait()
+        return process
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
+    monkeypatch.setattr(cli, "_kill", AsyncMock())
+    monkeypatch.setattr(cli, "stop_daemon", Mock())
+    task = asyncio.create_task(cli._exec(["bu"], "script", timeout=1))
+    await spawning.wait()
+    await cli.interrupt()
+    finish_spawn.set()
+    with pytest.raises(BrowserStepOutcomeUnknown, match="interrupted"):
+        await task
+    process.communicate.assert_not_awaited()
+    cli._kill.assert_awaited_once_with(process)
+    cli.stop_daemon.assert_called_once()
+    assert cli._proc is None
+
+
+async def test_webmcp_timeout_cancels_invocation_and_reports_unknown_outcome():
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from nodes.browser._webmcp import WebMcpOutcomeUnknown, WebMcpTracker
+
+    tracker = WebMcpTracker()
+    session = SimpleNamespace(send=AsyncMock(side_effect=[{"invocationId": "i"}, {}]))
+    tracker._sessions["T"] = session
+    tracker.tools = lambda target: [{"name": "search", "frame_id": "F", "read_only": True}]
+    with pytest.raises(WebMcpOutcomeUnknown):
+        await tracker.invoke("T", "search", {}, timeout=0.001)
+    assert session.send.call_args.args[0] == "WebMCP.cancelInvocation"
+    assert not tracker._pending
 
 
 async def test_visible_browser_requires_linux_display(monkeypatch, tmp_path):

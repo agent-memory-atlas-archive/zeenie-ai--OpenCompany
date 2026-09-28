@@ -8,8 +8,12 @@ proxy. The same browser is also available through the in-app live view.
 
 Never passed: ``--remote-allow-origins=*`` (it would let web pages talk to
 the debugging port), ``--enable-automation`` (the "controlled by automated
-software" banner and ``navigator.webdriver``), or any debugging address other
+software" banner), or any debugging address other
 than 127.0.0.1.
+
+Headless mode and ``--remote-debugging-port=0`` independently expose
+``navigator.webdriver``. Omitting ``--enable-automation`` does not turn this
+into an ordinary manually launched browser or guarantee site acceptance.
 
 The process is supervised by :class:`ChromeProcess`. Only one Chrome may
 open a profile: a lock file held for the process lifetime keeps a second
