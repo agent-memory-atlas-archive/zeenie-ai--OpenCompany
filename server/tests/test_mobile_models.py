@@ -18,6 +18,7 @@ def models(monkeypatch):
         get_provider_defaults=AsyncMock(return_value={"default_model": "provider-default"}),
     )
     auth = SimpleNamespace(get_api_key=AsyncMock(return_value="selected-key"))
+    auth.get_api_key.side_effect = lambda provider, *_: None if provider.endswith("_proxy") else auth.get_api_key.return_value
     monkeypatch.setattr(deps, "get_database", lambda: database)
     monkeypatch.setattr(deps, "get_ai_service", lambda: SimpleNamespace(auth=auth))
     monkeypatch.setattr(registry, "get_node_class", lambda _: SimpleNamespace(component_kind="model"))
@@ -107,3 +108,28 @@ async def test_gemini_backend_matches_saved_key_type(models, monkeypatch, key, m
     result = await resolve_model(ctx, params)
     assert result["provider"] == "google"
     assert result["model_env"] == {"GOOGLE_API_KEY": key, "GOOGLE_GENAI_USE_VERTEXAI": mode}
+
+
+@pytest.mark.parametrize("provider,key_var,url_var", [("openai", "OPENAI_API_KEY", "OPENAI_BASE_URL"),
+                                                     ("anthropic", "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL")])
+@pytest.mark.parametrize("source", ["global", "custom", "connected"])
+@pytest.mark.parametrize("endpoint", [None, "https://model-relay.example/custom/v1"])
+async def test_openai_and_claude_use_selected_model_credentials_and_endpoint(models, monkeypatch, provider, key_var, url_var, source, endpoint):
+    import constants
+    db, auth = models
+    db.get_user_settings.return_value = {"default_llm_provider": provider, "default_llm_model": "selected-vision-model"}
+    auth.get_api_key.side_effect = lambda name, *_: endpoint if name == provider + "_proxy" else "selected-key"
+    ctx = context()
+    params = MobileParams()
+    if source == "custom":
+        params = MobileParams(model_source="custom", provider=provider, model="selected-vision-model")
+    elif source == "connected":
+        monkeypatch.setattr(constants, "detect_ai_provider", lambda *_: provider)
+        db.get_node_parameters.return_value = {"model": "selected-vision-model"}
+        ctx.nodes = [{"id": "model", "type": provider + "ChatModel"}]
+        ctx.edges = [{"source": "model", "target": "phone", "targetHandle": "input-model"}]
+    result = await resolve_model(ctx, params)
+    expected_env = {key_var: "selected-key"}
+    if endpoint:
+        expected_env[url_var] = endpoint
+    assert result == {"provider": provider, "model": "selected-vision-model", "model_env": expected_env}

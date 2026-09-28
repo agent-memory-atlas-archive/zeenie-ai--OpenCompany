@@ -105,6 +105,15 @@ async def resolve_model(ctx: NodeContext, params: MobileParams | None = None) ->
     model = selected_model or await get_default_model_async(provider_ref, database)
     provider, variable = adapters[provider_ref]
     model_env = {variable: key}
+    endpoint_variables = {"openai": "OPENAI_BASE_URL", "anthropic": "ANTHROPIC_BASE_URL"}
+    if provider_ref in endpoint_variables:
+        from services.llm.endpoints import base_url_key
+
+        endpoint = await auth.get_api_key(base_url_key(provider_ref), "default")
+        if endpoint:
+            # Use the same saved endpoint as the native provider, unchanged.
+            # It may contain credentials, so it travels only through private IPC.
+            model_env[endpoint_variables[provider_ref]] = endpoint
     if provider_ref == "gemini":
         from services.llm.vertex import is_vertex_express_key
 

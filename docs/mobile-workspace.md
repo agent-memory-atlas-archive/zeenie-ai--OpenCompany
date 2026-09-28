@@ -63,6 +63,8 @@ The selected model serves every mobile-use stage. OpenAI, Anthropic and Gemini a
 
 Gemini backend selection follows the main AI agent: Vertex AI Express credentials use Vertex, and Developer API credentials use the Gemini Developer API. The isolated phone worker receives an explicit backend setting derived from the stored credential; it does not inherit an unrelated host setting. Terminal events include `model_backend=vertex_express` or `model_backend=gemini_developer`, without printing the credential. A rejected Android tool result is shown as a failed node, even though the handled error is returned to its calling AI agent.
 
+OpenAI and Anthropic (Claude) use their own saved API credentials and official SDK endpoints by default. A saved OpenAI or Anthropic custom endpoint is passed unchanged to the phone engine, matching the main agent's provider configuration. All three model-selection modes support these providers. Choose a model that supports image input and tool use; a valid API key alone does not establish access to every model. Endpoint values and credentials are excluded from diagnostic logs. Client construction is verified with the installed engine SDKs; this does not constitute a live provider-generation test.
+
 ## Runtime files and Git
 
 `mobile_root()` currently resolves a relative `DATA_DIR` against the backend process’s working directory. With source development launched from `server/` and `DATA_DIR=.opencompany`, the installed phone is therefore under `server/.opencompany/mobile/`. This differs from the application’s canonical repository-relative data resolver. An absolute `DATA_DIR` avoids this ambiguity. Do not move an existing installation or switch its data directory while the backend is running.
