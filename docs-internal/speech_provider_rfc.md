@@ -74,7 +74,7 @@ method that raises — invisible to the node layer, so the provider would appear
 fail at runtime.
 
 With `TtsProvider` and `SttProvider` registries, **direction capability is registry membership**:
-the TTS node's provider enum is literally `tts_registry.all_providers()`. Zero extra machinery.
+the TTS node's provider enum is literally `tts_providers()` (`server/nodes/speech/_registry.py`). Zero extra machinery.
 
 ### D3 — Capability-driven common params + a `provider_options` escape hatch
 
@@ -109,7 +109,7 @@ builds a dict over **all** declared credentials and raises only for undeclared i
 this today.
 
 Consequence: the node must use imperative `@Operation` bodies — the declarative `routing=` path
-hardcodes `self.credentials[0]` ([`base.py:769`](../server/services/plugin/base.py)).
+hardcodes `self.credentials[0]` ([`BaseNode._run_operation`](../server/services/plugin/base.py)).
 
 ### D6 — Extract the generic registry rather than copy it
 

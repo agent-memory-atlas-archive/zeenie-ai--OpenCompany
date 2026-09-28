@@ -221,7 +221,7 @@ StripeListenSource.stop()
 | `server/config/credential_providers.json` | JSON-driven Credentials Modal catalogue. The `payments` category + `stripe` provider entry tell the frontend modal to render a **Login with Stripe** button (no API-key field) wired to the `stripe_login` / `stripe_logout` / `stripe_status` WebSocket handlers. No React file edits required. |
 | `server/nodes/stripe/stripe_action.py` | `tool_name = "stripe_action"` ClassVar (resolved via `services/node_registry.py`) and the matching `tool_description` — what the LLM sees when the action node is wired to an agent's `input-tools` handle. |
 | `server/nodes/stripe/_source.py` | `StripeListenSource(DaemonEventSource)` and `StripeWebhookSource(WebhookSource)` plus their singletons. |
-| `server/nodes/stripe/_handlers.py` | WS handlers via `make_lifecycle_handlers`; the only plugin-specific handler is `stripe_trigger` (synthetic test events). |
+| `server/nodes/stripe/_handlers.py` | WS handlers via `make_lifecycle_handlers` (`stripe_connect` / `stripe_disconnect` / `stripe_reconnect`) plus the plugin-specific `stripe_login`, `stripe_logout`, `stripe_trigger` (synthetic test events) and `stripe_status` (overrides the factory's status handler to add login state). See [WebSocket handlers](#websocket-handlers). |
 | `server/nodes/stripe/stripe_action.py` | `StripeActionNode` — pass-through over the CLI via `run_cli_command`. |
 | `server/nodes/stripe/stripe_receive.py` | `StripeReceiveNode(WebhookTriggerNode)` — filter overrides + output reshape. |
 | `server/services/events/__init__.py` | Public framework surface — exports every base class + helper. |
@@ -274,7 +274,7 @@ Storage:
 |---|---|---|---|
 | (no `stripe_api_key`) | — | Stripe CLI's `~/.config/stripe/config.toml` (populated by `stripe login`) | Authenticates every CLI invocation transparently. The CLI generates restricted keys with CLI-appropriate scopes — one for live mode, one for sandbox — valid 90 days. |
 | `stripe_webhook_secret` | API key (extra field) | Auto-captured by `StripeListenSource.parse_line` from the daemon's stderr banner | Verifies forwarded webhook signatures via `StripeVerifier`. Stable across daemon restarts; the CLI re-uses the same secret for the same OpenCompany install. |
-| OAuth marker token | OAuth token (`auth_service.store_oauth_tokens`) | Written by `_mark_logged_in()` after `stripe login --complete` exits 0; cleared by `_mark_logged_out()` on disconnect. **Strings are dummies (`"cli-managed"`)** — the real OAuth lives in the CLI's config file. | Lights up the catalogue's `provider.stored = true` flag via the existing `auth_service.get_oauth_tokens(status_hook)` check. Same path Google's OAuth callback uses; no new abstraction. |
+| OAuth marker token | OAuth token (`auth_service.store_oauth_tokens`) | Written by `_mark_logged_in()` after `stripe login --complete` exits 0; cleared by `_mark_logged_out()` on disconnect. **Strings are dummies (`"cli-managed"`)** — the real OAuth lives in the CLI's config file. | Lights up the catalogue's `provider.stored = true` flag via the existing `kind == "oauth"` branch of `provider_connection_state` (`auth_service.get_oauth_tokens("stripe")`). Same `store_oauth_tokens` API Google's OAuth callback uses; no new abstraction. |
 
 ### `StripeListenSource(DaemonEventSource)`
 
@@ -527,7 +527,7 @@ Stripe is wired into the JSON-driven Credentials Modal catalogue at
     "logout": "stripe_logout",
     "status": "stripe_status"
   },
-  "instructions": "Click 'Login with Stripe' to open the Stripe Dashboard. After you authorise, the CLI stores credentials at ~/.config/stripe/config.toml and the listen daemon starts automatically. The Stripe CLI must be installed on PATH (https://stripe.com/docs/stripe-cli#install)."
+  "instructions": "Click 'Login with Stripe' to open the Stripe Dashboard. After you authorise, the CLI stores credentials at ~/.config/stripe/config.toml and the listen daemon starts automatically. The Stripe CLI is downloaded automatically on first use unless one is already on PATH (manual install: https://stripe.com/docs/stripe-cli#install)."
 }
 ```
 
@@ -547,9 +547,13 @@ changes.
 `kind: "oauth"` is the same pattern Twitter and Google use — the
 Modal renders a "Login with X" button that calls `ws.login`,
 expects a `{success, url}` response, opens that URL in a new tab,
-and listens for the `<status_hook>_status` push broadcast to flip
-the connection indicator. Stripe rides on this exact pattern with
-zero new frontend code; the difference is that Stripe's `ws.login`
+and, for providers that declare a `status_hook`, listens for the
+`<status_hook>_status` push broadcast to flip the connection
+indicator. Stripe rides on the login half of this pattern with
+zero new frontend code; it declares no `status_hook`, so its
+indicator comes from the catalogue's `stored` field instead (see
+[Status broadcasting](#status-broadcasting--marker-token--generic-catalogue-invalidation)).
+The other difference is that Stripe's `ws.login`
 returns the URL produced by `stripe login --non-interactive`
 (rather than a URL we constructed via `oauth_utils.get_redirect_uri`
 + a Twitter/Google OAuth helper class), and there is no callback
@@ -584,20 +588,28 @@ existing generic mechanisms:
 
 ### 1. The catalogue's authoritative `stored` field
 
-[`server/routers/websocket.py:handle_get_credential_catalogue`](../server/routers/websocket.py)
-enriches every provider with `stored: bool`. For providers that
-declare `status_hook` (Twitter, Google, Telegram), the check is:
+The `get_credential_catalogue` handler in
+[`server/routers/websocket.py`](../server/routers/websocket.py)
+enriches every provider with `stored: bool` by calling
+`provider_connection_state` in
+[`server/services/credential_registry.py`](../server/services/credential_registry.py)
+(the same function the Normal-mode employee summaries use). It picks
+the check in this order: a declared `stored_check`, then a declared
+`status_hook` (`get_oauth_tokens(status_hook)`), then `kind`. Stripe
+declares neither `stored_check` nor `status_hook`, so it takes the
+`kind == "oauth"` branch:
 
 ```python
-tokens = await auth_service.get_oauth_tokens(status_hook)
-provider["stored"] = tokens is not None
+elif kind == "oauth":
+    tokens = await auth_service.get_oauth_tokens(pid)   # pid == "stripe"
+    state["stored"] = tokens is not None
 ```
 
 Google's OAuth callback writes real tokens via
 `store_oauth_tokens("google", access_token, refresh_token, ...)`.
-Stripe writes **synthetic marker strings** (`"cli-managed"`) the
-same way — the catalogue's existing logic flips `stored: true`
-without any provider-specific code in the catalogue handler. The
+Stripe writes **synthetic marker strings** (`"cli-managed"`) through
+the same API — the existing logic flips `stored: true` without any
+provider-specific code in `provider_connection_state`. The
 `auth_service.store_oauth_tokens` API doesn't validate the strings;
 the marker exists purely to flip the existence check.
 
@@ -620,8 +632,8 @@ already use. The contract is locked by
 `tests/credentials/test_credential_broadcasts.py` (`inspect.getsource`
 introspection over each handler).
 
-`WebSocketContext.tsx` already has a generic case for this event
-(line 1003 — predates Stripe). Its handler calls `invalidateCatalogue`
+`WebSocketContext.tsx` already has a generic
+`case 'credential_catalogue_updated'` (predates Stripe). Its handler calls `invalidateCatalogue`
 on the TanStack Query client; the catalogue refetches; the modal
 sees the new `provider.stored` value and re-renders. **No
 stripe-specific code anywhere on the frontend.**
@@ -646,9 +658,9 @@ when a workflow with a Stripe trigger deploys.
 const connected = status ? !!status.connected : !!config.stored;
 ```
 
-Providers with a `statusHook` registered in `useProviderStatus` (the
-five legacy providers) keep their hook-driven semantics. Providers
-without one (Stripe today, future CLI-managed-OAuth integrations
+Providers whose `statusHook` is mapped in `useProviderStatus`
+(`client/src/components/credentials/hooks.ts`) keep their hook-driven
+semantics. Providers without one (Stripe today, future CLI-managed-OAuth integrations
 tomorrow) fall back to the catalogue's authoritative `config.stored`
 field. **No `'stripe'` reference anywhere in the frontend.**
 

@@ -68,7 +68,8 @@ exists to keep them apart.
 **`account_id` is stripped from model arguments.** `server_controlled_fields`
 is enforced only in `BaseNode.execute_as_tool`'s ToolNode branch; a dual-purpose
 ActionNode takes an earlier return that merges `{**node_params, **tool_args}`
-with model arguments winning ([base.py:653-669](../server/services/plugin/base.py)).
+with model arguments winning (the non-`ToolNode` branch of
+[`BaseNode.execute_as_tool`](../server/services/plugin/base.py)).
 Since inbound Discord messages are the realistic source of hostile tool
 arguments and `account_id` selects which bot identity sends, `AccountScopedNode`
 in [`_base.py`](../server/nodes/discord/_base.py) removes locked fields before

@@ -266,7 +266,7 @@ On startup, `ProxyService.startup()` loads providers from the DB and `_load_prov
 
 ## Configuration
 
-Environment variables in `server/.env`:
+Environment variables in the repo-root `.env`, layered over `.env.template` (`Settings` in `core/config.py` reads both; there is no `server/.env`):
 
 ```bash
 PROXY_ENABLED=true              # declared in core/config.py (default false) but NOT a gate; is_enabled() returns _initialized
