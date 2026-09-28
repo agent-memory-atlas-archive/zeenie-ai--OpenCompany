@@ -15,13 +15,15 @@ Give an existing AI agent a natural-language tool for the shared local Android p
 
 | Handle | Required | Purpose |
 | --- | --- | --- |
-| `input-model` | Yes | Exactly one enabled OpenAI, Anthropic, or Gemini model connector for the embedded mobile-use engine |
+| `input-model` | No | Optional single enabled OpenAI, Anthropic, or Gemini model connector overriding node/global selection for the embedded mobile-use engine |
 
 ## Parameters
 
 The AI-visible schema accepts only `prompt`: a required string, 1–20,000 characters. Whitespace-only requests are rejected by the shared execution path. Extra tool arguments are forbidden.
 
-Saved configuration uses `MobileParams`: `prompt` defaults to empty, `max_steps` defaults to 40 (1–200), and `timeout_s` defaults to 900 (30–3600 seconds). In tool mode, the model supplies the request while the saved configuration controls the step/time limits. A parent agent's model connection does not replace `input-model` on this node.
+Saved configuration uses `MobileParams`: `prompt` defaults to empty, `max_steps` defaults to 40 (1–200), and `timeout_s` defaults to 900 (30–3600 seconds). In tool mode, the model supplies the request while the saved configuration controls the step/time limits. The global model is used by default; a parent agent’s custom model is not inherited automatically.
+
+Model selection defaults to `model_source="global"`, reading the toolbar’s current saved provider/model on each task. `model_source="custom"` uses the node’s `provider` and `model`; blank custom model uses the provider default. One connected model takes priority over both modes. Missing or unsupported global providers produce actionable errors. Supported providers are OpenAI, Anthropic and Gemini.
 
 ## Outputs (handles)
 

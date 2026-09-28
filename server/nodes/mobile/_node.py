@@ -3,7 +3,7 @@
 from datetime import timedelta
 import hashlib
 import json
-from typing import Any
+from typing import Any, Literal
 from pydantic import BaseModel, Field
 from services.plugin import ActionNode, NodeContext, Operation, NodeUserError
 from services.plugin.scaling import RetryPolicy, TaskQueue
@@ -11,6 +11,17 @@ from services.plugin.scaling import RetryPolicy, TaskQueue
 
 class MobileParams(BaseModel):
     prompt: str = Field(default="", max_length=20000, json_schema_extra={"rows": 4})
+    model_source: Literal["global", "custom"] = Field(
+        default="global", title="Model selection",
+        description="Use the global model or choose one for this phone. A connected Model node always takes priority.",
+    )
+    provider: str = Field(
+        default="openai", title="AI provider",
+        json_schema_extra={"enum": ["openai", "anthropic", "gemini"], "displayOptions": {"show": {"model_source": ["custom"]}}},
+    )
+    model: str = Field(default="", title="Model", json_schema_extra={
+        "placeholder": "Choose a model", "displayOptions": {"show": {"model_source": ["custom"]}},
+    })
     max_steps: int = Field(default=40, ge=1, le=200)
     timeout_s: int = Field(default=900, ge=30, le=3600)
 
@@ -49,7 +60,7 @@ async def require_mobile_owner(principal: str) -> None:
         raise NodeUserError("The shared mobile device is available to the installation owner only")
 
 
-async def resolve_model(ctx: NodeContext) -> dict:
+async def resolve_model(ctx: NodeContext, params: MobileParams | None = None) -> dict:
     from services.plugin.deps import get_ai_service, get_database
     from services.llm.config import get_default_model_async
     from services.node_registry import get_node_class
@@ -57,27 +68,41 @@ async def resolve_model(ctx: NodeContext) -> dict:
     from constants import detect_ai_provider
 
     connections = [edge for edge in ctx.edges if edge.get("target") == ctx.node_id and edge_target_handle(edge) == "input-model"]
-    if len(connections) != 1:
-        raise NodeUserError("Connect exactly one AI model to this phone node's Model input")
-    source = next((node for node in ctx.nodes if node.get("id") == connections[0].get("source")), None)
-    cls = get_node_class(source.get("type", "")) if source else None
-    if cls is None or cls.component_kind != "model" or (source.get("data") or {}).get("disabled"):
-        raise NodeUserError("Connect an enabled AI model node to this phone node")
-    parameters = await get_database().get_node_parameters(source["id"]) or {}
-    provider_ref = detect_ai_provider(source["type"], parameters)
+    if len(connections) > 1:
+        raise NodeUserError("Connect exactly one AI model to this phone node's Model input, or remove connections to use the global model")
+    database = get_database()
+    if connections:
+        source = next((node for node in ctx.nodes if node.get("id") == connections[0].get("source")), None)
+        cls = get_node_class(source.get("type", "")) if source else None
+        if cls is None or cls.component_kind != "model" or (source.get("data") or {}).get("disabled"):
+            raise NodeUserError("Connect an enabled AI model node to this phone node")
+        parameters = await database.get_node_parameters(source["id"]) or {}
+        provider_ref = detect_ai_provider(source["type"], parameters)
+        selected_model = parameters.get("model")
+    else:
+        config = params or MobileParams.model_validate(await database.get_node_parameters(ctx.node_id) or {})
+        if config.model_source == "custom":
+            provider_ref, selected_model = config.provider, config.model
+        else:
+            # The toolbar and Settings handlers persist the installation-wide
+            # selection in the default settings row, separate from auth identity.
+            settings = await database.get_user_settings("default") or {}
+            provider_ref = settings.get("default_llm_provider")
+            selected_model = settings.get("default_llm_model")
+            if not provider_ref or not selected_model:
+                raise NodeUserError("Choose a global AI model in the toolbar, select Custom in this phone's Model selection, or connect a Model node")
     adapters = {
         "openai": ("openai", "OPENAI_API_KEY"),
         "anthropic": ("anthropic", "ANTHROPIC_API_KEY"),
         "gemini": ("google", "GOOGLE_API_KEY"),
     }
     if provider_ref not in adapters:
-        raise NodeUserError("Mobile currently supports OpenAI, Anthropic, or Gemini model connectors")
+        raise NodeUserError(f"The selected provider '{provider_ref}' is not supported by the phone engine. Choose an OpenAI, Anthropic, or Gemini model in the global selector or this phone's settings")
     auth = get_ai_service().auth
     key = await auth.get_api_key(provider_ref, "default")
     if not key:
         raise NodeUserError("Connect the selected model provider in Settings before running Mobile")
-    models = await auth.get_stored_models(provider_ref, "default")
-    model = parameters.get("model") or (models[0] if models else await get_default_model_async(provider_ref, get_database()))
+    model = selected_model or await get_default_model_async(provider_ref, database)
     provider, variable = adapters[provider_ref]
     return {"provider": provider, "model": model, "model_env": {variable: key}}
 
@@ -117,7 +142,7 @@ class MobileUseAgent(ActionNode):
         if not params.prompt.strip():
             raise NodeUserError("Enter a task for the mobile agent")
         runtime = get_runtime()
-        model = await resolve_model(ctx)
+        model = await resolve_model(ctx, params)
         config = params.model_dump()
         directive = (ctx.raw.get("_raw_parameters") or {}).get("system_message")
         if directive and directive != config["prompt"]:

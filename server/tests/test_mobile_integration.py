@@ -38,9 +38,6 @@ async def test_connector_uses_saved_model_and_only_selected_key(monkeypatch):
 
 async def test_connector_requires_exactly_one_model():
     ctx = context()
-    ctx.edges = []
-    with pytest.raises(NodeUserError, match="exactly one"):
-        await _node.resolve_model(ctx)
     ctx.edges = [{"target": "mobile", "targetHandle": "input-model"}] * 2
     with pytest.raises(NodeUserError, match="exactly one"):
         await _node.resolve_model(ctx)

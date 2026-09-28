@@ -32,14 +32,14 @@ beforeEach(() => {
 });
 
 describe('Developer workspace', () => {
-  it('shares Browser, Canvas and Android tabs and the workflow-bound viewer', () => {
+  it('shares Browser, Canvas and Mobile tabs and the workflow-bound viewer', () => {
     render(<CanvasDock nodes={nodes} />);
     expect(screen.getByText('Saved canvas board')).toBeInTheDocument();
     fireEvent.mouseDown(screen.getByRole('tab', { name: 'Browser' }), { button: 0, ctrlKey: false });
     expect(screen.getByText('Research browser')).toBeInTheDocument();
     expect(screen.getByTestId('browser-view')).toHaveAttribute('data-workflow', 'wf1');
-    fireEvent.mouseDown(screen.getByRole('tab', { name: 'Android' }), { button: 0, ctrlKey: false });
-    expect(screen.getByText('The Android mirror isn’t available yet')).toBeInTheDocument();
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'Mobile' }), { button: 0, ctrlKey: false });
+    expect(screen.getByText('Add a Mobile Agent or Android tool to this workflow to use its phone here.')).toBeInTheDocument();
     expect(screen.queryByTestId('browser-view')).toBeNull();
   });
 

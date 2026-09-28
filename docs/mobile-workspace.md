@@ -17,7 +17,7 @@ The runtime singleton and its leases are process-local. Run one backend process 
 3. Review and accept the Android SDK license in setup. Setup installs the optional engine and Android packages and creates the persistent `OpenCompany` AVD using a Pixel 7 device profile. Network access and sufficient disk space are required for these downloads.
 4. Click **Start phone** and wait for **Ready**. The emulator runs without a separate desktop window; the Workspace shows its video. Device storage persists across stopping and starting the emulator.
 5. Click **Use phone** to sign in to the Play Store, install applications, or upload an APK. APK uploads are limited to 256 MB and require the current manual-control lease. Play Store availability comes from the selected Google Play system image; account sign-in is performed on the device.
-6. Connect a provider in OpenCompany Settings, then connect exactly one AI model node to the phone node's **Model** input and save the workflow. The model selected on that connector is used for every mobile-use stage. OpenAI, Anthropic, and Gemini credentials are supported. Choose a model with image input and tool use, then enter a request under **Ask AI to use the phone** and click **Run task**, or call the node through its agent connection.
+6. Connect a provider in OpenCompany Settings, then choose a supported global model in the toolbar. Phone nodes use it by default. For an override, choose **Custom** under the node’s **Model selection**, or connect exactly one model to its **Model** input. Save the workflow. The resolved model is used for every mobile-use stage. OpenAI, Anthropic, and Gemini credentials are supported. Choose a model with image input and tool use, then enter a request under **Ask AI to use the phone** and click **Run task**, or call the node through its agent connection.
 
 The setup is optional. Ordinary application startup does not install the mobile engine or boot an emulator. Runtime data lives under the configured OpenCompany data directory's `mobile` subdirectory, including the engine environment, AVD, and device resource metadata. Stopping the emulator does not reset its apps or account sessions.
 
@@ -27,8 +27,8 @@ Setup shows the current component, download or SDK output, elapsed time, last up
 
 | Node | Use it for | Connection |
 | --- | --- | --- |
-| **Mobile Agent** (`mobile_use_agent`) | Direct Workspace requests or delegated phone tasks | Exactly one model into **Model**; **Delegate** output for employee delegation |
-| **Android** (`android_tool`) | Giving an existing AI agent a phone tool | **Tool** output into the agent’s **Tools** input, plus exactly one model into Android’s **Model** input |
+| **Mobile Agent** (`mobile_use_agent`) | Direct Workspace requests or delegated phone tasks | Global model by default; optional **Model** override; **Delegate** output for employee delegation |
+| **Android** (`android_tool`) | Giving an existing AI agent a phone tool | **Tool** output into the agent’s **Tools** input; global model by default, with an optional **Model** override |
 
 Both nodes use the same phone. Adding another node does not create another emulator. The existing `android_agent` and relay service nodes are separate integrations; they do not set up this local phone.
 
@@ -49,6 +49,16 @@ Choose **Full view** above the phone to fill the screen. The live phone expands 
 
 Connection warnings clear after a successful status check. Action errors have a **Dismiss** button. Task submission is disabled while the phone is off. Download details, completed setup history, and technical diagnostics are collapsed by default.
 
+## Model selection
+
+Both Mobile Agent and Android use this order:
+
+1. A connected **Model** node overrides all node/global settings. Multiple connections or a disabled/invalid connector produce an error rather than falling back silently.
+2. With **Model selection = custom**, the saved phone provider/model is used. An empty model uses that provider’s configured default.
+3. With **Model selection = global** (the default), the current toolbar selection is read for every new task. Changing it applies to the next task, not a worker already running.
+
+The selected model serves every mobile-use stage. OpenAI, Anthropic and Gemini are supported. An unsupported or missing global selection gives an actionable error; it never silently selects a different provider. Credentials always come from stored provider settings. Android’s AI-visible tool schema remains prompt-only, so an agent cannot override model selection or saved execution limits through tool arguments.
+
 ## Runtime files and Git
 
 `mobile_root()` currently resolves a relative `DATA_DIR` against the backend process’s working directory. With source development launched from `server/` and `DATA_DIR=.opencompany`, the installed phone is therefore under `server/.opencompany/mobile/`. This differs from the application’s canonical repository-relative data resolver. An absolute `DATA_DIR` avoids this ambiguity. Do not move an existing installation or switch its data directory while the backend is running.
@@ -59,7 +69,7 @@ The repository ignores `server/.opencompany/`. Emulator disks, snapshots, downlo
 
 ### Android tool for AI agents
 
-Add the **Android** tool node (`android_tool`) and connect its **Tool** output to an AI agent's **Tools** input. Connect an OpenAI, Anthropic, or Gemini model node to Android's **Model** input; the same model node can also feed the parent agent. Save the workflow, then set up and start the phone in Workspace → Mobile. The agent calls `android` with one argument, `prompt`, such as “Open Settings and turn on dark mode.” The tool uses the same mobile-use engine, owner checks, task queue, manual takeover, and saved time/step limits as Mobile Agent. It does not install software or accept licenses automatically.
+Add the **Android** tool node (`android_tool`) and connect its **Tool** output to an AI agent's **Tools** input. The tool follows the saved global model by default. Optionally choose a custom model in its settings or connect an OpenAI, Anthropic, or Gemini model node to Android’s **Model** input; a connected model takes priority. Save the workflow, then set up and start the phone in Workspace → Mobile. The agent calls `android` with one argument, `prompt`, such as “Open Settings and turn on dark mode.” The tool uses the same mobile-use engine, owner checks, task queue, manual takeover, and saved time/step limits as Mobile Agent. It does not install software or accept licenses automatically.
 
 ### Troubleshooting and logs
 
@@ -75,7 +85,7 @@ Operational events are written to `mobile/mobile.log` relative to the active dat
 | `readuntil() called while another coroutine is already waiting` during startup | Older code let status polling read the driver’s initialization pipe concurrently. The fix shares `driver_lock` across initialization and commands and skips geometry polling during lifecycle transitions. Restart the backend after updating. |
 | Phone works but an old error remains | Current UI clears recovered connection warnings; dismiss action errors. Refresh the frontend after updating. |
 | New Android node is absent | Restart the backend to register the plugin and refresh the frontend. Search for **Android**, type `android_tool`. |
-| Task asks for a model | Connect exactly one supported model to the phone node’s **Model** input and save the workflow. The parent agent’s model connection alone is insufficient. |
+| Task asks for a model | Select a supported global model, choose a custom provider/model in the phone’s settings, or connect a model to the phone’s **Model** input. A parent agent’s separate custom model is not inherited automatically. |
 | Live view cannot connect | Check recent video events. Only one viewer is supported; close another preview and use **Reconnect**. |
 
 `setup-status.json` retains setup progress across backend restarts. Recent diagnostic events in status are bounded to 40 records in memory; `mobile.log` and its rotated backups retain operational history on disk. Logs exclude user content, but still include workflow/run identifiers: review them before sharing. The startup race explains a failed request and phone cleanup; it does not by itself prove a whole-backend crash.

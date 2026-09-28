@@ -248,7 +248,7 @@ function MobileSession({ workflowId, nodeId, visible }: { workflowId: string; no
     <form className="mt-auto flex shrink-0 flex-col group-data-[full-view=true]/fullview:hidden gap-2 border-t border-border-default pt-3" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
       <label htmlFor={`task-${nodeId}`} className="text-sm font-medium">Ask AI to use the phone</label>
       <textarea id={`task-${nodeId}`} className={`${fieldClass} resize-y`} rows={2} maxLength={12000} value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="For example: Open Settings and turn on dark mode" />
-      <p className="m-0 text-xs text-fg-muted">Tell the AI what you want done. Only one person or AI can use this phone at a time.</p>
+      <p className="m-0 text-xs text-fg-muted">Uses your global AI model unless this phone has a model override. Only one person or AI can use the phone at a time.</p>
       <div className="flex items-center gap-2"><Button size="sm" type="submit" disabled={!running || !prompt.trim() || !!busy || hasTask}>Run task</Button>
         {hasTask && <Button size="sm" type="button" variant="outline" disabled={!!busy} onClick={() => void perform('cancelling', async () => { setTask(await mobileRequest(`${path}/tasks/${encodeURIComponent(submission!)}/cancel`, {})); })}>Cancel task</Button>}
         {task && <span role="status" className="text-xs text-fg-muted">{({queued: 'Waiting for the phone', running: 'Working on your request', completed: 'Done', failed: 'Could not finish', cancelled: 'Cancelled', awaiting_user: 'Waiting for you'})[taskState(task)] || 'Request received'}</span>}

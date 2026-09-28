@@ -33,10 +33,14 @@ async def test_tool_uses_saved_limits_and_existing_mobile_pipeline(monkeypatch):
     result = await AndroidTool().execute_as_tool({"prompt": "Open Settings"}, {"max_steps": 7, "timeout_s": 60}, ctx)
     assert result.get("error") is None, result
     args = runtime.run.await_args.kwargs
-    assert args["params"] == {"prompt": "Open Settings", "max_steps": 7, "timeout_s": 60}
+    assert args["params"]["prompt"] == "Open Settings"
+    assert args["params"]["max_steps"] == 7
+    assert args["params"]["timeout_s"] == 60
     assert args["node_id"] == "phone-tool"
     owner.assert_awaited_once_with("owner")
-    model.assert_awaited_once_with(ctx)
+    model.assert_awaited_once()
+    assert model.await_args.args[0] is ctx
+    assert model.await_args.args[1].model_source == "global"
 
 
 def test_diagnostics_are_bounded_and_exclude_content(monkeypatch, tmp_path):

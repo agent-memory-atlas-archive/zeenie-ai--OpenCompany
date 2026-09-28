@@ -16,7 +16,7 @@ Carry out direct Workspace requests or delegated employee tasks on one persisten
 | Handle | Required | Purpose |
 | --- | --- | --- |
 | `input-main` | No | Task/main workflow input |
-| `input-model` | Yes | Exactly one enabled OpenAI, Anthropic, or Gemini model connector |
+| `input-model` | No | Optional single enabled OpenAI, Anthropic, or Gemini model connector overriding node/global selection |
 | `input-context` | No | Context connection |
 
 ## Parameters
@@ -26,6 +26,8 @@ Carry out direct Workspace requests or delegated employee tasks on one persisten
 | `prompt` | Empty | Required at execution; maximum 20,000 characters |
 | `max_steps` | 40 | 1–200 |
 | `timeout_s` | 900 | 30–3600 seconds of active task time |
+
+Model selection defaults to `model_source="global"`, reading the toolbar’s current saved provider/model on each task. `model_source="custom"` uses the node’s `provider` and `model`; blank custom model uses the provider default. One connected model takes priority over both modes. Missing or unsupported global providers produce actionable errors. Supported providers are OpenAI, Anthropic and Gemini.
 
 ## Outputs (handles)
 

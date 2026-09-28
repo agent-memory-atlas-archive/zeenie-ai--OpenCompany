@@ -1,0 +1,88 @@
+"""Global/default/custom model precedence, without provider requests."""
+
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+import pytest
+from services.plugin import NodeContext, NodeUserError
+from nodes.mobile._node import MobileParams, resolve_model
+
+
+@pytest.fixture
+def models(monkeypatch):
+    import services.plugin.deps as deps
+    import services.node_registry as registry
+    import constants
+    database = SimpleNamespace(
+        get_node_parameters=AsyncMock(return_value={}),
+        get_user_settings=AsyncMock(return_value={"default_llm_provider": "gemini", "default_llm_model": "global-vision"}),
+        get_provider_defaults=AsyncMock(return_value={"default_model": "provider-default"}),
+    )
+    auth = SimpleNamespace(get_api_key=AsyncMock(return_value="selected-key"))
+    monkeypatch.setattr(deps, "get_database", lambda: database)
+    monkeypatch.setattr(deps, "get_ai_service", lambda: SimpleNamespace(auth=auth))
+    monkeypatch.setattr(registry, "get_node_class", lambda _: SimpleNamespace(component_kind="model"))
+    monkeypatch.setattr(constants, "detect_ai_provider", lambda *_: "anthropic")
+    return database, auth
+
+
+def context():
+    return NodeContext(node_id="phone", node_type="android_tool", workflow_id="wf", execution_id="run")
+
+
+async def test_global_selection_is_read_fresh_and_ignores_drag_defaults(models):
+    db, auth = models
+    params = MobileParams(provider="openrouter", model="old-drag-default")
+    result = await resolve_model(context(), params)
+    assert result == {"provider": "google", "model": "global-vision", "model_env": {"GOOGLE_API_KEY": "selected-key"}}
+    db.get_user_settings.assert_awaited_once_with("default")
+    auth.get_api_key.assert_awaited_once_with("gemini", "default")
+    db.get_user_settings.return_value = {"default_llm_provider": "openai", "default_llm_model": "new-global"}
+    assert (await resolve_model(context(), params))["model"] == "new-global"
+
+
+async def test_custom_selection_does_not_read_global(models):
+    db, _ = models
+    result = await resolve_model(context(), MobileParams(model_source="custom", provider="openai", model="custom-vision"))
+    assert result["provider"] == "openai"
+    assert result["model"] == "custom-vision"
+    db.get_user_settings.assert_not_awaited()
+
+
+async def test_connected_model_overrides_global_and_custom(models):
+    db, _ = models
+    db.get_node_parameters.return_value = {"model": "connected-vision", "api_key": "do-not-use"}
+    ctx = context()
+    ctx.nodes = [{"id": "model", "type": "anthropicChatModel"}]
+    ctx.edges = [{"source": "model", "target": "phone", "targetHandle": "input-model"}]
+    result = await resolve_model(ctx, MobileParams(model_source="custom", provider="openai", model="custom"))
+    assert result == {"provider": "anthropic", "model": "connected-vision", "model_env": {"ANTHROPIC_API_KEY": "selected-key"}}
+    db.get_user_settings.assert_not_awaited()
+
+
+async def test_disabled_connector_does_not_silently_fallback(models):
+    ctx = context()
+    ctx.nodes = [{"id": "model", "type": "anthropicChatModel", "data": {"disabled": True}}]
+    ctx.edges = [{"source": "model", "target": "phone", "targetHandle": "input-model"}]
+    with pytest.raises(NodeUserError, match="enabled"):
+        await resolve_model(ctx)
+
+
+@pytest.mark.parametrize("settings,match", [({}, "Choose a global"), ({"default_llm_provider": "ollama", "default_llm_model": "local"}, "not supported")])
+async def test_missing_or_unsupported_global_is_actionable(models, settings, match):
+    db, auth = models
+    db.get_user_settings.return_value = settings
+    with pytest.raises(NodeUserError, match=match):
+        await resolve_model(context(), MobileParams())
+    auth.get_api_key.assert_not_awaited()
+
+
+async def test_missing_key_is_actionable(models):
+    _, auth = models
+    auth.get_api_key.return_value = None
+    with pytest.raises(NodeUserError, match="Settings"):
+        await resolve_model(context(), MobileParams())
+
+
+async def test_blank_custom_model_uses_provider_default(models):
+    result = await resolve_model(context(), MobileParams(model_source="custom", provider="openai"))
+    assert result["model"] == "provider-default"

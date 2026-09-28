@@ -1721,7 +1721,7 @@ Toolkit aggregator nodes (the former `androidTool` and its `TOOLKIT_NODE_TYPES` 
 
 ### Local emulator workspace (separate plugin)
 
-`server/nodes/mobile/` owns **Mobile Agent** (`mobile_use_agent`) and the **Android** tool (`android_tool`). Both declare `ui_hints.workspace.kind="mobile"`; Home and Dev render `MobileWorkspace`. Android's Tool output connects to an agent's Tools input and requires its own Model connection. Its AI-visible schema contains only `prompt`; saved configuration controls time/step limits. This plugin does not replace the relay services documented below.
+`server/nodes/mobile/` owns **Mobile Agent** (`mobile_use_agent`) and the **Android** tool (`android_tool`). Both declare `ui_hints.workspace.kind="mobile"`; Home and Dev render `MobileWorkspace`. Android’s Tool output connects to an agent’s Tools input. Both phone nodes follow the saved global model by default; custom settings override it, and a connected Model node takes highest priority. Its AI-visible schema contains only `prompt`; saved configuration controls time/step limits. This plugin does not replace the relay services documented below.
 
 Startup must hold `driver_lock` while reading the initialization reply; regular commands use the same lock. `/status` must skip driver I/O during lifecycle transitions. A serial alone does not mean the phone is ready. Keep connection warnings separate from action errors and clear them after successful polling.
 

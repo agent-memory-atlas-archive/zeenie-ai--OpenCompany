@@ -168,7 +168,7 @@ describe('WorkspaceDock', () => {
     expect(screen.getByTestId('browser-workspace')).toHaveAttribute('data-workflow', 'w1');
     expect(screen.getByTestId('browser-workspace')).toHaveAttribute('data-visible', 'true');
     await userEvent.click(screen.getByRole('tab', { name: 'Mobile' }));
-    expect(screen.getByText('Add a Mobile Agent node to this workflow to use its phone here.')).toBeInTheDocument();
+    expect(screen.getByText('Add a Mobile Agent or Android tool to this workflow to use its phone here.')).toBeInTheDocument();
     expect(useHomeStore.getState().workspaceTab).toBe('android');
     expect(screen.queryByTestId('browser-workspace')).toBeNull();
   });
