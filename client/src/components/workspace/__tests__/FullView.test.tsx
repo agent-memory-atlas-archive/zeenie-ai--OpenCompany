@@ -40,3 +40,22 @@ it('explains when fullscreen is unavailable without hiding the viewer', async ()
   expect(screen.getByRole('alert')).toHaveTextContent('Full view is unavailable');
   expect(screen.getByTestId('viewer')).toBeInTheDocument();
 });
+
+it('collapses secondary controls without losing their state or remounting the viewer', () => {
+  const mount = vi.fn();
+  function Viewer() { useEffect(() => { mount(); }, []); return <canvas data-testid="viewer" />; }
+  render(<FullView label="Browser" toolbar={<span role="status">Live browser</span>} controls={<input aria-label="Address" defaultValue="example.com" />}><Viewer /></FullView>);
+  const toggle = screen.getByRole('button', { name: 'Browser controls' });
+  const viewer = screen.getByTestId('viewer');
+  expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  expect(screen.queryByRole('textbox', { name: 'Address' })).toBeNull();
+  fireEvent.click(toggle);
+  fireEvent.change(screen.getByRole('textbox', { name: 'Address' }), { target: { value: 'example.org' } });
+  fireEvent.click(toggle);
+  expect(screen.getByRole('status')).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Browser full view' })).toBeVisible();
+  fireEvent.click(toggle);
+  expect(screen.getByRole('textbox', { name: 'Address' })).toHaveValue('example.org');
+  expect(screen.getByTestId('viewer')).toBe(viewer);
+  expect(mount).toHaveBeenCalledTimes(1);
+});

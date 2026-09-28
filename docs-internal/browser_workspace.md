@@ -23,13 +23,21 @@ the same viewer above the node's settings.
 
 ## Full view
 
-Click **Full view** above the browser to fill the screen. Navigation, address,
+The normal Browser and Mobile views fill the remaining Workspace height and
+width, without an outer gutter or a dedicated Full view button row. The compact
+toolbar keeps status and takeover visible. Its **Browser controls** toggle
+expands navigation, address and tab selection without reconnecting the stream.
+Mobile has a **Phone controls** toggle and a collapsible AI task panel; the phone
+image keeps its original proportions, so a wide panel can still have side bars.
+
+Click **Full view** in the toolbar to fill the screen. Navigation, address,
 control and exit buttons remain outside the page image. **Exit full view** or
 **Esc** returns to the previous layout. The same mounted canvas and stream stay
 active, so entering or leaving does not reopen the session. The shared
 `components/workspace/FullView.tsx` boundary handles native fullscreen changes
 and restores focus to its button on exit. Mobile uses the same boundary, hiding
-its task form and technical panels while enlarged. Full view does not grant
+its task form while enlarged; secondary controls stay available through the
+toolbar toggle. Full view does not grant
 manual control; use the existing control button separately. If fullscreen is
 unavailable, the UI explains how to use the Workspace expand button instead.
 

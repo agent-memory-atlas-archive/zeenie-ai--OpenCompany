@@ -4,7 +4,8 @@ import userEvent from '@testing-library/user-event';
 import MobileWorkspace from '../MobileWorkspace';
 import { mobilePoint, mobileRequest } from '../api';
 
-vi.mock('../video', () => ({ connectMobileVideo: () => () => {} }));
+const { connectVideo } = vi.hoisted(() => ({ connectVideo: vi.fn(() => () => {}) }));
+vi.mock('../video', () => ({ connectMobileVideo: connectVideo }));
 const fetchMock = vi.fn();
 const nodes = [{ node_id: 'flow:mobile_agent:1', label: 'Phone assistant' }];
 const ready = { supported: true, adb: true, emulator: true, image: true, engine: true, video: true, acceleration: 'WHPX is installed and usable.' };
@@ -13,6 +14,7 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
 
 beforeEach(() => {
   sessionStorage.clear();
+  connectVideo.mockClear();
   snapshot = { running: false, control_state: 'idle', controller: null, epoch: 0, geometry: { width: 1080, height: 1920, rotation: 0 } };
   vi.stubGlobal('fetch', fetchMock);
   fetchMock.mockReset().mockImplementation(async (url: string) => json(url.endsWith('/doctor') ? ready : snapshot));
@@ -20,6 +22,25 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe('Mobile Workspace', () => {
+  it('keeps the phone connected and preserves a task draft when secondary panels collapse', async () => {
+    snapshot.running = true;
+    render(<MobileWorkspace workflowId="flow" nodes={nodes} />);
+    await screen.findByText('Ready');
+    await waitFor(() => expect(connectVideo).toHaveBeenCalledOnce());
+    const canvas = screen.getByLabelText('Phone screen, view only').querySelector('canvas');
+    const summary = screen.getByText('Ask AI to use the phone', { selector: 'summary' });
+    expect(screen.getByRole('textbox', { name: 'Ask AI to use the phone' })).not.toBeVisible();
+    await userEvent.click(summary);
+    await userEvent.type(screen.getByRole('textbox', { name: 'Ask AI to use the phone' }), 'Open Settings');
+    await userEvent.click(summary);
+    await userEvent.click(screen.getByRole('button', { name: 'Phone controls' }));
+    expect(screen.getByRole('button', { name: 'Stop phone' })).toBeVisible();
+    await userEvent.click(screen.getByRole('button', { name: 'Phone controls' }));
+    await userEvent.click(summary);
+    expect(screen.getByRole('textbox', { name: 'Ask AI to use the phone' })).toHaveValue('Open Settings');
+    expect(screen.getByLabelText('Phone screen, view only').querySelector('canvas')).toBe(canvas);
+    expect(connectVideo).toHaveBeenCalledOnce();
+  });
   it('clears a failed status check when the phone reconnects', async () => {
     let polls = 0;
     snapshot.running = true;
@@ -37,6 +58,7 @@ describe('Mobile Workspace', () => {
   it('explains how to start and disables AI tasks while the phone is off', async () => {
     render(<MobileWorkspace workflowId="flow" nodes={nodes} />);
     await screen.findByText('Phone is off');
+    await userEvent.click(screen.getByText('Ask AI to use the phone', { selector: 'summary' }));
     await userEvent.type(screen.getByRole('textbox', { name: 'Ask AI to use the phone' }), 'Open Settings');
     expect(screen.getByRole('button', { name: 'Run task' })).toBeDisabled();
   });
@@ -52,6 +74,7 @@ describe('Mobile Workspace', () => {
     render(<MobileWorkspace workflowId="flow" nodes={nodes} />);
     await screen.findByRole('button', { name: 'Start phone' });
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await userEvent.click(screen.getByRole('button', { name: 'Phone controls' }));
     expect(fetchMock.mock.calls.every(([, options]) => options.method === 'GET')).toBe(true);
     expect(screen.getByText('Help & diagnostics')).toBeInTheDocument();
     expect(screen.getByText('WHPX is installed and usable.')).toBeInTheDocument();
@@ -117,6 +140,7 @@ describe('Mobile Workspace', () => {
       return json(url.endsWith('/doctor') ? ready : snapshot);
     });
     render(<MobileWorkspace workflowId="home-flow" nodes={nodes} />);
+    await userEvent.click(screen.getByText('Ask AI to use the phone', { selector: 'summary' }));
     await userEvent.type(screen.getByRole('textbox', { name: 'Ask AI to use the phone' }), 'Open settings');
     await userEvent.click(screen.getByRole('button', { name: 'Run task' }));
     await screen.findByText('Connection dropped');
@@ -145,6 +169,7 @@ describe('Mobile Workspace', () => {
     await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => url.endsWith('/input'))).toBe(true));
     const request = fetchMock.mock.calls.find(([url]) => url.endsWith('/input'))!;
     expect(JSON.parse(request[1].body)).toMatchObject({ epoch: 7, operation: 'key', parameters: { key: 'home' } });
+    await userEvent.click(screen.getByRole('button', { name: 'Phone controls' }));
     expect(screen.getByLabelText('Install APK')).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('Install APK'), { target: { files: [new File(['bad'], 'not-an-app.txt')] } });
     expect(screen.getByText('Choose an APK file no larger than 256 MB.')).toBeInTheDocument();

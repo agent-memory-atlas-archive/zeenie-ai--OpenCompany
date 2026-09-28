@@ -30,7 +30,7 @@ export default function BrowserWorkspace({ workflowId, nodes, visible = true }: 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
       {nodes.length > 1 && (
-        <select aria-label="Browser node" className={inputClass} value={nodeId} onChange={(e) => setSelected(e.target.value)}>
+        <select aria-label="Browser node" className={`${inputClass} mx-2 mt-2 shrink-0`} value={nodeId} onChange={(e) => setSelected(e.target.value)}>
           {nodes.map((node) => <option key={node.node_id} value={node.node_id}>{node.label || 'Browser'}</option>)}
         </select>
       )}
@@ -314,28 +314,28 @@ function BrowserSessionView({ workflowId, nodeId, visible }: { workflowId: strin
   const statusLabel = phase === 'connecting' ? 'Connecting…' : phase === 'idle' ? 'Browser is stopped' : phase === 'error' ? 'Disconnected' : control ? 'You have control' : state.challenge_required ? 'Paused for site verification' : state.state === 'agent' ? 'Employee is browsing' : state.state === 'awaiting_user' ? 'Your help is needed' : state.controller === 'other' ? 'Another viewer has control' : 'Live browser';
 
   return (
-    <FullView label="Browser">
-      <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-        <span role="status" className="text-fg-muted">{installing ? 'Installing browser…' : starting ? 'Starting browser…' : statusLabel}</span>
+    <FullView label="Browser" toolbar={<>
+        <span role="status" className="min-w-0 flex-1 truncate text-xs text-fg-muted" title={statusLabel}>{installing ? 'Installing browser…' : starting ? 'Starting browser…' : statusLabel}</span>
         {phase === 'live' && <Button size="sm" variant="outline" disabled={takingControl} onClick={() => {
           setError('');
           if (control) send({ type: 'control_release' });
           else { setTakingControl(true); send({ type: 'control_request', ...(state.controller === 'other' ? { force: true } : {}) }); }
         }}>{control ? (state.challenge_required ? 'Hand back and resume' : 'Hand back') : takingControl ? 'Taking control…' : state.controller === 'other' ? 'Take over here' : 'Take control'}</Button>}
-      </div>
-      {state.request && <div className="rounded border border-border-default p-2 text-sm text-fg-default">{state.request.message || state.request.reason || 'The employee needs your help.'}</div>}
-      {error && <div role="alert" className="flex items-start gap-2 text-xs text-destructive"><span className="min-w-0 flex-1 break-words">{error}</span><button aria-label="Dismiss browser error" onClick={() => setError('')}>×</button></div>}
+      </>} controls={<>
       <form className="flex items-center gap-1" onSubmit={(e) => { e.preventDefault(); if (control) navigate('goto'); }}>
         <Button type="button" size="icon-sm" variant="ghost" aria-label="Back" disabled={!control} onClick={() => navigate('back')}><ArrowLeft className="size-4" /></Button>
         <Button type="button" size="icon-sm" variant="ghost" aria-label="Forward" disabled={!control} onClick={() => navigate('forward')}><ArrowRight className="size-4" /></Button>
         <Button type="button" size="icon-sm" variant="ghost" aria-label="Reload page" disabled={!control} onClick={() => navigate('reload')}><RotateCw className="size-4" /></Button>
         <input aria-label="Browser address" className={`${inputClass} flex-1`} value={address} disabled={!control} placeholder="Enter a website" onChange={(e) => setAddress(e.target.value)} />
       </form>
-      {tabs.length > 1 && <select aria-label="Browser tab" className={inputClass} disabled={!control} value={tabs.find((tab) => tab.active)?.target_id || ''} onChange={(e) => send({ type: 'tab', action: 'activate', target_id: e.target.value })}>
+      {tabs.length > 1 && <select aria-label="Browser tab" className={`${inputClass} w-full`} disabled={!control} value={tabs.find((tab) => tab.active)?.target_id || ''} onChange={(e) => send({ type: 'tab', action: 'activate', target_id: e.target.value })}>
         {tabs.map((tab) => <option key={tab.target_id} value={tab.target_id}>{tab.title || tab.url || 'New tab'}</option>)}
       </select>}
+      </>}>
+      {state.request && <div className="max-h-[25%] shrink-0 overflow-y-auto border-b border-border-default p-2 text-sm text-fg-default">{state.request.message || state.request.reason || 'The employee needs your help.'}</div>}
+      {error && <div role="alert" className="flex max-h-[25%] shrink-0 items-start gap-2 overflow-y-auto p-2 text-xs text-destructive"><span className="min-w-0 flex-1 break-words">{error}</span><button aria-label="Dismiss browser error" onClick={() => setError('')}>×</button></div>}
       <div ref={surfaceRef} role="group" aria-label="Live browser page" tabIndex={control ? 0 : -1}
-        className="relative flex min-h-40 flex-1 items-center justify-center overflow-hidden rounded border border-border-default bg-bg-app outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="relative flex min-h-0 min-w-0 flex-1 items-center justify-center overflow-hidden bg-bg-app outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
         style={{ touchAction: control ? 'none' : 'auto' }}
         onPointerDown={(e) => pointer(e, 'down')} onPointerMove={(e) => pointer(e, 'move')} onPointerUp={(e) => pointer(e, 'up')} onPointerCancel={releaseControl}
         onContextMenu={(e) => { if (control) e.preventDefault(); }} onKeyDown={(e) => key(e, 'down')} onKeyUp={(e) => key(e, 'up')}
@@ -348,7 +348,7 @@ function BrowserSessionView({ workflowId, nodeId, visible }: { workflowId: strin
           {phase === 'error' && <Button variant="outline" onClick={() => setAttempt((n) => n + 1)}>Reconnect</Button>}
         </div>}
       </div>
-      {dialog && <div role="dialog" aria-label="Browser page dialog" className="flex flex-col gap-2 rounded border border-border-default bg-bg-panel p-3 text-sm">
+      {dialog && <div role="dialog" aria-label="Browser page dialog" className="flex max-h-[40%] shrink-0 flex-col gap-2 overflow-y-auto border-t border-border-default bg-bg-panel p-3 text-sm">
         <p className="break-words text-fg-default">{dialog.message}</p>
         {dialog.kind === 'prompt' && <input aria-label="Dialog response" className={inputClass} value={promptText} onChange={(e) => setPromptText(e.target.value)} disabled={!control} />}
         <div className="flex gap-2">{[true, false].map((accept) => <Button key={String(accept)} size="sm" variant="outline" disabled={!control} onClick={() => { send({ type: 'dialog_reply', accept, prompt_text: promptText }); setDialog(null); }}>{accept ? 'OK' : 'Cancel'}</Button>)}</div>

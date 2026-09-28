@@ -81,6 +81,7 @@ describe('BrowserWorkspace session lifecycle', () => {
     const { unmount } = render(<BrowserWorkspace workflowId="wf" nodes={nodes} />);
     const socket = MockSocket.instances[0];
     act(() => { socket.open(); socket.message({ type: 'state', state: 'agent', controller: null }); });
+    fireEvent.click(screen.getByRole('button', { name: 'Browser controls' }));
     expect(screen.getByRole('textbox', { name: 'Browser address' })).toBeDisabled();
     fireEvent.click(screen.getByRole('button', { name: 'Take control' }));
     expect(socket.sent.at(-1)).toEqual({ type: 'control_request' });

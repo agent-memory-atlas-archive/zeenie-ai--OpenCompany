@@ -14,7 +14,7 @@ export function WorkspaceTabs({ tab, onTabChange, browser, board, android }: {
 }) {
   return (
     <TabsPrimitive.Root value={tab} onValueChange={(value) => onTabChange(value as WorkspaceTab)} className="flex min-h-0 min-w-0 flex-1 flex-col">
-      <TabsPrimitive.List aria-label="Workspace views" className="flex h-10 shrink-0 gap-0.5 overflow-x-auto border-b border-border-default px-2">
+      <TabsPrimitive.List aria-label="Workspace views" className="flex h-10 shrink-0 gap-0.5 overflow-x-auto overflow-y-hidden border-b border-border-default px-2">
         {([
           ['browser', 'Browser', Globe],
           ['board', 'Canvas', PanelsTopLeft],
@@ -28,7 +28,7 @@ export function WorkspaceTabs({ tab, onTabChange, browser, board, android }: {
       {([
         ['browser', browser], ['board', board], ['android', android ?? <AndroidWorkspace />],
       ] as const).map(([value, content]) => (
-        <TabsPrimitive.Content key={value} value={value} className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-bg-app p-3 outline-none">
+        <TabsPrimitive.Content key={value} value={value} className={`flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-bg-app outline-none ${value === 'board' ? 'p-3' : ''}`}>
           {content}
         </TabsPrimitive.Content>
       ))}

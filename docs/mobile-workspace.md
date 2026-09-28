@@ -34,7 +34,9 @@ Both nodes use the same phone. Adding another node does not create another emula
 
 ## Everyday controls
 
-Choose **Full view** above the phone to fill the screen. The live phone expands to the available height; the task form, completed setup history and technical help are hidden. Phone controls remain outside the picture so they do not cover Android buttons. Use **Exit full view** or **Esc** to return. Entering full view keeps the current connection and does not restart the phone or grant manual control. Browser Workspace has the same full-view control, retaining its address bar and navigation outside the page. If the browser does not support fullscreen, use the existing Workspace expand button instead.
+The live phone fills the available Workspace height in normal view. Its proportions are preserved, so wide panels can have side bars. Expand **Ask AI to use the phone** to enter a task; collapsing it keeps your draft. The **Phone controls** toolbar toggle exposes Stop phone, refresh, APK installation while controlling the phone, completed setup history, and help. Status and takeover stay visible.
+
+Choose **Full view** in the toolbar to fill the screen. The task panel is hidden, and secondary controls remain available through the toolbar toggle. Controls stay outside the picture so they do not cover Android buttons. Use **Exit full view** or **Esc** to return. Entering full view keeps the current connection and does not restart the phone or grant manual control. Browser Workspace uses the same layout, with address and navigation under **Browser controls**. If the browser does not support fullscreen, use the existing Workspace expand button instead.
 
 | Label | Meaning |
 | --- | --- |
