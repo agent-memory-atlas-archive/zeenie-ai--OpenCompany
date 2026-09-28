@@ -3,7 +3,7 @@
 > **TL;DR.** `ClaudeSessionPool` keeps a warm `claude` subprocess per
 > session key (the RFC-0002 conversation key `context_bridge.pool_key` when
 > a Context node is wired; the legacy `simpleMemory.node_id` on `input-memory`
-> graphs — `services/cli_agent/service.py:359-363`) and drives it with the same flags Anthropic's
+> graphs — `bound_key` in `AICliService.run_batch`) and drives it with the same flags Anthropic's
 > own VSCode extension uses — stdio pipes, `--output-format stream-json
 > --input-format stream-json --verbose --ide`. Multi-turn happens by
 > writing newline-delimited JSON to `proc.stdin` of the long-lived
@@ -43,9 +43,9 @@ A background `stdout_reader_task` parses each line and dispatches via
 | **Transport** | `asyncio.subprocess.Process` with stdio pipes — same on POSIX + Windows |
 | **Send turn** | `proc.stdin.write(json.dumps({"type":"user","message":{"role":"user","content":...}}) + "\n")` |
 | **Read events** | `proc.stdout.readline()` loop → `json.loads(line)` → `_handle_stream_event` |
-| **Completion detect** | stream-json event where `type == "result"` (set via `provider.is_final_event`) |
-| **Context reset (`/clear` equivalent)** | kill subprocess + drop captured UUID — stream-json input has no slash-command path (confirmed in VSCode extension source) |
-| **Crash recovery** | `acquire()` checks `process.returncode`; respawns with `--resume <captured_uuid>` so the same on-disk JSONL keeps growing |
+| **Completion detect** | stream-json event where `type == "result"` (set via `provider.is_final_event`); stdout EOF also wakes the turn, which then fails with the child's exit code |
+| **Context reset (`/clear` equivalent)** | kill subprocess + drop captured UUID — stream-json input has no slash-command path (confirmed in VSCode extension source). Primitive: `pool.clear` (no production caller today); Context-bound sessions are reset by `terminate_conversations` and the generation fence in `acquire` |
+| **Crash recovery** | `acquire()` checks `process.returncode`; respawns with `--resume <captured_uuid>` so the same on-disk JSONL keeps growing. Only while the dead entry is still in the pool — an idle reap or LRU eviction removes the entry and its UUID |
 
 ### Code layout
 
@@ -69,7 +69,8 @@ server/services/cli_agent/  (generic framework — shared by all CLI plugins)
 ├── service.py     # AICliService.run_batch — dispatcher; every claude task goes to the pool (registry lookup)
 ├── session.py     # AICliSession — generic PTY + JSONL path; NOT used for claude (GitHub #133 / #134)
 ├── mcp_server.py  # BatchContext + FastMCP bridge (shared by every CLI provider)
-├── workflow_tools.py / lockfile.py / jsonl_watcher.py / config.py / protocol.py / types.py / _cli_auth.py
+├── context_bridge.py  # SpecializedAgentContextBridge — Context pool_key, transcript-in-prompt, record_turn
+├── workflow_tools.py / worktree.py / lockfile.py / jsonl_watcher.py / config.py / protocol.py / types.py / _cli_auth.py
 └── _handlers.py   # codex WS handlers only (will move once codex_agent migrates)
 ```
 

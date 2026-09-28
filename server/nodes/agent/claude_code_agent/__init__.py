@@ -298,13 +298,13 @@ class ClaudeCodeAgentNode(ActionNode):
 
         # Legacy input-memory bridge: claude maintains its own session JSONL
         # under `<CLAUDE_CONFIG_DIR>/projects/<cwd-encoded>/<UUID>.jsonl`.
-        # Context resolution, explicit UUID resume, raw-event journalling,
-        # and binding persistence live in AICliService.
+        # Context resolution (SpecializedAgentContextBridge), the pooled
+        # spawn, and memory / conversation persistence live in AICliService.
         # The project_key is derived from cwd (`[^a-zA-Z0-9-] -> -`),
         # so memory continuity needs only a STABLE cwd across runs.
-        # That's handled by AICliService passing memory_bound=True so
-        # AICliSession spawns under repo_root instead of an ephemeral
-        # worktree — see `services/cli_agent/session.py:cwd()`.
+        # `AICliService.run_batch` gives every bound run the same git
+        # worktree, `<workspace>/<node>/wt_session`, branched off the
+        # resolved repo root; the repo root itself is never the cwd.
         #
         # Continuity: when memory is wired, resume the UUID the previous
         # successful run persisted on the memory node (``last_session_id``,

@@ -8,7 +8,7 @@ Multi-instance, multi-provider runtime for AI CLI agents (Claude Code, Codex, Ge
 | OpenAI Codex (`@openai/codex`) | shipping (no login flow yet) | User runs `codex login` manually; UI returns a graceful "not yet wired" error |
 | Google Gemini (`@google/gemini-cli`) | v2 stub | factory raises `NotImplementedError` |
 
-Browser automation has its own managed Chrome and browser-use runtime; it is not installed into this bun package tree. See [browser.md](./browser.md) and [browser_workspace.md](./browser_workspace.md) for its lifecycle and live control surface.
+Browser automation has its own runtime (the installed Chrome/Edge/Chromium by default, plus a uv-installed browser-use CLI); it is not installed into this bun package tree. See [browser.md](./browser.md) and [browser_workspace.md](./browser_workspace.md) for its lifecycle and live control surface.
 
 ## Architecture
 
@@ -19,17 +19,20 @@ ClaudeCodeAgentNode (claude_code_agent)        CodexAgentNode (codex_agent)
 AICliService.run_batch(provider, tasks, *, node_id, workflow_id, workspace_dir)
         │ provider = create_cli_provider(name)  ("claude" | "codex" | "gemini"→NotImpl)
         │ allocate per-batch bearer token; register BatchContext in MCP token registry
-        │ asyncio.gather under Semaphore(5)
+        │ asyncio.gather under Semaphore(max_parallel, default 5)
         │
-        ├──► AICliSession_0 (BaseProcessSupervisor + ClaudeProvider + ClaudeTaskSpec)
-        │       _pre_spawn():   git worktree add  +  write <DATA_DIR>/claude/ide/<pid>.lock
-        │       _do_start():    anyio.open_process + NDJSON stdout/stderr consumers
-        │                       env: CLAUDE_IDE_LOCK + OPENCOMPANY_PARENT_RUN_ID
-        │       wait_for_completion(timeout)
-        │       cleanup():      stop()=terminate_then_kill(5s) + rm lockfile + worktree remove
+        ├──► claude (registered session pool) → ClaudeSessionPool via _run_pooled_turn
+        │       run_pooled():   git worktree add <workspace>/<node>/wt_session (bound)
+        │                       or wt_<run>_<i> per task (ephemeral, removed after the batch)
+        │       pool.acquire(): cold spawn over stdio pipes, or warm reuse
+        │                       argv: --mcp-config <json> (MCP bearer) ... --ide (no lockfile written)
+        │                       env:  CLAUDE_CONFIG_DIR + OPENCOMPANY_PARENT_RUN_ID
+        │       pool.send_turn(): stream-json line on stdin, wait for `result` on stdout
         │
-        └──► AICliSession_N (CodexProvider + CodexTaskSpec)
-                 (no lockfile yet — Codex CLI doesn't honor it; written when upstream supports it)
+        └──► codex (no session pool) → AICliSession (BaseProcessSupervisor + CodexProvider)
+                 _pre_spawn():   git worktree add (lockfile only if the provider declares
+                                 `ide_lockfile`; Codex does not)
+                 wait_for_completion(timeout); cleanup(): terminate_then_kill(5s) + worktree remove
         │
         │  ◄────  CLI calls back via MCP/HTTP at /mcp/ide/mcp
         │           Authorization: Bearer <batch-token>  (per-batch isolation)
@@ -37,7 +40,8 @@ AICliService.run_batch(provider, tasks, *, node_id, workflow_id, workspace_dir)
         │                  searchSkillResource, getCredential, broadcastLog
         ▼
 BatchResult { tasks: [SessionResult, ...], n_succeeded, n_failed, total_cost_usd?, wall_clock_ms }
-        │ token deregistered in finally
+        │ token deregistered in finally (non-pool path; a pooled session keeps its
+        │ spawn-time token until _terminate_locked)
         ▼
 existing Temporal heartbeat fires per WS broadcast (services/temporal/activities.py:259)
 existing tool-result envelope truncates response at 4000 chars (services/handlers/tools.py:993)
@@ -105,7 +109,7 @@ the interactive billing bucket (entrypoint `claude-vscode`, NOT
   --output-format stream-json     # events on stdout
   --input-format stream-json      # user turns to stdin as JSON
   --verbose                       # required with stream-json for full event detail
-  --ide                           # VSCode auto-connect via lockfile
+  --ide                           # matches the VSCode extension; no lockfile is written, MCP rides --mcp-config
   --model <model>
   [--session-id <UUID> | --resume <UUID>]   # mutually exclusive
   --allowedTools <csv>
@@ -226,7 +230,7 @@ CLI auth is delegated to the CLI's own login flow + a synthetic marker token in 
 | `claude_code` | `claude_code_login` | `claude_code_logout` |
 | `codex_cli`   | `codex_cli_login` (returns "not yet wired") | `codex_cli_logout` |
 
-**Claude flow** (`server/nodes/agent/claude_code_agent/_handlers.py:103`, `handle_claude_code_login`; logout at `:140`) uses the documented CLI subcommands from [code.claude.com/docs/en/cli-reference](https://code.claude.com/docs/en/cli-reference):
+**Claude flow** (`handle_claude_code_login` and `handle_claude_code_logout` in `server/nodes/agent/claude_code_agent/_handlers.py`) uses the documented CLI subcommands from [code.claude.com/docs/en/cli-reference](https://code.claude.com/docs/en/cli-reference):
 
 | Subcommand | Purpose |
 |---|---|

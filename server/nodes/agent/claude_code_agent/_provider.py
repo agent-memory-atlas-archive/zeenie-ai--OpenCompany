@@ -18,20 +18,21 @@ stream-json --verbose --ide [--mcp-config ...] [--strict-mcp-config]
 **Tools + skills are preserved**:
   - ``--mcp-config`` registers OpenCompany's FastMCP server; the spawned
     `claude` discovers `mcp__opencompany__*` tools via `tools/list`.
-  - ``--allowedTools`` carries the explicit allowlist (built-ins +
-    every wired MCP tool) — same shape as the prior headless path.
-  - Skills are materialised under ``<cwd>/.claude/skills/`` by the
-    shared :func:`nodes.agent.claude_code_agent._skills.materialise_skills`
-    helper (called from both ``AICliSession._pre_spawn`` AND
-    ``ClaudeSessionPool._spawn``); ``Skill`` enters
+  - ``--allowedTools`` carries the explicit allowlist (every wired MCP
+    tool + OpenCompany's MCP infrastructure tools; Claude built-ins only
+    when a task opts them in, except ``Skill`` when a skill is wired).
+  - Skills are materialised under ``<workspace_dir>/.claude/skills/``
+    (discovered through ``--add-dir <workspace_dir>``) by the shared
+    :func:`nodes.agent.claude_code_agent._skills.materialise_skills`
+    helper, called from ``ClaudeSessionPool._spawn`` and
+    ``ClaudeSessionPool._prepare_warm_reuse``; ``Skill`` enters
     ``--allowedTools`` iff at least one skill is wired.
 
-**Permission mode**: ``bypassPermissions`` lets every allowlist entry
-fire without a TUI prompt — non-interactive automation has no human at
-the keyboard to click "Allow." Behaviorally equivalent to
-``--dangerously-skip-permissions`` but uses the documented permission
-mode (``code.claude.com/docs/en/permission-modes``) and is the same
-flag a Composio AO "permissionless" launch sets.
+**Permission mode**: ``dontAsk`` (the config default) runs without a
+TUI prompt and denies anything outside ``--allowedTools``, so the
+strict allowlist is actually enforced — non-interactive automation has
+no human at the keyboard to click "Allow." See
+``code.claude.com/docs/en/permission-modes``.
 
 Session identity: a cold spawn with no continuity flag gets a
 host-minted ``--session-id <UUID>`` (``ClaudeSessionPool._spawn``) so the
@@ -87,18 +88,17 @@ class AnthropicClaudeProvider:
         self.package_name = cfg.package_name
         self.binary_name = cfg.binary_name
         self.ide_lock_env_var = cfg.ide_lock_env_var
-        # IDE lockfile lives at ``<CLAUDE_CONFIG_DIR>/ide/<pid>.lock``
-        # per claude's own resolution rules — there is no separate
-        # "lockfile path" knob. We set
-        # ``CLAUDE_CONFIG_DIR=OPENCOMPANY_CLAUDE_DIR`` on every spawn (see
-        # ``service.py``, ``session.py``, ``claude_oauth.py``), so the
-        # canonical lockfile dir is unambiguously
-        # ``OPENCOMPANY_CLAUDE_DIR/ide``. Deriving it directly from the
-        # single source of truth keeps the lockfile-write side (here)
-        # in sync with the lockfile-read side (spawned claude) without
-        # a duplicated JSON path that can drift. ``OPENCOMPANY_CLAUDE_DIR``
-        # is imported at module top from ``_oauth`` (the canonical
-        # source of truth for this plugin's filesystem layout).
+        # IDE lockfile dir: ``<CLAUDE_CONFIG_DIR>/ide/`` per claude's own
+        # resolution rules — there is no separate "lockfile path" knob.
+        # We set ``CLAUDE_CONFIG_DIR=OPENCOMPANY_CLAUDE_DIR`` on every
+        # spawn (``AICliService._run_pooled_turn``, ``_oauth.py``), so
+        # the dir is ``OPENCOMPANY_CLAUDE_DIR/ide``. The pool path writes
+        # NO lockfile here (MCP connects through ``--mcp-config``); only
+        # the generic ``AICliSession._pre_spawn``, which claude no longer
+        # uses, writes one. The attribute stays for the Protocol and for
+        # the startup stale-lockfile sweep in ``main.py``.
+        # ``OPENCOMPANY_CLAUDE_DIR`` is imported at module top from
+        # ``_oauth`` (the source of truth for this plugin's layout).
         self.ide_lockfile_dir = OPENCOMPANY_CLAUDE_DIR / "ide"
         self._defaults = cfg.defaults
         self._supports = cfg.supports
@@ -112,8 +112,9 @@ class AnthropicClaudeProvider:
 
         Delegates to ``._oauth.claude_binary_path`` — same
         path used by the credentials Login button. Lazy-installs into
-        ``<DATA_DIR>/packages/`` on first miss. Raises
-        ``FileNotFoundError`` if ``npm`` isn't on PATH.
+        ``<DATA_DIR>/packages/`` with ``bun add`` on first miss. Raises
+        ``RuntimeError`` if bun is missing or the install fails, and
+        ``FileNotFoundError`` if the binary is still absent afterwards.
         """
         return Path(claude_binary_path())
 
@@ -142,9 +143,9 @@ class AnthropicClaudeProvider:
         User prompts arrive over ``proc.stdin`` as newline-delimited JSON
         of shape ``{"type":"user","message":{"role":"user","content":...}}``,
         not as an argv positional. Events stream back on ``proc.stdout``
-        in the same shape claude writes to its on-disk JSONL — the FE-
-        facing event handlers downstream are file-source-agnostic so
-        we keep tailing the JSONL via ``JsonlWatcher`` either way.
+        and are parsed there by ``ClaudeSessionPool``; the on-disk
+        session JSONL is not read at runtime (the ``result`` event is
+        stdout-only).
 
         Critically NOT emitted:
 
@@ -160,8 +161,10 @@ class AnthropicClaudeProvider:
         emitted as ``--mcp-config <json>`` so the spawned claude
         registers OpenCompany's FastMCP server. Tools allowlist
         (``--allowedTools``) lists every wired ``mcp__opencompany__*``
-        plus the 5 built-ins. Skill materialisation under
-        ``<cwd>/.claude/skills/`` is unchanged.
+        plus OpenCompany's seven MCP infrastructure tools, the built-in
+        ``Skill`` only when a skill is wired, and any built-ins the task's
+        ``allowed_tools`` opts in. Skills are materialised under
+        ``<workspace_dir>/.claude/skills/`` by the pool before spawn.
         """
         if not isinstance(task, ClaudeTaskSpec):
             raise TypeError("AnthropicClaudeProvider.interactive_argv requires ClaudeTaskSpec, " f"got {type(task).__name__}")
@@ -175,9 +178,10 @@ class AnthropicClaudeProvider:
         # which spawns claude with exactly these four flags. ``--verbose``
         # is required so the stream-json output includes the full event
         # detail (without it, only the final result line is emitted).
-        # ``--ide`` makes claude discover the IDE lockfile we write at
-        # ``<CLAUDE_CONFIG_DIR>/ide/<pid>.lock`` for auto-connection to
-        # OpenCompany's MCP server.
+        # ``--ide`` is kept to match the extension's invocation, but the
+        # pool path writes no IDE lockfile and sets no ``CLAUDE_IDE_LOCK``,
+        # so there is nothing for it to discover: OpenCompany's MCP
+        # server is registered only through ``--mcp-config`` below.
         argv += [
             "--output-format",
             "stream-json",
@@ -216,18 +220,16 @@ class AnthropicClaudeProvider:
         model = task.model or defaults.get("default_model") or self._defaults.get("default_model", "claude-sonnet-4-6")
         argv += ["--model", model]
 
-        # Session continuity. Three valid states, mutually exclusive:
-        #   - ``resume_session_id`` set → ``--resume <UUID>`` (explicit;
-        #     used by ``--fork-session`` UI + any caller that already
-        #     knows the exact UUID).
-        #   - ``continue_session=True`` → ``--continue`` (claude
-        #     auto-loads the latest conversation under the current
-        #     cwd, per code.claude.com/docs/en/cli-reference). The
-        #     cleaner default for memory-bound runs because it avoids
-        #     ferrying a UUID through the memory node's params — claude
-        #     tracks its own sessions on disk under
-        #     ``<CLAUDE_CONFIG_DIR>/projects/<project_key>/`` and
-        #     ``--continue`` picks the newest.
+        # Session continuity. Three flags, mutually exclusive, in this
+        # precedence order:
+        #   - ``resume_session_id`` set → ``--resume <UUID>``. Memory-bound
+        #     runs set it from the memory node's ``last_session_id``
+        #     (``ClaudeCodeAgentNode.execute_op``); the pool splices it in
+        #     when respawning a crashed session (``ClaudeSessionPool.acquire``).
+        #   - ``continue_session=True`` → ``--continue``. Kept only for
+        #     explicit callers; the node never sets it, because the CLI
+        #     resolves ``--continue`` only against interactively created
+        #     sessions and so never finds the ones this pool creates.
         #   - ``session_id`` set → ``--session-id <UUID>`` (host-minted
         #     on cold spawn by ``ClaudeSessionPool._spawn`` so the UUID
         #     is known before the first event; the CLI requires a valid
@@ -249,11 +251,10 @@ class AnthropicClaudeProvider:
         # capabilities the workflow didn't explicitly grant — equivalent
         # filesystem / shell / search functionality is wired via the
         # ``fileRead`` / ``fileModify`` / ``fsSearch`` / ``shell`` /
-        # ``browser`` / ``perplexitySearch`` workflow tools, and
-        # connected skills are surfaced via OpenCompany's own
-        # ``listSkills`` / ``getSkill`` MCP tools (no materialisation
-        # under ``.claude/skills/`` on the pool path, so the built-in
-        # ``Skill`` tool has nothing to load anyway).
+        # ``browser`` / ``perplexitySearch`` workflow tools. The one
+        # exception is ``Skill``, added below only when a skill is wired
+        # (connected skills are also reachable through OpenCompany's
+        # ``listSkills`` / ``getSkill`` MCP tools).
         #
         # Callers can opt specific claude built-ins back in per-task
         # via ``ClaudeTaskSpec.allowed_tools`` if they really need them
@@ -268,9 +269,10 @@ class AnthropicClaudeProvider:
             allowed_list += [f"mcp__opencompany__{name}" for name in connected_tool_names]
         # Conditionally enable claude's built-in ``Skill`` tool ONLY
         # when at least one skill is wired through ``input-skill``.
-        # The spawn path (pool + non-pool) materialises connected
-        # SKILL.md files under ``<cwd>/.claude/skills/`` via the
-        # shared :func:`nodes.agent.claude_code_agent._skills.materialise_skills`
+        # ``ClaudeSessionPool`` materialises connected SKILL.md files
+        # under ``<workspace_dir>/.claude/skills/`` (reached through
+        # ``--add-dir``) via the shared
+        # :func:`nodes.agent.claude_code_agent._skills.materialise_skills`
         # helper, so the built-in skill loader has something to
         # discover. Skills accessed by name (`Skill <name>`) load
         # those materialised files. If no skill is wired, ``Skill``

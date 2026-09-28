@@ -1,7 +1,8 @@
 """Long-lived ``claude`` subprocess pool — VSCode-extension pattern.
 
 Keeps one warm ``claude --output-format stream-json --input-format
-stream-json --verbose --ide`` subprocess per Context thread+epoch (or per
+stream-json --verbose --ide`` subprocess per Context conversation key
+``(workflow_id, agent_node_id, generation)`` (or per
 ``simpleMemory.node_id`` for legacy ``input-memory`` graphs) so successive turns
 can reuse the same process — same session UUID across turns, no respawn cost.
 Mirrors what Anthropic's official
@@ -32,8 +33,8 @@ Per-turn mechanics:
      event lands.
   4. ``send_turn`` returns a :class:`SessionResult` built from the
      turn's events. The session UUID is captured from the result event
-     so subsequent batches can spawn ``--resume <UUID>`` if the
-     pooled process has been reaped.
+     so a respawn after the pooled process crashes can emit
+     ``--resume <UUID>``.
 
 Lifecycle policy:
 
@@ -58,9 +59,16 @@ Continuity across process restarts:
     on the memory node by ``AICliService._persist_memory``). Never
     ``--continue``: the CLI resolves it only against interactive
     sessions, so it never found the sessions this pool creates.
-  - If the subprocess is later reaped and a new ``acquire`` happens,
-    the next spawn emits ``--resume <session.current_session_uuid>``
-    so the SAME JSONL keeps growing across process restarts.
+  - Crash: if the pooled subprocess has exited but its entry is still
+    in the pool, the next ``acquire`` respawns it with
+    ``--resume <session.current_session_uuid>`` so the SAME JSONL keeps
+    growing across process restarts.
+  - Idle reap / LRU eviction: ``_terminate_locked`` pops the entry, so
+    no UUID survives in the pool and the next ``acquire`` is a plain
+    cold spawn. Memory-bound runs still resume through the memory
+    node's stored ``last_session_id``; Context-bound runs start a fresh
+    claude session and rely on the transcript the context bridge
+    renders into the prompt.
   - :meth:`clear` is an explicit context-reset primitive: kill the
     subprocess, drop the captured UUID, let the next ``acquire``
     spawn fresh with no continuity flag (claude assigns a new UUID).
@@ -111,8 +119,8 @@ class PooledClaudeSession:
     The on-disk JSONL at
     ``<CLAUDE_CONFIG_DIR>/projects/<project_key>/<session_uuid>.jsonl``
     is still written by claude — it's the persistence layer that
-    ``--continue`` / ``--resume`` rehydrate from across process
-    restarts — but the runtime contract here is stdout-only because
+    ``--resume`` rehydrates from across process restarts — but the
+    runtime contract here is stdout-only because
     the ``result`` event (final turn outcome) goes ONLY to stdout in
     stream-json mode, NOT to the JSONL file.
     """
@@ -122,10 +130,12 @@ class PooledClaudeSession:
     memory_node_id: ClaudePoolKey
     process: asyncio.subprocess.Process
     cwd: Path
-    # ``current_session_uuid`` is "" until the first turn's ``system/init``
-    # or ``result`` event reveals it. Subsequent spawns for the same
-    # memory_node_id (after a crash / reap) emit ``--resume <UUID>`` so
-    # the same on-disk JSONL keeps growing across process restarts.
+    # ``current_session_uuid`` is the host-minted ``--session-id`` (or the
+    # ``--resume`` UUID) from spawn, else "" until the first turn's
+    # ``system/init`` or ``result`` event reveals it. A respawn after a
+    # crash emits ``--resume <UUID>`` so the same on-disk JSONL keeps
+    # growing; an idle reap or eviction drops the entry and this UUID
+    # with it.
     current_session_uuid: str = ""
     # Bearer token baked into claude's argv (via ``--mcp-config``) at
     # spawn time. The token persists for the subprocess's lifetime —
