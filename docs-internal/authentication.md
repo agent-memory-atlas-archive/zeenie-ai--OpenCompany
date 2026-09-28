@@ -72,13 +72,17 @@ class User(SQLModel, table=True):
 - `get_auth_status()` - Returns `auth_mode` and `registration_enabled`
 - `logout()` - A no-op log line. See Known Limitations.
 
-**`UserAuthService` does not touch the encryption service.** Earlier revisions
-of this document described `login()` calling `_initialize_encryption(password)`
-and `logout()` calling `self.encryption.clear()`. Neither method has ever
-existed. The Fernet key is **server-scoped**: initialised once during startup
-in `main.py` from `API_KEY_ENCRYPTION_KEY`, never derived from a user password
-and never cleared on logout. See
-[Credentials Encryption](./credentials_encryption.md) for the real pipeline.
+**`UserAuthService` never initialises, derives or clears the encryption key.**
+The container injects `EncryptionService` and `CredentialsDatabase` into it,
+but the only use of either is the read-only `is_encryption_initialized()`
+(a pass-through to `EncryptionService.is_initialized()`); `credentials_db` is
+held and unused. Earlier revisions of this document described `login()`
+calling `_initialize_encryption(password)` and `logout()` calling
+`self.encryption.clear()`. Neither method has ever existed. The Fernet key is
+**server-scoped**: initialised once during startup in `main.py` from
+`API_KEY_ENCRYPTION_KEY`, never derived from a user password and never
+cleared on logout. See [Credentials Encryption](./credentials_encryption.md)
+for the real pipeline.
 
 ### Auth Router (`server/routers/auth.py`)
 | Endpoint | Method | Description |
@@ -312,14 +316,33 @@ fetch(url, { credentials: 'include' })
 ```
 
 ## WebSocket Authentication
-WebSocket checks the cookie before accepting the connection:
+Every handshake is admitted by a helper in `services/authz/ws_session.py`
+before `accept()`. `/ws/status` (and `/ws/browser`) call `authenticate_ws`:
 ```python
-# In websocket.py
-token = websocket.cookies.get(settings.jwt_cookie_name)
-if not token:
-    await websocket.close(code=4001, reason="Not authenticated")
-    return
+# In routers/websocket.py
+authenticated_user_id = await authenticate_ws(
+    websocket,
+    settings=container.settings(),
+    user_auth_service=container.user_auth_service,
+)
+if authenticated_user_id is None:
+    return  # already closed
+websocket.state.user_id = authenticated_user_id
 ```
+`authenticate_ws` runs, in order:
+1. The `Origin` check: a foreign origin closes with `4003` ("Origin not
+   allowed"). See Known Limitations for which origins are admitted.
+2. With login disabled (`VITE_AUTH_ENABLED=false`), every same-origin caller
+   is the owner principal.
+3. Otherwise `core.auth_cookies.get_session_token` reads the session cookie
+   (`JWT_COOKIE_NAME`, falling back to the legacy `machina_token`), and
+   `UserAuthService.verify_token` checks it. A missing, invalid or subject-less
+   token closes with `4001`.
+
+`/ws/internal` uses `admit_internal_ws` instead: the same `Origin` check
+(`4003`), then the `X-OpenCompany-Internal-Token` header, an HMAC of
+`SECRET_KEY` (`internal_socket_token` / `is_internal_caller` in
+`services/authz/ws_surface.py`); a missing or wrong token closes with `4001`.
 
 `WebSocketProvider` only connects when authenticated:
 ```typescript
@@ -344,7 +367,7 @@ useEffect(() => {
 | `client/src/components/auth/LoginPage.tsx` | Login UI |
 | `client/src/components/auth/ProtectedRoute.tsx` | Route guard |
 | `server/models/auth.py` | User SQLModel with bcrypt |
-| `server/services/user_auth.py` | `UserAuthService`: register / login / JWT mint + verify / `get_current_user`. No encryption-service coupling (see the note under Auth Service) |
+| `server/services/user_auth.py` | `UserAuthService`: register / login / JWT mint + verify / `get_current_user`. Holds the encryption service only for the read-only `is_encryption_initialized()` check (see the note under Auth Service) |
 | `server/routers/auth.py` | REST endpoints |
 | `server/middleware/auth.py` | Route protection (`PUBLIC_PATHS` / `PUBLIC_PREFIXES`) |
 | `server/core/config.py` | Settings with `vite_auth_enabled` field |

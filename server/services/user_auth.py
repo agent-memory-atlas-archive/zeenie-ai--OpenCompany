@@ -1,4 +1,10 @@
-"""User authentication service with JWT handling and encryption initialization."""
+"""User authentication service: registration, login and JWT handling.
+
+It does not initialise, derive or clear the credential encryption key. That
+key is server-scoped and initialised once in the ``main.py`` lifespan from
+``API_KEY_ENCRYPTION_KEY``. ``UserAuthService`` only exposes the read-only
+``is_encryption_initialized()`` check.
+"""
 
 import logging
 import uuid

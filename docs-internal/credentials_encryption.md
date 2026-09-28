@@ -10,7 +10,7 @@ Credentials are isolated from the main `workflow.db` for three reasons:
 
 1. **Blast radius**: a dump of `workflow.db` for debugging never contains secrets.
 2. **Independent backups**: `credentials.db` can be excluded from snapshots and SQLite dumps.
-3. **Backend pluggability**: the file-backed SQLite can be swapped for OS keyring or AWS Secrets Manager without touching workflow storage.
+3. **Backend pluggability**: the file-backed SQLite is designed to be swappable for OS keyring or AWS Secrets Manager without touching workflow storage (the abstraction exists but is not wired in yet; see [Multi-Backend Abstraction](#multi-backend-abstraction)).
 
 ## Files
 
@@ -18,8 +18,8 @@ Credentials are isolated from the main `workflow.db` for three reasons:
 server/core/
 |-- encryption.py              EncryptionService (Fernet + PBKDF2)
 |-- credentials_database.py    CredentialsDatabase (async SQLite, salt storage)
-|-- credential_backends.py     Multi-backend abstraction (Fernet / Keyring / AWS)
-`-- config.py                  credential_backend, aws_secret_arn settings
+|-- credential_backends.py     Multi-backend abstraction (Fernet / Keyring / AWS; not wired in)
+`-- config.py                  credential_backend, aws_secret_arn settings (read only by the uncalled create_backend)
 
 server/services/
 `-- auth.py                    AuthService (single access point, caching)
@@ -54,7 +54,7 @@ API_KEY_ENCRYPTION_KEY (from .env)
 
 The derived Fernet key lives only in `EncryptionService._fernet` in process memory. It is never written to disk or to Redis.
 
-`EncryptionService` (`server/core/encryption.py`) exposes `initialize(password, salt)` (derive + store the Fernet cipher), `encrypt(plaintext) -> str` (base64 ciphertext), `decrypt(ciphertext) -> str`, `clear()` (drop the in-memory key), `is_initialized() -> bool`, the lower-level `derive_key_from_password(password, salt) -> bytes` that `initialize` calls, and a static `generate_salt() -> bytes`. `CredentialsDatabase` (`server/core/credentials_database.py`) backs both systems with `initialize() -> bytes` (creates tables, returns the salt), `save_api_key` / `get_api_key` / `delete_api_key`, and `save_oauth_tokens` / `get_oauth_tokens` / `delete_oauth_tokens(provider, customer_id="owner")`.
+`EncryptionService` (`server/core/encryption.py`) exposes `initialize(password, salt)` (derive + store the Fernet cipher), `encrypt(plaintext) -> str` (base64 ciphertext), `decrypt(ciphertext) -> str`, `clear()` (drop the in-memory key; only tests call it), `is_initialized() -> bool`, the lower-level `derive_key_from_password(password, salt) -> bytes` that `initialize` calls, and a static `generate_salt() -> bytes`. `CredentialsDatabase` (`server/core/credentials_database.py`) backs both systems with `initialize() -> bytes` (creates tables, returns the salt), `save_api_key` / `get_api_key` / `delete_api_key`, and `save_oauth_tokens` / `get_oauth_tokens` / `delete_oauth_tokens(provider, customer_id="owner")`.
 
 ## Lifecycle
 
@@ -65,7 +65,7 @@ Server startup (main.py lifespan)
 CredentialsDatabase.initialize()  -> creates tables, returns existing or new salt
     |
     v
-EncryptionService.initialize(password=API_KEY_ENCRYPTION_KEY, salt=<bytes>)
+container.encryption_service().initialize(password=API_KEY_ENCRYPTION_KEY, salt=<bytes>)
     |
     v
 AuthService caches decrypted credentials in memory-only dicts
@@ -74,7 +74,8 @@ AuthService caches decrypted credentials in memory-only dicts
 Routers call AuthService.get_api_key() / get_oauth_tokens() ...
     |
     v
-(on shutdown) EncryptionService.clear() wipes the in-memory key
+(process exit) the key is held for the process lifetime; shutdown does not call
+               EncryptionService.clear()
 ```
 
 `EncryptionService.is_initialized()` is checked before any encrypt/decrypt call. If the server key is misconfigured, the service raises at startup rather than returning unusable ciphertext later.
@@ -116,22 +117,24 @@ from core.container import container
 auth = container.auth_service()
 tokens = await auth.get_oauth_tokens("google")
 
-# Wrong (will not go through cache, will not respect backend abstraction):
+# Wrong (bypasses the AuthService cache):
 credentials_db = get_credentials_db()
 row = await credentials_db.query(...)
 ```
 
-Enforcement:
+How the pieces are wired:
 
-- `AuthService` owns the Fernet cipher initialization.
+- The Fernet cipher is initialized in the `main.py` lifespan, not by `AuthService`: `container.credentials_database().initialize()` returns the salt, then `container.encryption_service().initialize(settings.api_key_encryption_key, salt)` derives the key. `CredentialsDatabase` receives that same `EncryptionService` singleton through DI and performs the encrypt/decrypt.
 - `AuthService` maintains the memory-only decryption cache.
-- `CredentialsDatabase` is injected into `AuthService` and not exposed via DI to other services.
+- `CredentialsDatabase` is a DI singleton (`container.credentials_database()`). The container injects it into `AuthService` and into `UserAuthService` (which holds it but never uses it), and `main.py` resolves it at startup to create tables and read the salt. The container does not stop anything else from resolving it, so "routers and services go through `AuthService`" is a rule to follow, not something DI enforces.
 
 The in-memory cache is important: decrypting on every request would be slow, and writing decrypted values to Redis would defeat the encryption. Each `AuthService` instance caches decrypted credentials in process memory only, and `AuthService.clear_cache()` flushes them on demand (used by the logout handler).
 
 ## Multi-Backend Abstraction
 
-For deployment flexibility, `credential_backends.py` defines an abstract interface that can be swapped via the `CREDENTIAL_BACKEND` env var.
+For deployment flexibility, `credential_backends.py` defines an abstract interface intended to be selected via the `CREDENTIAL_BACKEND` env var.
+
+**Status: not wired in.** Nothing in the server calls `create_backend()`, and `Settings.credential_backend` / `aws_secret_arn` / `aws_region` are read only inside it. `AuthService` always talks to `CredentialsDatabase` directly, so every install uses Fernet-encrypted SQLite and setting `CREDENTIAL_BACKEND` currently has no effect. The rest of this section describes the abstraction as written.
 
 ```python
 class CredentialBackend(ABC):
@@ -170,13 +173,13 @@ aws = ["boto3>=1.34.0"]        # AWS Secrets Manager
 # Required for Fernet backend
 API_KEY_ENCRYPTION_KEY=<any string, at least 32 chars for good entropy>
 
-# Which backend to use
+# Which backend to use -- currently has no effect (see Multi-Backend Abstraction)
 CREDENTIAL_BACKEND=fernet         # fernet | keyring | aws
 
 # Path to credentials SQLite file
 CREDENTIALS_DB_PATH=credentials.db
 
-# AWS backend only
+# AWS backend only (also unused until the backend layer is wired in)
 AWS_SECRET_ARN=arn:aws:secretsmanager:...
 AWS_REGION=us-east-1
 ```
@@ -191,7 +194,7 @@ When `company build` scaffolds `.env` from `.env.template` (step `[0/6]`), it ge
 - **No plaintext on disk**: credentials are only decrypted in memory.
 - **No plaintext in Redis**: even in Redis mode, only encrypted envelopes cross the wire (the cache layer never stores decrypted credentials).
 - **Salt per install**: different OpenCompany installs have different salts, so ciphertext is not portable across installs even with the same server key.
-- **Wipes on shutdown**: `EncryptionService.clear()` zeroes the Fernet reference, preventing cold-boot recovery of the derived key.
+- **Held for the process lifetime**: the derived key is never written to disk, but it is not wiped at shutdown either. `EncryptionService.clear()` (which drops the Fernet reference) is called only by tests; the `main.py` lifespan shutdown does not call it, so the key leaves memory when the process exits.
 
 ## Source of Truth
 
