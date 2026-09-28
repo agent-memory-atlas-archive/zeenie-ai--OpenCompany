@@ -2,8 +2,10 @@
 
 Self-contained plugin folder. Owns:
 
-- ``master_skill.py`` -- the :class:`MasterSkillNode` plugin.
-- ``simple_memory.py`` -- the :class:`SimpleMemoryNode` plugin.
+- ``master_skill/`` -- the :class:`MasterSkillNode` plugin (plus its
+  ``_events.py`` skill-lifecycle broadcasts).
+- ``simple_memory/`` -- only a compatibility import for older paths; the
+  Memory tool plugin itself lives in ``nodes/tool/simple_memory/``.
 - ``_expander.py`` -- Master-Skill expansion callback registered with
   :func:`services.plugin.edge_walker.register_master_skill_expander`
   so the framework-side edge walker doesn't need to know about

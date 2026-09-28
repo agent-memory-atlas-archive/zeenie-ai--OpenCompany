@@ -183,8 +183,9 @@ class TextToSpeechNode(ActionNode):
     annotations = {"destructive": False, "readonly": False, "open_world": True}
     task_queue = TaskQueue.REST_API
     usable_as_tool = True
-    # `usable_as_tool` otherwise auto-hides both handles, which would break
-    # chaining this into Speech to Text on the canvas.
+    # `usable_as_tool` would otherwise auto-set both hide flags. The declared
+    # `handles` above are what keep this chainable into Speech to Text on the
+    # canvas (the frontend reads the flags only for a spec with no handles).
     hide_input_handle = False
     hide_output_handle = False
     ui_hints = {"outputMode": "audio"}

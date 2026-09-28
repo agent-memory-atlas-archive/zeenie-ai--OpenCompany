@@ -14,14 +14,16 @@ waiter, trigger handler) read at dispatch time:
     telegram_send.py    workflow ActionNode + AI tool
     telegram_receive.py workflow TriggerNode
 
-On import, this package self-registers six callbacks:
+On import, this package self-registers:
 
-    1. WS handlers      -> services.ws_handler_registry
-    2. Event filter     -> services.event_waiter.FILTER_BUILDERS
-    3. Trigger precheck -> services.event_waiter._TRIGGER_PRECHECKS
-    4. Status refresh   -> services.status_broadcaster._SERVICE_REFRESH_CALLBACKS
-    5. Output schemas   -> services.node_output_schemas (telegramReceive + telegramSend)
-    6. Canary trigger   -> services.deployment.canary_registry (telegramReceive)
+    - WS handlers      -> services.ws_handler_registry
+    - Event filter     -> services.event_waiter.FILTER_BUILDERS
+    - Trigger precheck -> services.event_waiter._TRIGGER_PRECHECKS
+    - Status refresh   -> services.status_broadcaster._SERVICE_REFRESH_CALLBACKS
+    - Output schemas   -> services.node_output_schemas (telegramReceive + telegramSend)
+    - Canary trigger   -> services.deployment.canary_registry (telegramReceive)
+    - Shutdown hook    -> services.plugin.shutdown_hooks (disconnects the bot
+                          so its getUpdates slot is released)
 
 Adding a new plugin folder follows the same shape -- consumers do not
 need to learn its name.
@@ -65,8 +67,10 @@ register_output_schema("telegramSend", TelegramSendOutput)
 # Wave 12 C1 rollout #3: opt telegramReceive into the
 # TriggerListenerWorkflow consumer path. Producer side:
 # dispatch_telegram_message_received calls services.events.dispatch.emit
-# unconditionally; emit() is gated by Settings.event_framework_enabled
-# so the legacy path stays default. See
+# unconditionally. emit() is gated by Settings.event_framework_enabled,
+# which defaults on, so this canary path is the default. Turning the flag
+# off does not restore a legacy path (nothing else dispatches telegram
+# messages); see docs-internal/event_framework.md and
 # services/deployment/canary_registry.py.
 register_canary_trigger_type(TelegramReceiveNode.type, "com.opencompany.telegram.message.received")
 

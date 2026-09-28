@@ -1,11 +1,12 @@
 """Central handler for node visuals (icon + color).
 
-Two icon sources co-exist by design (per RFC §6.5):
+Three icon sources co-exist by design (per RFC §6.5):
 
-1. **Per-plugin ``icon.svg``** co-located with the plugin folder
-   (e.g. ``server/nodes/telegram/icon.svg``). Resolved at runtime via
-   :func:`get_plugin_icon_path`. Preferred for new plugins; served
-   by ``GET /api/schemas/nodes/{type}/icon`` (see ``routers/schemas.py``).
+1. **Per-plugin ``icon_<node_type>.svg`` / ``icon.svg``** co-located with
+   the plugin folder (e.g. ``server/nodes/telegram/icon.svg``). Resolved
+   at runtime via :func:`get_plugin_icon_path`. Preferred for any node
+   with a recognisable brand; served by
+   ``GET /api/schemas/nodes/{type}/icon`` (see ``routers/schemas.py``).
 
 2. **Per-plugin ``meta.json``** for library references that need no
    artwork at all — ``{"icons": {"<node_type>": "lucide:Send"}}``.
@@ -24,11 +25,15 @@ dispatches by the wire-format prefix (URL paths route to ``<img>``;
 branch).
 
 Adding a new node, in order of preference:
-- Declare ``icons`` / ``icon`` in the plugin's ``meta.json`` pointing at
-  a library glyph (nothing to draw, nothing to maintain), OR
-- Drop ``icon.svg`` into the plugin folder when the node needs artwork
-  a library does not have — typically a brand mark, OR
+- Drop ``icon.svg`` (or ``icon_<node_type>.svg``) into the plugin folder
+  when the node belongs to a recognisable product — the brand mark is
+  what makes it identifiable at canvas size, OR
+- For a generic utility node, declare ``icons`` / ``icon`` in the
+  plugin's ``meta.json`` pointing at a library glyph. That is the weaker
+  option: a renamed or removed export renders nothing, OR
 - Add an entry to ``visuals.json`` (legacy central registry).
+A file always beats a ``meta.json`` reference for every node type in
+that folder, so do not ship both.
 
 Node files do NOT declare ``icon`` or ``color`` themselves.
 """
@@ -98,8 +103,10 @@ def get_plugin_icon_ref(node_type: str) -> str:
     SVG on disk. This is its no-file counterpart, so a plugin can point at
     an icon that already exists in a library instead of vendoring artwork:
 
-        {"color": "#128C7E",
-         "icons": {"whatsappBusinessSend": "lucide:Send"}}
+        {"color": "#ffb86c",
+         "icons": {"approvalGate": "lucide:ShieldCheck"}}
+
+    (``nodes/workflow/approval_gate/meta.json``.)
 
     Two levels, mirroring the ``icon_<node_type>.svg`` / ``icon.svg`` pair:
 

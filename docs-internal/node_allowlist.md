@@ -111,4 +111,4 @@ Read via `services.node_allowlist.get_node_allowlist_service().get_config()` —
 
 ## Backend service
 
-`server/services/node_allowlist.py` reads + parses the JSON via the shared `_str_list()` helper that rejects non-string entries. WS handler `get_node_allowlist` returns the full config dict to the frontend; the hook caches via `useRef` so the fetch runs once per session.
+`server/services/node_allowlist.py` reads + parses the JSON via the shared `_str_list()` helper that rejects non-string entries. WS handler `get_node_allowlist` returns the full config dict to the frontend. The hook guards with a `useRef` flag held per component instance, so each mounted consumer (`ComponentPalette`, `CredentialsModal`, `MasterSkillEditor`) fetches once per mount; there is no shared cache across them.

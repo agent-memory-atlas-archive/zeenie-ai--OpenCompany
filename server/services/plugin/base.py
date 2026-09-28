@@ -133,9 +133,12 @@ class BaseNode:
     ``version``           integer, bumped for breaking changes
     ``display_name``      shown in palette + parameter panel header
     ``subtitle``          shown under display_name in the node header
-    ``icon``              Wave 10.B wire format: "asset:k" / "lobehub:b" / emoji
-    ``color``             hex or dracula token, e.g. "#bd93f9"
-    ``group``             palette groupings, e.g. ["search", "tool"]
+    (icon / color)        NOT class attributes: ``_metadata_dict`` resolves
+                          them from the plugin folder (``icon_<type>.svg`` /
+                          ``icon.svg``, then ``meta.json``) with
+                          ``nodes/visuals.json`` as the legacy fallback
+    ``group``             palette groupings, e.g. ["search", "tool"]; the
+                          palette files the node under the first entry
     ``description``       one-line help
     ``handles``           NodeHandle[] — React Flow topology
     ``visibility``        "all" / "normal" / "dev"
@@ -314,9 +317,12 @@ class BaseNode:
         expected by the existing node_spec emitter.
 
         Icon resolution (per RFC §6.5):
-        1. Per-plugin ``icon.svg`` co-located with the plugin folder —
-           emitted as a URL routed through ``GET /api/schemas/nodes/<type>/icon``.
-        2. Fallback to ``visuals.json`` (emoji / ``lobehub:<brand>``).
+        1. Per-plugin ``icon_<type>.svg`` or ``icon.svg`` co-located with
+           the plugin folder — emitted as a fingerprinted URL routed through
+           ``GET /api/schemas/nodes/<type>/icon``.
+        2. The plugin's ``meta.json`` icon reference (``icons[<type>]``, then
+           ``icon``), e.g. ``lucide:Send``.
+        3. Fallback to ``visuals.json`` (emoji / ``lobehub:<brand>``).
 
         Color resolution (per RFC §6.6 / F2):
         1. Per-plugin ``meta.json`` ``color`` field, co-located with the

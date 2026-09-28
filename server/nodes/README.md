@@ -94,9 +94,13 @@ class AcmeSearchNode(ActionNode):
 ```
 
 On server restart this node is:
-- in the Component Palette under `search` and `tool`
+- in the Component Palette under `search` (the palette files a node under
+  the first entry of `group` only; later entries still count for group
+  checks such as `isConfigNode`)
 - runnable via the run button (REST API worker pool)
-- invokable by any AI Agent connected to its `output-main`
+- invokable by any AI Agent wired to its `output-tool` handle, which
+  `usable_as_tool = True` adds to the NodeSpec automatically (connect it to
+  the agent's `input-tools`)
 - emitted as NodeSpec at `GET /api/schemas/nodes/acmeSearch/spec.json`
 
 No other edits. Zero frontend changes.
@@ -150,7 +154,7 @@ tool/        — calculatorTool / currentTimeTool / writeTodos / taskManager / s
 vision/      — visionAnalyze (vision-delegate AI tool; palette group "tool")
 context/     — context (RFC-0002 conversation-store opt-in + viewing panel; palette group "memory")
 utility/     — console / httpRequest / webhookResponse / processManager / team_monitor
-workflow/    — start
+workflow/    — start / approvalGate ("ask me before sending")
 skill/       — masterSkill (skill/simple_memory is only an import shim for tool/simple_memory)
 browser/     — browser (installed Chrome/Edge/Chromium + browser-use CLI; Chrome for Testing opt-in, profiles, live view and user takeover)
 stripe/      — Stripe (CLI passthrough action + signed-webhook trigger)
@@ -181,15 +185,15 @@ these first before writing new code:
 | Folder | Helper | Purpose |
 |---|---|---|
 | `agent/` | `_inline.prepare_agent_call` | One-shot pre-dispatch for every agent (memory + skill + tool + teammate collection) |
-| `agent/` | `_specialized.SpecializedAgentBase` | Base for 13 specialized agents |
-| `model/` | `_base.ChatModelBase` | 13 chat models inherit → same `@Operation("chat")` body that calls `ai_service.execute_chat` |
+| `agent/` | `_specialized.SpecializedAgentBase` | Base for the specialized agents |
+| `model/` | `_base.ChatModelBase` | The chat models inherit → same `@Operation("chat")` body that calls `ai_service.execute_chat` |
 | `speech/` + `translate/` | `_config` / `_registry` / `_unifier` / `_providers/` | The multi-vendor shape. Capability data is JSON (`services/plugin/capabilities.CapabilityConfig`), registration is `services/provider_registry`, and each `_providers/<vendor>.py` owns that vendor's auth scheme, request transport and response shape |
-| `android/` | `_base.AndroidServiceBase` | 16 Android services inherit; payload translation + `SERVICE_ID_MAP` lives on this base |
-| `android/` | `_base.execute_android_service_tool` | AI-tool dispatcher — called from `services/handlers/tools.py` for direct service tools (the `androidTool` aggregator + `execute_android_toolkit` were retired) |
+| `android/` | `_base.AndroidServiceBase` | The Android services inherit; payload translation + `SERVICE_ID_MAP` lives on this base |
+| `android/` | `_base.execute_android_service_tool` | Legacy AI-tool dispatcher. `services/handlers/tools.py` still has an `ANDROID_SERVICE_NODE_TYPES` branch that calls it, but the plugin fast path in `_dispatch_tool` runs first and sends every registered Android service through `BaseNode.execute_as_tool` (its `invoke` operation), so that branch is not reached today (the `androidTool` aggregator + `execute_android_toolkit` were retired) |
 | `code/` | `_base.CodeExecutorBase` + `_nodejs.NodeJSClient` | Python/JS/TS executors; `monty_executor/` is sandboxed Python via `pydantic-monty` (enforced limits + opt-in capabilities) |
-| `google/` | `_base.build_google_service` / `track_google_usage` | 7 Google plugins (OAuth + API) |
+| `google/` | `_base.build_google_service` / `track_google_usage` | The Google plugins (OAuth + API) |
 | `google/` | `_gmail.fetch_email_details` / `mark_email_as_read` | gmail + gmail_receive |
-| `twitter/` | `_base.call_with_retry` / `format_tweet` / `sync_search_recent` | 4 twitter plugins (XDK + refresh) |
+| `twitter/` | `_base.call_with_retry` / `format_tweet` / `sync_search_recent` | The twitter plugins (XDK + refresh) |
 | `whatsapp/` | `_base.*` | whatsappSend / whatsappDb (RPC dispatch via `nodes/whatsapp/_service.py` — `RPCClient` + `whatsapp_rpc_call`) |
 | `social/` | `_base.*` | socialReceive / socialSend |
 | `proxy/` | `proxy_config/__init__.py::execute_proxy_config` | 10-operation matrix; called by both `ProxyConfigNode.dispatch` and `tools.py`'s AI-tool branch |
@@ -482,11 +486,15 @@ Full reference: [docs-internal/plugin_system.md → "Self-contained plugin folde
   `AndroidServiceParams._coerce_parameters`, `WriteTodosParams._coerce_todos`.
   Do **not** blanket-drop blanks for `str` fields — that turns a `min_length`
   error into a confusing "field required".
-- **`usable_as_tool = True` hides both canvas handles.** It auto-sets
-  `hide_input_handle` / `hide_output_handle` unless the class declares
-  them, so a dual-purpose node meant to stay wirable must set both to
-  `False` explicitly. Symptom: the node runs fine as a tool but cannot be
-  connected to anything on the canvas.
+- **Declare the canvas handles a dual-purpose node needs.**
+  `usable_as_tool = True` auto-sets `hide_input_handle` /
+  `hide_output_handle` unless the class declares them, and adds an
+  `output-tool` handle. The frontend only consults the hide flags when a
+  spec declares no handles; a spec with handles renders exactly what it
+  declares. So a node that should also chain on the canvas must list
+  `input-main` / `output-main` in `handles` — declaring the flags `False`
+  alone does not add them. (Several nodes also set both flags `False`,
+  and their tests lock that.)
 - **Never accept a file path and join it onto the workspace yourself.**
   Use `services.media.coerce_file_param` / `read_media_bytes`. A node that
   did the naive join let `audio_file="../../credentials.db"` read the

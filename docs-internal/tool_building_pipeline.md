@@ -161,7 +161,7 @@ tool or crashing.
 
 ## 6. Stage 5 — Dispatch (handlers/tools.py)
 
-[`execute_tool(tool_name, tool_args, config)`](../server/services/handlers/tools.py#L75) at line 75:
+[`execute_tool(tool_name, tool_args, config)`](../server/services/handlers/tools.py) in `services/handlers/tools.py`:
 
 ```python
 1. broadcaster.update_node_status(node_id, "executing", ...)
@@ -173,17 +173,16 @@ tool or crashing.
 4. Return result. Exceptions trigger an "error" broadcast and re-raise.
 ```
 
-[`_dispatch_tool`](../server/services/handlers/tools.py#L146) at line 146 is pure routing — no broadcasting. Routes by `config["node_type"]`:
+[`_dispatch_tool`](../server/services/handlers/tools.py) is pure routing — no broadcasting. It checks `config["node_type"]` in this order:
 
-| Pattern | Handler |
-|---|---|
-| `aiAgent` / `chatAgent` / `<specialized>_agent` | `_execute_delegated_agent` (fire-and-forget background task) |
-| `_builtin_check_delegated_tasks` | `_execute_check_delegated_tasks` |
-| `batteryMonitor` / `wifiAutomation` / ... (16 service types) | `nodes/android/_base.py::execute_android_service_tool` (line 248; imported at `tools.py:227` — snake_case service ID via `SERVICE_ID_MAP` at `_base.py:25`) |
-| `whatsappSend` / `whatsappDb` / `pythonExecutor` / ... | Per-plugin `usable_as_tool=True` handler (the plugin's own `execute()` method) |
-| `calculatorTool` / `currentTimeTool` / `taskManager` / `writeTodos` | `_execute_<name>` direct implementations |
-| `braveSearch` / `serperSearch` / `perplexitySearch` | `handle_<provider>_search` (httpx async, credential resolution, usage tracking) |
-| All else | `_execute_generic` (catch-all) |
+| Order | Pattern | Handler |
+|---|---|---|
+| 1 | `_builtin_skill` | `services.skill_runtime.execute_skill_tool` |
+| 2 | Any registered plugin that is not a registered agent (`get_node_class(node_type)`) | The plugin fast path: `plugin_cls().execute_as_tool(tool_args, node_params, ctx)`. This covers every tool plugin, dual-purpose `usable_as_tool` nodes, the Android services, `taskManager` and `proxyConfig`. A plugin that needs to adjust the model's arguments overrides `execute_as_tool` (see §12). |
+| 3 | `ANDROID_SERVICE_NODE_TYPES`, `taskManager`, `proxyConfig` | Legacy branches (`execute_android_service_tool`, `_execute_task_manager`, `execute_proxy_config`). Each of these types is a registered plugin, so step 2 handles it first and these branches are not reached today. |
+| 4 | `_builtin_check_delegated_tasks` | `_execute_check_delegated_tasks` |
+| 5 | A registered agent (`is_registered_agent`: `AI_AGENT_TYPES` or `supports_delegation`) | `_execute_delegated_agent` (fire-and-forget background task) |
+| 6 | Anything else | `_execute_generic` (catch-all, logs a warning) |
 
 ## 7. Gateway-tool pattern (retired)
 
@@ -196,7 +195,7 @@ connect directly to `input-tools`. Legacy
 `services/workflow_migrations.normalize_legacy_android_toolkit`, and sub-node
 exclusion keys solely on the AI-agent config handles (`input-context` /
 `input-memory` (legacy compatibility) / `input-tools` / `input-skill` /
-`input-teammates`; `execution/models.py:351-359`) — the
+`input-teammates`; `ExecutionContext.create` in `execution/models.py`) — the
 `TOOLKIT_NODE_TYPES` constant is gone.
 
 ## 8. Internal delegation identities (`delegate_to_*`)
@@ -214,7 +213,7 @@ class DelegateToAgentSchema(BaseModel):
     context: Optional[str] = None
 ```
 
-[`_execute_delegated_agent`](../server/services/handlers/tools.py#L314) at line 314:
+[`_execute_delegated_agent`](../server/services/handlers/tools.py) in `services/handlers/tools.py`:
 
 1. Generate a `task_id` (`uuid4().hex`).
 2. Spawn `asyncio.create_task(<child agent execute>)` — fire and forget.
@@ -252,7 +251,7 @@ The v1/v2 wire duality was purged; there is no engine-marker refusal path.
 
 Some tools bundle a default skill — `writeTodos` ships with `write-todos-skill`, the WhatsApp tools ship with their respective skills. The frontend `useAutoSkillEdges.ts` hook detects these connections at canvas-edit time and auto-creates a phantom skill connection so the LLM gets both the tool schema (for invocation) and the skill instructions (for usage guidance) without the user having to wire two edges.
 
-The `isMasterSkillNode()` helper (`useAutoSkillEdges.ts:35`) resolves via `getCachedNodeSpec(type)?.uiHints?.isMasterSkillEditor === true`, not a hardcoded string match.
+The `isMasterSkillNode()` helper in `useAutoSkillEdges.ts` resolves via `getCachedNodeSpec(type)?.uiHints?.isMasterSkillEditor === true`, not a hardcoded string match.
 
 ## 11. Pytest invariants
 
@@ -271,14 +270,17 @@ server/tests/
 The shortest path:
 
 1. Create the plugin folder: `server/nodes/tool/<plugin>/__init__.py` extending `ToolNode` (or `ActionNode` with `usable_as_tool = True` for dual-purpose).
-2. Declare `type`, `display_name`, `Params` (the schema the LLM sees), `Output`, `@Operation`-decorated `execute()`.
+2. Declare `type`, `display_name`, `Params` (the schema the LLM sees), `Output`, and an `@Operation`-decorated method (for example `@Operation("search") async def search(self, ctx, params)`); `BaseNode.execute` and `execute_as_tool` dispatch to it.
 3. Declare the plugin's `tool_name` and, when the LLM-facing wording differs,
    `tool_description` class variables.
 4. (Optional) Add a special schema clause to `_get_tool_schema` only when the
    plugin's `Params` model is not the correct invocation contract.
-5. (Optional) Add a dispatch clause to `_dispatch_tool` if your plugin needs
-   custom handler logic; otherwise the generic per-plugin path runs
-   `cls.execute()` directly.
+5. (Optional) Override `execute_as_tool` on the plugin class when the
+   model's arguments need adjusting before the operation runs —
+   `AccountScopedNode` in `nodes/discord/_base.py` strips its
+   `server_controlled_fields` this way. Do not add a clause to
+   `_dispatch_tool`: its plugin fast path already runs `execute_as_tool`
+   for every registered plugin.
 
 Steps 4-5 are usually unnecessary — most new tools are fully described by
 their plugin class.

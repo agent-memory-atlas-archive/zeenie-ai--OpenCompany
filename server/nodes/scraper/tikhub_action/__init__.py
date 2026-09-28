@@ -154,8 +154,9 @@ class TikHubActionNode(ActionNode):
     credentials = (TikHubCredential,)
     task_queue = TaskQueue.REST_API
     usable_as_tool = True
-    # usable_as_tool auto-hides both handles unless declared; this node
-    # must stay wirable on the canvas as well as callable as a tool.
+    # usable_as_tool auto-sets both hide flags unless declared. This node
+    # stays wirable on the canvas through its declared `handles`; the
+    # frontend reads the flags only for a spec with no handles.
     hide_input_handle = False
     hide_output_handle = False
 

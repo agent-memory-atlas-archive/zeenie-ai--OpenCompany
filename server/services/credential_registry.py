@@ -395,8 +395,9 @@ async def provider_connection_state(provider: Dict[str, Any], auth_service: Any)
     if stored_check and stored_check.get("type") == "api_key":
         state["stored"] = await auth_service.has_valid_key(stored_check.get("key", pid))
     elif status_hook:
-        # Status-hook providers (whatsapp, android, twitter, google,
-        # claude_code, codex_cli) use OAuth tokens for the connection state.
+        # Providers that declare ``status_hook`` in credential_providers.json
+        # (the messaging, Google / Microsoft and CLI-login entries among
+        # them) use OAuth tokens for the connection state.
         tokens = await auth_service.get_oauth_tokens(status_hook)
         state["stored"] = tokens is not None
     elif kind == "apiKey":

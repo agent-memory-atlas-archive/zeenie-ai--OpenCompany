@@ -1087,9 +1087,9 @@ class TestPluginContractInvariants:
         # Exception: tool-oriented nodes (component_kind="tool" pure
         # ToolNodes, or ActionNode + usable_as_tool=True dual-use nodes)
         # have hide_output_handle auto-derived True via
-        # BaseNode.__init_subclass__. Their declared handles tuple still
-        # carries output-tool / output-main for backend awareness, but
-        # the SquareNode frontend suppresses the default render. The
+        # BaseNode.__init_subclass__. Their declared handles (plus the
+        # auto-added output-tool) are what SquareNode renders; it reads the
+        # hide flags only for a spec with no handles. The
         # invariant's original intent was "explicit author intent should
         # be consistent" — auto-derived is not author intent, so skip
         # those nodes.

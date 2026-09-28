@@ -1,12 +1,18 @@
-"""Specialized agent base — subclass + set 5 attrs to mint a new agent.
+"""Specialized agent base — subclass + set a few class attrs to mint a new agent.
 
 All specialized agents (android / coding / web / task / social / travel
-/ tool / productivity / payments / consumer / autonomous) share the
-``handle_chat_agent`` execution path. The only differences are display
-name, icon, colour, subtitle, description. Each agent gets its own file
-under ``nodes/agent/`` so the user can find ``android_agent.py``
-directly — but the body lives here so changing the dispatch path is a
-one-file edit.
+/ tool / productivity / payments / consumer / autonomous) and the two
+team leads (orchestrator_agent / ai_employee) subclass this. In-process
+(and on the per-type activity path) they run ``execute_op`` below, which
+calls ``AIService.execute_chat_agent``; with the Temporal
+``AgentWorkflow`` enabled they run as that child workflow instead
+(``AGENT_WORKFLOW_TYPES`` in ``services/temporal/workflow.py``). The
+class-level differences are display name, subtitle and description;
+icon and colour are not class attributes — they come from the plugin
+folder (``icon.svg`` / ``meta.json``) or ``nodes/visuals.json``. Each
+agent has its own folder, ``nodes/agent/<type>/__init__.py``, so the
+user can find ``android_agent`` directly — but the body lives here so
+changing the dispatch path is a one-file edit.
 """
 
 from __future__ import annotations
@@ -90,7 +96,8 @@ class SpecializedAgentOutput(BaseModel):
 
 
 class SpecializedAgentBase(ActionNode, abstract=True):
-    """Subclass and set type/display_name/icon/color/subtitle/description."""
+    """Subclass and set type/display_name/subtitle/description (icon and
+    colour come from the plugin folder or ``nodes/visuals.json``)."""
 
     component_kind = "agent"
     requires_context = True
@@ -106,10 +113,12 @@ class SpecializedAgentBase(ActionNode, abstract=True):
     async def execute_op(self, ctx: NodeContext, params: SpecializedAgentParams) -> Any:
         """Inlined via ``prepare_agent_call`` (Wave 11.D.6).
 
-        All 13 specialized agents + orchestrator + ai_employee route
-        through :func:`AIService.execute_chat_agent` with identical
-        pre-dispatch flow. Team-lead teammate injection happens inside
-        ``prepare_agent_call`` based on ``self.type``.
+        Every subclass (the specialized agents plus the orchestrator and
+        ai_employee team leads) routes through
+        :func:`AIService.execute_chat_agent` with identical pre-dispatch
+        flow when it runs here rather than as an ``AgentWorkflow``.
+        Team-lead teammate injection happens inside ``prepare_agent_call``
+        based on ``self.type``.
         """
         from services.plugin.deps import get_ai_service, get_database
 

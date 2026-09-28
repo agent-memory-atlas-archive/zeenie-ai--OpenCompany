@@ -77,7 +77,7 @@ class SpecializedAgentBase(ActionNode, abstract=True):
 | `credentials` | Sequence of `Credential` subclasses the node uses. More than one is supported — see [Multi-credential nodes](#multi-credential-nodes). |
 | `Params` | Pydantic `BaseModel` — user-facing parameters. Used for both UI rendering and AI tool schemas. |
 | `Output` | Pydantic `BaseModel` — runtime output shape. |
-| `usable_as_tool` | `ActionNode` flag — mints a ToolNode adapter for AI invocation. Combined with `component_kind != "model"`, makes the plugin visible to `agentBuilder.add_tool` (catalogue + rebind paths). **Side effect:** setting it auto-sets `hide_input_handle` / `hide_output_handle` to `True` unless the class declares them (`BaseNode.__init_subclass__` in [base.py](../server/services/plugin/base.py), which does the same for `component_kind == "tool"`), so a dual-purpose node that must remain wirable on the canvas has to declare both `False` explicitly. |
+| `usable_as_tool` | `ActionNode` flag — mints a ToolNode adapter for AI invocation. Combined with `component_kind != "model"`, makes the plugin visible to `agentBuilder.add_tool` (catalogue + rebind paths). **Side effect:** setting it auto-sets `hide_input_handle` / `hide_output_handle` to `True` unless the class declares them (`BaseNode.__init_subclass__` in [base.py](../server/services/plugin/base.py), which does the same for `component_kind == "tool"`), and `_metadata_dict` adds an `output-tool` handle. The frontend (`SquareNode`) reads the hide flags only when a spec declares no handles; a spec with handles renders exactly what it declares. So a dual-purpose node that must stay wirable on the canvas declares `input-main` / `output-main` in `handles`; setting the flags `False` alone does not add them. |
 | `needs_canvas` | `ClassVar[bool]` — when `True`, the F4.B `AgentWorkflow` tool-dispatch forwards the parent workflow's `nodes`/`edges` into the per-tool activity payload. Today only `AgentBuilderNode` opts in (walks edges to resolve its calling agent). |
 | `task_queue` | Temporal worker pool. See `TaskQueue` constants. |
 | `retry_policy` | `RetryPolicy` dataclass (mirrors `temporalio.common.RetryPolicy`). |
@@ -574,7 +574,7 @@ Underscore-prefixed files are package-private; the `nodes` walker
 skips them. The two non-underscore `.py` files are the plugin classes
 (one per node type) — same pattern as every other folder.
 
-### Cross-cutting registries (19 at time of writing, hand-curated below; `grep -rn '^def register_' server/services server/core` also lists the node / group / provider / session-pool registration internals) — use only what your plugin needs
+### Cross-cutting registries (hand-curated below; `grep -rn '^def register_' server/services server/core` lists the live set, plus the node / group / provider / session-pool registration internals) — use only what your plugin needs
 
 | Concern | Registry module | Register from plugin via |
 |---|---|---|
@@ -601,10 +601,10 @@ skips them. The two non-underscore `.py` files are the plugin classes
 All accept idempotent re-imports (same callable / class for the
 same key is a no-op; conflicts raise `ValueError`).
 
-**Plugins use only the registries they need.** Telegram uses 7 (no
-router); Stripe uses 4 (webhook-driven, no filter/precheck); Android
-uses 6 (with router); WhatsApp uses 8. There is no "register every
-hook" rule.
+**Plugins use only the registries they need.** Telegram registers no
+router; Stripe is webhook-driven, with no filter or precheck; Android
+registers a router. There is no "register every hook" rule — read a
+plugin's `__init__.py` for what it actually registers.
 
 ### Telegram `__init__.py` (canonical wiring)
 
@@ -1300,20 +1300,23 @@ without any node-specific code in the frontend or in core services:
 
 1. **Marker-token write via the existing `auth_service.store_oauth_tokens`
    API.** Plugin writes synthetic strings (e.g. `"cli-managed"`) on
-   login completion. The catalogue's existing per-provider `stored`
-   check at
-   [`routers/websocket.py:handle_get_credential_catalogue`](../server/routers/websocket.py)
-   uses
-   `auth_service.get_oauth_tokens(status_hook) is not None` —
-   identical to Google's OAuth-callback path. The synthetic tokens
-   exist purely to flip the existence check; the CLI owns the real
-   auth.
+   login completion. The catalogue's per-provider `stored` flag comes
+   from `provider_connection_state` in
+   [`services/credential_registry.py`](../server/services/credential_registry.py)
+   (called by `handle_get_credential_catalogue` and by the Normal-mode
+   employee summaries). It checks, in order: a declarative
+   `stored_check`, then `status_hook`
+   (`auth_service.get_oauth_tokens(status_hook) is not None` —
+   identical to Google's OAuth-callback path), then the provider
+   `kind` (`apiKey` / `oauth`), then `connected_check`. The synthetic
+   tokens exist purely to flip that existence check; the CLI owns the
+   real auth.
 
 2. **Generic `credential_catalogue_updated` broadcast.** The plugin
    emits this event after every state change. The frontend's
    existing handler in
    [`WebSocketContext.tsx`](../client/src/contexts/WebSocketContext.tsx)
-   (`case 'credential_catalogue_updated'`, line 1007) invalidates the catalogue query; the modal refetches
+   (`case 'credential_catalogue_updated'`) invalidates the catalogue query; the modal refetches
    and re-renders. **No new broadcast type, no Zustand entry, no
    `case '<provider>_status'`.** Frontend has zero references to any
    CLI-managed plugin's name.

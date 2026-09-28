@@ -66,8 +66,8 @@ Stripe is the reference implementation
 
 ```
 server/nodes/<provider>/
-├── __init__.py             # 5 register_* calls (zero logic)
-├── _credentials.py         # ApiKeyCredential subclass
+├── __init__.py             # register_* calls only (zero logic)
+├── _credentials.py         # Credential subclass (Stripe: StripeCredential(Credential))
 ├── _source.py              # DaemonEventSource + WebhookSource subclasses
 ├── _handlers.py            # WS_HANDLERS via make_lifecycle_handlers()
 ├── _install.py             # ensure_<provider>_cli() auto-downloader
@@ -98,15 +98,19 @@ reused:
 
 1. **Marker-token write after CLI login completes.** The plugin
    writes synthetic strings to `auth_service.store_oauth_tokens`
-   with the provider id matching the catalogue entry's key. CLI-managed
-   providers set **no** `status_hook` — the catalogue handler at
-   [`server/routers/websocket.py:handle_get_credential_catalogue`](../server/routers/websocket.py)
-   resolves them through its `kind == "oauth"` fallback, which keys
+   with the provider id matching the catalogue entry's key. Stripe,
+   Vercel and GitHub set **no** `status_hook`, so
+   `provider_connection_state` in
+   [`server/services/credential_registry.py`](../server/services/credential_registry.py)
+   (which the catalogue handler calls) resolves them through its
+   `kind == "oauth"` branch, which keys
    `auth_service.get_oauth_tokens(provider_id) is not None` off the
-   provider id directly to set `provider.stored = true` (the
-   `status_hook` branch is only for providers that declare one:
-   google / twitter / telegram). **Same storage API path Google's
-   OAuth callback uses** — no new abstraction.
+   provider id directly to set `provider.stored = true`. The order is
+   `stored_check`, then `status_hook`, then `kind`, then
+   `connected_check`; the providers that declare a `status_hook` are
+   listed in `server/config/credential_providers.json` (the
+   `claude_code` / `codex_cli` CLI entries among them). **Same storage
+   API path Google's OAuth callback uses** — no new abstraction.
 
    ```python
    await auth_service.store_oauth_tokens(
@@ -135,8 +139,10 @@ reused:
 3. **Auto-installer for the CLI binary.** Plugins that wrap a CLI
    ship a `_install.py` with a single `ensure_stripe_cli()`-shaped
    async helper:
-   - Cached path → system PATH (`brew`, `scoop`, `apt`) → workspace
-     cache → fresh download from GitHub releases.
+   - Cached path → system PATH (`brew`, `scoop`, `apt`) → a previous
+     download under `<DATA_DIR>/packages/<provider>/bin/`
+     (`core.paths.package_dir`) → fresh download from GitHub releases
+     into that same directory.
    - Pinned version constant; `(system, machine) -> asset_name` map
      covering Windows/Linux/Mac × x86_64/arm64.
    - Returns absolute binary path; subsequent calls hit the cache.
@@ -233,7 +239,7 @@ walker does on startup), these registrations happen automatically:
 | Trigger registry + filter builders | `event_waiter.TRIGGER_REGISTRY`, `FILTER_BUILDERS` | back-fill from `TriggerNode` subclasses on first lookup |
 | Temporal activity wrapper | `cls.as_activity()` | first call; pooled into the worker queue declared by `task_queue` |
 | Palette icon | `<plugin_folder>/icon.svg`, or `icon_<nodeType>.svg` per node type in a multi-node folder — served via `GET /api/schemas/nodes/<type>/icon`. Brand artwork belongs here. `meta.json` → `"icons": {"<nodeType>": "lucide:Send"}` is the fallback for generic utility nodes. Resolution: SVG file → plugin `meta.json` ref → `visuals.json`. |
-| Palette color | `<plugin_folder>/meta.json` (`{"color": "#xxx"}`); `visuals.json` is the fallback for legacy entries (post-F2 it has zero color fields). |
+| Palette color | `<plugin_folder>/meta.json` (`{"color": "#xxx"}`); `visuals.json` is the fallback for legacy entries. Its only `color` fields are on the lowercase tool-name alias keys (`github`, `vercel`, `gcloud`, `cloudflare`, `data`, `vision`) that the skill icon resolver reads — see below. |
 
 What you **do** still write:
 

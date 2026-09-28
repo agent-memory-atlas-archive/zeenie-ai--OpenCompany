@@ -90,11 +90,12 @@ class AndroidServiceOutput(BaseModel):
 
 
 class AndroidServiceBase(ActionNode, abstract=True):
-    """Subclass and set type/display_name/icon/description.
+    """Subclass and set type/display_name/description.
 
-    Visual metadata (icon + color) lives in ``server/nodes/visuals.json``
-    keyed by individual plugin type. The ``_visuals.py`` resolver picks
-    each entry up at NodeSpec emit time; no class-level ClassVars needed.
+    Visual metadata is not a class attribute: each service's colour lives
+    in its folder's ``meta.json`` and its icon in ``server/nodes/visuals.json``
+    keyed by plugin type. ``BaseNode._metadata_dict`` resolves both through
+    ``nodes/_visuals.py`` when the NodeSpec is built.
     """
 
     group = ("android", "service")

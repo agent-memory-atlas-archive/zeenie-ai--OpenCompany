@@ -29,17 +29,21 @@ class NodeAllowlistService:
 
         Response shape:
             show_all: bool
-                true  -> do not filter the palette; every node is visible
-                         (still subject to disabled_groups + disabled_nodes).
-                false -> show only node types listed in enabled_nodes.
+                true  -> enabled_nodes is empty: nothing is filtered
+                         beyond disabled_groups + disabled_nodes.
+                false -> only node types listed in enabled_nodes pass.
+                         With Normal mode on (the default), that list
+                         governs what Hire may build (see
+                         ``is_hire_allowed``), not the editor palette; with
+                         ``VITE_NORMAL_MODE=false`` it filters the palette's
+                         Normal setting instead.
             enabled_nodes: list[str]
                 Only meaningful when show_all is false.
             disabled_groups: list[str]
-                Absolute blocklist. A node whose first group matches any
-                entry here is hidden in BOTH normal and dev mode, even
-                if listed in enabled_nodes. Use to disable an entire
-                backend group (e.g. 'android' hides all 16 Android
-                service nodes).
+                Absolute blocklist. A node with ANY group in this list is
+                blocked in every mode, even if listed in enabled_nodes.
+                Use to disable an entire backend group (e.g. 'android'
+                hides the Android service nodes).
             disabled_nodes: list[str]
                 Absolute blocklist by exact node-type identifier. Same
                 mode-independent enforcement as disabled_groups; use
@@ -60,8 +64,8 @@ class NodeAllowlistService:
                 dropdown — every entry hides the matching subfolder
                 under server/skills/. Use when disabling a feature
                 that also ships its own skill folder (e.g.
-                'android_agent' so users can't see the 12 android-
-                tied skills when android nodes are disabled).
+                'android_agent' so users can't see the android-tied
+                skills when android nodes are disabled).
                 Email has no dedicated skill folder (email-tied skills
                 live under productivity_agent mixed with Google
                 Workspace) so no email entry is needed.

@@ -143,7 +143,8 @@ class TranslateTextNode(ActionNode):
     annotations = {"destructive": False, "readonly": True, "open_world": True}
     task_queue = TaskQueue.REST_API
     usable_as_tool = True
-    # `usable_as_tool` otherwise auto-hides both handles.
+    # `usable_as_tool` would otherwise auto-set both hide flags; the declared
+    # `handles` are what keep the node wirable on the canvas.
     hide_input_handle = False
     hide_output_handle = False
 

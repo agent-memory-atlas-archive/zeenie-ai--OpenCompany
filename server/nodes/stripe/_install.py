@@ -76,9 +76,10 @@ async def ensure_stripe_cli() -> Path:
       1. Cached path from a prior call (in-process).
       2. ``shutil.which("stripe")`` — system install on PATH.
       3. Previously-downloaded copy at ``package_dir("stripe")/bin/
-         stripe[.exe]`` (OS cache, see :func:`core.paths.package_dir`).
+         stripe[.exe]`` (``<DATA_DIR>/packages/stripe/bin/``, see
+         :func:`core.paths.package_dir`).
       4. Fresh download from GitHub releases under :data:`_VERSION`
-         into the same OS-cache directory.
+         into the same directory.
     """
     global _cached_path
     if _cached_path and _cached_path.exists():
