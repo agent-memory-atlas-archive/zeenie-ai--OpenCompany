@@ -333,12 +333,12 @@ export function resolveNodeDescription(
   });
 
   // Wave 10.B: backend NodeSpec is the sole source for top-level
-  // visual metadata (icon, subtitle, description, color). Local
-  // nodeDefinitions/*.ts entries carry no icons anymore, so we just
-  // pass the backend values through and only preserve local
-  // `defaults.color` when the backend doesn't declare one — color is
-  // the last remaining UX field that a few specialised agent configs
-  // still set locally.
+  // visual metadata (icon, subtitle, description). The plugin colour is
+  // NodeSpec `color`, which `nodeSpecToDescription` does not copy into
+  // `defaults` (it sets only `defaults.name`), so `defaults.color` here
+  // can only come from a local fallback — and no caller passes one today.
+  // Canvas nodes that read `defaults.color` therefore fall back to their
+  // role token; AIAgentNode reads `useNodeSpec(type).color` directly.
   return {
     ...backend,
     defaults: {

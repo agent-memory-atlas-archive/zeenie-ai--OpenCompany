@@ -231,7 +231,7 @@
   --canvas-grid-opacity: 0.4;
 
   /* Node execution pulse colour (Wave 30). Independent of `--node-color`
-   * (the plugin accent) so the executing-node glow stays high-contrast
+   * (the node's accent) so the executing-node glow stays high-contrast
    * against the canvas background regardless of which plugin is running.
    * Each theme overrides this to its most visible accent (Cyber neon
    * cyan, Renaissance gold, Surveillance REC red, etc.). The default
@@ -342,8 +342,12 @@ html[data-page-hidden] *::after {
 /* ============================================================================
  * Default canvas-node visuals (Wave 21).
  *
- * Each node component sets `--node-color` inline from its plugin's
- * accent hex (visuals.json). These rules consume that custom property
+ * Each node component sets `--node-color` inline. Only AIAgentNode passes
+ * the plugin's accent (its NodeSpec `color`); SquareNode, TriggerNode,
+ * StartNode, ToolkitNode and TeamMonitorNode read `defaults.color`, which
+ * the NodeSpec adapter never fills, so they pass their role token
+ * (`--node-model`, `--node-trigger`, `--node-workflow`, `--node-tool`,
+ * `--node-agent`). These rules consume that custom property
  * to draw a sensible default border / gradient / shadow so light, dark,
  * and any theme that doesn't define its own `.node` rule still renders
  * correctly. Per-theme CSS in client/src/themes/<theme>.css overrides

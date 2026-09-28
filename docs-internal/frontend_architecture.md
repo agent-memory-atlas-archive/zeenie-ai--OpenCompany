@@ -75,7 +75,7 @@ client/src/
 │
 ├── components/
 │   ├── ui/                  # shadcn-generated primitives (editable, ours)
-│   │   ├── button.tsx       # CVA variants: default/secondary/ghost/outline/destructive/link
+│   │   ├── button.tsx       # CVA variants + sizes (buttonVariants; see "Component primitives")
 │   │   ├── badge.tsx        # + success/warning/info variants we added
 │   │   ├── alert.tsx        # + success/warning/info variants we added
 │   │   ├── accordion.tsx    # Radix accordion
@@ -308,11 +308,11 @@ All under [components/ui/](../client/src/components/ui/). Editable — add varia
 
 | Concern | Primitive | Notes |
 |---|---|---|
-| Button | `Button` (CVA) | Variants: `default | secondary | ghost | outline | destructive | link` + Normal-mode `invert | quiet | chip` (ours). Sizes: `default | xs | sm | lg | icon | icon-xs | icon-sm | icon-lg` + `pill | chip` (ours) |
+| Button | `Button` (CVA) | Variants: `default | secondary | ghost | outline | destructive | link` + Normal-mode `invert | quiet | chip` (ours). Sizes: `default | xs | sm | lg | icon | icon-xs | icon-sm | icon-lg` + `pill | chip` (ours). `buttonVariants` in `components/ui/button.tsx` is authoritative |
 | Badge | `Badge` | + `success | warning | info` (ours) |
 | Alert | `Alert + AlertTitle + AlertDescription` | + `success | warning | info` (ours) |
 | Overlay | `Dialog`, `AlertDialog`, `Tooltip`, `DropdownMenu` | Radix |
-| Toggle | `Toggle`, `ToggleGroup + ToggleGroupItem` | Radix. Variants `default | segmented | chips` (ours) |
+| Toggle | `Toggle`, `ToggleGroup + ToggleGroupItem` | Radix. Variants `default | segmented | chips` (ours); the CVA in `components/ui/toggle.tsx` is authoritative |
 | Disclosure | `Accordion`, `Collapsible`, `Tabs` | Radix |
 | Inputs | `Input`, `Textarea`, `Select`, `Switch`, `Checkbox`, `Slider`, `Label` | Radix (Select/Switch/Checkbox/Slider) |
 | Cards | `Card + CardHeader/Title/Description/Content/Footer` | Layout primitive |
@@ -410,7 +410,7 @@ components/credentials/CredentialsModal.tsx
 
 ## ParameterRenderer (pending Phase 6)
 
-Currently a 2152-line switch on `parameter.type` ([client/src/components/ParameterRenderer.tsx](../client/src/components/ParameterRenderer.tsx)). 15+ branches for `string | number | boolean | options | collection | fixedCollection | code | file | credential | ...`.
+Currently one large switch on `parameter.type` ([client/src/components/ParameterRenderer.tsx](../client/src/components/ParameterRenderer.tsx)), with a branch per type: `string | number | boolean | options | collection | fixedCollection | code | file | credential | ...`.
 
 **Phase 6 plan:** replace with `@jsonforms/react` renderer registry. Requires backend to expose a `get_node_spec` WebSocket handler returning `NodeSpec { jsonSchema, uiSchema, _uiHints? }` per the RFC. Frontend will own the custom renderer set (one file per widget under `components/inspector/renderers/`) and route via JSON Forms' tester-based dispatch. Feature flag `VITE_USE_NODESPEC` gates the rollout; the old `ParameterRenderer` deletes once stable.
 
@@ -637,7 +637,7 @@ When the backend `get_node_spec` handler lands, the inspector will own a 4-file 
 
 ```
 inspector/
-├── ParameterRenderer.tsx     # dispatcher + 11 inline widgets + drag-drop wrapper + WIDGETS registry
+├── ParameterRenderer.tsx     # dispatcher + inline widgets + drag-drop wrapper + WIDGETS registry
 ├── CollectionWidget.tsx      # recursive (>150 LOC, independently testable)
 ├── CodeWidget.tsx            # CodeEditor + theme/toolbar plumbing
 └── types.ts                  # WidgetProps discriminated union, registry tester signature
@@ -689,4 +689,4 @@ This architecture is the post-migration state. Pre-migration was antd + `styled-
 
 **`useAppTheme()` powers the canvas + maps surface across all 12 themes.** The hook returns a `theme` object with the legacy `Colors` shape (`theme.colors.X`, `theme.isDarkMode`) so existing call sites don't change. Under non-light/dark themes it merges a per-theme overlay (primary, focus, action palette, edge stroke / selection / executing / completed / error) on top of the chosen base pack (`lightColors` for utopian-bright themes, `darkColors` for dystopian / dark themes). Adding a new theme overlay is a single entry in the `THEME_OVERRIDES` map in [hooks/useAppTheme.ts](../client/src/hooks/useAppTheme.ts).
 
-Read sites: every canvas node component (`AIAgentNode`, `SquareNode`, `TriggerNode`, `StartNode`, `ToolkitNode`, `TeamMonitorNode`), `EdgeConditionEditor`, and the Maps surface (`GoogleMapsPicker`, `MapsPreviewPanel`) — they interpolate per-definition `nodeColor` and JS-side hex values that Tailwind classes can't express. Every other surface uses Tailwind + the token tiers above and retints automatically through the per-theme `[data-theme="..."]` block.
+Read sites: every canvas node component (`AIAgentNode`, `SquareNode`, `TriggerNode`, `StartNode`, `ToolkitNode`, `TeamMonitorNode`), `Dashboard.tsx`, and the Maps surface (`GoogleMapsPicker`, `MapsPreviewPanel`) — they interpolate JS-side colour values that Tailwind classes can't express (`EdgeConditionEditor` no longer calls it). Of the node components, only `AIAgentNode` uses the plugin's own colour (NodeSpec `color`); the others read `definition.defaults.color`, which the NodeSpec adapter never fills, so they use their role token (`--node-model`, `--node-trigger`, `--node-workflow`, `--node-tool`, `--node-agent`). Every other surface uses Tailwind + the token tiers above and retints automatically through the per-theme `[data-theme="..."]` block.

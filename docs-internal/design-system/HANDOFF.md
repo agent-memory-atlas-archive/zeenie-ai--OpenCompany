@@ -167,7 +167,7 @@ Every theme re-declares all five. A heading is written once as `font-family: var
 
 ### Spacing, radii, chrome
 Space scale 4 / 8 / 12 / 16 / 24 / 32 / 48 / 64 (`--space-1`…`--space-8`).
-Radii `--radius-sm` 4 · `--radius-md` 6 · `--radius-lg` 8 · `--radius-xl` 12 · `--radius-node` 10 · `--radius-pill` 999. Themes override these wholesale — Greek/Edo/Cyber/Wasteland/Plague/Surveillance go to **0** across the board.
+Radii `--radius-sm` 4 · `--radius-md` 6 · `--radius-lg` 8 · `--radius-xl` 12 · `--radius-node` 10 · `--radius-pill` 999. In the live app each theme overrides `--radius-sm/md/lg/pill` (Edo, Cyber, Wasteland, Plague and Surveillance go to 0; Greek keeps a 2px `--radius-lg`), but no theme overrides `--radius`, `--radius-xl` or `--radius-node`. The Tailwind `rounded-sm/md/lg/xl` utilities are computed from `--radius` in `index.css`, so they stay 4/6/8/12px in every theme; a skin's radii reach `rounded-pill`, the Home radii (`--radius-row|card|panel|draft|composer`) and any CSS that reads `var(--radius-*)` directly.
 Fixed chrome: `--h-toolbar` 48 · `--h-statusbar` 24 · `--h-control` 32 · `--w-sidebar` 280 · `--w-palette` 320.
 
 ### Shadows & motion

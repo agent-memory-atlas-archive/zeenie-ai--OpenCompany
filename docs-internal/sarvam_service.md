@@ -248,10 +248,13 @@ faithful treatment.
 | Icon mark | `#FFFFFF` | The official white logo |
 | Node accent / palette group / catalogue | `#6A88E2` | Sarvam's interactive accent (their `#4250D5` → `#6A88E2` control gradient) |
 
-The navy is deliberately *not* reused as the node accent: `--node-color`
-drives the canvas node's border, and `#1E2033` is darker than the dark-theme
-canvas background, so the border would disappear. The accent blue reads on
-both light and dark surfaces.
+The navy is deliberately *not* reused as the node accent: `#1E2033` is
+darker than the dark-theme canvas background, so anything drawn in it there
+would disappear. The accent blue reads on both light and dark surfaces. (On
+the canvas itself the choice has no visible effect today: `sarvamChatModel`
+renders through `SquareNode`, which takes its border from the `--node-model`
+role token, not the plugin colour — see
+[theme_system.md → Canvas-node visual contract](./theme_system.md#canvas-node-visual-contract-w21).)
 
 ---
 

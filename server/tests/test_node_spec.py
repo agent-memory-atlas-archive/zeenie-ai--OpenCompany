@@ -1023,8 +1023,9 @@ class TestPluginContractInvariants:
             ), f"{t}: componentKind={spec.get('componentKind')!r} not in {self.VALID_KINDS}"
 
     def test_every_plugin_node_has_color(self):
-        # Color is the brand/accent each node owns. Without it the frontend
-        # can't render borders, glow, or top output handles consistently.
+        # Color is the brand/accent each node owns. The canvas uses it for
+        # the AI agent card (AIAgentNode reads the NodeSpec `color`); square,
+        # trigger and start nodes currently draw from role tokens instead.
         for t in self._plugin_types():
             spec = get_node_spec(t)
             color = spec.get("color")

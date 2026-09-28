@@ -168,7 +168,7 @@
   /* ── New-contract tokens (design_handoff_machinaos_themes) ──────────
    * Surface / foreground / semantic / typography / radius tokens
    * exposed as Tailwind utilities. Defined per-theme in client/src/
-   * themes/{light,dark,renaissance,cyber}.css — themes redefine the
+   * themes/<theme>.css (one file per theme) — themes redefine the
    * `--bg-app`, `--fg-default`, etc. CSS variables under
    * `:root[data-theme="..."]`; these `@theme inline` aliases give
    * Tailwind classes that resolve against whichever theme is active.
