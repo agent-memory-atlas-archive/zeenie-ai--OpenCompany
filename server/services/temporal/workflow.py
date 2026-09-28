@@ -404,10 +404,10 @@ class MachinaWorkflow:
         # session-keyed nodes (browser) share one instance per run instead
         # of minting a fresh uuid per call (node_executor.py fallback).
         execution_id = workflow_data.get("execution_id") or workflow.info().workflow_id
-        # Command attributes are part of Temporal Event History. Existing
-        # histories must keep the label-derived child ids they recorded;
-        # new histories use the root Temporal id + exact canvas node id so
-        # two same-label agents can start in the same graph execution.
+        # Dispatch flags come from the routing snapshot the starter froze
+        # into the workflow input (``_temporal_routing_v1``), never from
+        # Settings, so an environment change cannot alter how a run that
+        # is already in flight dispatches.
         frozen_routing = _frozen_routing_from_input(workflow_data)
 
         workflow.logger.info(f"Starting workflow orchestration: {len(nodes)} nodes, {len(edges)} edges")
@@ -615,11 +615,11 @@ class MachinaWorkflow:
                     # blocking on child completion). The handle is a
                     # Task-like with ``.done()`` so it slots into the same
                     # FIRST_COMPLETED loop as activity handles.
-                    # Patch-gated for replay safety. The legacy label-derived
-                    # id is preserved for histories recorded before
-                    # ``machina-agent-child-id-v2``. New runs use the actual
-                    # root Temporal workflow id plus the exact canvas node id;
-                    # labels are mutable and need not be unique.
+                    # Not patch-gated: every run, new or replayed, derives the
+                    # id from the actual root Temporal workflow id plus the
+                    # exact canvas node id (labels are mutable and need not
+                    # be unique). There is no ``workflow.patched`` marker
+                    # and no label-derived fallback for this id.
                     child_workflow_id = _agent_child_workflow_id(
                         workflow.info().workflow_id,
                         node_id,
@@ -656,8 +656,8 @@ class MachinaWorkflow:
                         activity_id=node_id,
                         # Heartbeat is the liveness mechanism (activities
                         # self-heartbeat every 30s); start_to_close only
-                        # bounds a single legitimate step. Pre-patch
-                        # histories replay against the old 10min cap.
+                        # bounds a single legitimate step. Unconditional:
+                        # no ``workflow.patched`` marker gates this value.
                         start_to_close_timeout=_NODE_ACTIVITY_START_TO_CLOSE,
                         heartbeat_timeout=timedelta(minutes=2),
                         retry_policy=activity_retry_policy,
@@ -749,9 +749,12 @@ class MachinaWorkflow:
             — F4.A per-type activity OR legacy fallback, depending on
             ``temporal_per_type_dispatch``.
 
-        New histories pass ``routing_snapshot`` from workflow input so no
-        mutable Settings value can alter their command shape. ``None`` is the
-        replay-only compatibility path for pre-patch histories.
+        ``MachinaWorkflow.run`` always passes ``routing_snapshot`` from the
+        workflow input (``_frozen_routing_from_input`` substitutes
+        ``_SAFE_FROZEN_ROUTING`` when the input carries none), so no mutable
+        Settings value can alter a run's command shape. ``None`` falls back
+        to reading Settings and is reached only by direct callers such as
+        unit tests.
         """
         if routing_snapshot is None:
             from core.config import Settings
@@ -801,26 +804,28 @@ class MachinaWorkflow:
     ) -> tuple[str, str | None]:
         """Resolve (activity_name, task_queue) for a node type.
 
-        F4.A: when ``settings.temporal_per_type_dispatch`` is on AND the
-        plugin class is registered, returns the per-type activity name
+        F4.A: when per-type dispatch is on AND the plugin class is
+        registered, returns the per-type activity name
         ``node.{type}.v{version}``.
 
-        Wave 16.3: the returned queue is ``cls.task_queue`` when
-        ``settings.temporal_worker_pool_enabled`` is on (each declared
-        queue then has a dedicated ``TemporalWorkerPool`` worker polling
-        it — wired in main.py right after the manager starts), or
-        ``None`` otherwise so the activity stays on the workflow's
-        default queue, which the single ``TemporalWorkerManager`` polls.
-        The flag is the rollback channel: flipping it off routes every
-        activity back to the manager worker without code changes.
+        Wave 16.3: the returned queue is ``cls.task_queue`` when the worker
+        pool is on (each declared queue then has a dedicated
+        ``TemporalWorkerPool`` worker polling it — started by
+        ``services/temporal/lifecycle.py::_start_execution_engine`` right
+        after the manager), or ``None`` otherwise so the activity stays on
+        the workflow's default queue, which the single
+        ``TemporalWorkerManager`` polls. The flag is the rollback channel,
+        but only for runs started after the flip: ``MachinaWorkflow.run``
+        passes both flags from the run's frozen routing snapshot, and only
+        an omitted argument falls back to reading Settings.
 
         Falls back to ``("execute_node_activity", None)`` when:
           - the flag is off (preserves pre-F4.A behavior exactly), OR
           - the node type isn't registered as a BaseNode subclass
             (covers legacy types still on the metadata-only path).
 
-        Determinism: lookups go through frozen module-level dicts
-        (``_NODE_CLASS_REGISTRY``, ``Settings``) — no I/O. Safe inside
+        Determinism: lookups go through the frozen module-level
+        ``_NODE_CLASS_REGISTRY`` and the caller-supplied flags — no I/O. Safe inside
         ``MachinaWorkflow.run`` per the workflow-definition contract.
         Imports are inside the method to keep the workflow module's
         top-level import set minimal and to avoid import-cycle drift.

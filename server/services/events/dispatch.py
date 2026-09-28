@@ -11,16 +11,17 @@ routes it to:
 
 2. **In-process FastAPI WebSocket clients** via direct
    ``status_broadcaster.broadcast()`` call. Worker + WS pool share
-   memory + event loop, so no IPC hop is needed (audit confirmed —
-   ``main.py:211-292``).
+   memory + event loop, so no IPC hop is needed (the ``main.py``
+   lifespan schedules ``services.temporal.lifecycle.run_temporal_lifecycle``
+   as an in-process task, and that task starts the workers).
 
 No EventDispatchWorkflow, no Redis Streams, no DLQ table. Temporal's
 Visibility + Signal API + Event History provide the durability primitives
 this function depends on; everything else is a thin pass-through.
 
-Behind ``Settings.event_framework_enabled`` (default off in Phase A).
-When disabled, :func:`emit` is a no-op pass-through that returns the
-envelope unchanged.
+Behind ``Settings.event_framework_enabled`` (default on since Wave 12;
+``EVENT_FRAMEWORK_ENABLED=false`` is the rollback). When disabled,
+:func:`emit` is a no-op pass-through that returns the envelope unchanged.
 """
 
 from __future__ import annotations
@@ -74,9 +75,9 @@ async def emit(
     Returns:
         The envelope unchanged — callers may chain.
 
-    Behaviour when ``Settings.event_framework_enabled=False`` (Phase A
-    default): pass-through no-op. Logged at DEBUG so opt-in dogfooding
-    is observable without flipping the flag globally.
+    Behaviour when ``Settings.event_framework_enabled=False`` (the
+    rollback setting; the default is True): pass-through no-op. Logged at
+    DEBUG so a rolled-back process is observable.
     """
     if not Settings().event_framework_enabled:
         logger.debug(
@@ -250,8 +251,9 @@ async def _signal_one(client, workflow_id: str, event: WorkflowEvent) -> None:
 async def _broadcast_in_process(event: WorkflowEvent, wire_routing_key: str) -> None:
     """Direct in-process WS fan-out via the status broadcaster.
 
-    Same asyncio event loop as the FastAPI handlers — see ``main.py:
-    211-292`` (TemporalWorkerManager starts as ``asyncio.create_task``).
+    Same asyncio event loop as the FastAPI handlers — the ``main.py``
+    lifespan schedules ``run_temporal_lifecycle`` with
+    ``asyncio.create_task``, and it starts the TemporalWorkerManager.
     Activity → broadcaster is a direct method call against in-memory
     ``Set[WebSocket]``; no IPC.
     """

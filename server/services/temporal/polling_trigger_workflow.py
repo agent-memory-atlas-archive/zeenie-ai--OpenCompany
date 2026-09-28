@@ -75,7 +75,8 @@ _HISTORY_SOFT_CAP = 10_000
 # interval burns ~100K+ history events/day. Mirrors the plugin-side
 # clamp (PollingTriggerNode.poll_interval_clamp) that the legacy
 # asyncio path applies but workflow payloads historically did not.
-# Timer durations are recorded commands, so the clamp rides the patch.
+# Applied unconditionally in ``run`` (no ``workflow.patched`` marker), as
+# is the identical floor in WorkflowControlWorkflow's polling path.
 _MIN_POLL_INTERVAL_S = 30
 
 

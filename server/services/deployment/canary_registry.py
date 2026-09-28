@@ -23,7 +23,7 @@ Membership semantics (set-shaped):
     register_canary_trigger_type("webhookTrigger", "com.opencompany.webhook.received")
     register_canary_trigger_type("chatTrigger", "com.opencompany.chat.message.received")
     is_canary_trigger_type("webhookTrigger")  # True
-    is_canary_trigger_type("whatsappReceive") # False (not yet opted in)
+    is_canary_trigger_type("twitterReceive")  # False (not opted in)
     cloudevent_type_for("webhookTrigger")     # "com.opencompany.webhook.received"
 
 Idempotent on re-import (multiple registrations of the same type with
