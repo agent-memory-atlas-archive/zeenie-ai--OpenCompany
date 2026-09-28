@@ -1,12 +1,14 @@
-"""Screenshot persistence shared by the two browser plugins.
+"""Screenshot persistence for the ``browser`` node.
 
-Both browser nodes historically leaked screenshots in shapes the platform
-cannot use: ``browser`` returned whatever agent-browser printed (a base64
-blob — a media-contract violation that also hits the 100 KB CLI-output
-truncation), and ``browserHarness`` returned an absolute path under its
-daemon tmp dir, which no HTTP route can serve. These helpers land the bytes
-in the workflow workspace via ``write_media(kind="image")`` so a screenshot
-becomes a ~400 B ``FileRef`` the Canvas board / gallery can display.
+The browser-use CLI writes a screenshot to a PNG under its per-profile tmp
+dir — an absolute host path no HTTP route can serve. ``persist_screenshot_file``
+copies it into the workflow workspace via ``write_media(kind="image")`` so a
+screenshot becomes a ~400 B ``FileRef`` the Canvas board / gallery can
+display; the caller then deletes the temporary file.
+
+``persist_screenshot_from_payload`` handles the retired agent-browser
+driver's inline-base64 payload shape. The current node does not call it;
+only its tests do.
 
 Every helper is TOLERANT by contract: an unrecognized payload shape, a
 missing workspace, or a write failure logs one warning and returns ``None``
@@ -120,11 +122,11 @@ def persist_screenshot_from_payload(
 def persist_screenshot_file(
     path_text: str, ctx: Any, *, contained_under: Path
 ) -> Optional[Dict[str, Any]]:
-    """A harness-printed screenshot path -> serialized FileRef.
+    """A browser-use CLI screenshot path -> serialized FileRef.
 
-    Reads ONLY files contained under the harness runtime dir — the printed
-    path is process output, not a trusted input, so this is not a generic
-    read-any-path helper.
+    Reads ONLY files contained under ``contained_under`` (the CLI's
+    per-profile tmp dir) — the path is process output, not a trusted
+    input, so this is not a generic read-any-path helper.
     """
     candidate = Path(str(path_text or "").strip())
     if not candidate.is_absolute():
@@ -134,7 +136,7 @@ def persist_screenshot_file(
         root = contained_under.resolve(strict=False)
         if not resolved.is_relative_to(root):
             logger.warning(
-                "[BrowserHarness] Screenshot path escapes the harness dir; not persisted"
+                "[Browser] Screenshot path escapes the CLI tmp dir; not persisted"
             )
             return None
     except OSError:
@@ -148,7 +150,7 @@ def persist_screenshot_file(
     try:
         payload = resolved.read_bytes()
     except OSError as exc:
-        logger.warning("[BrowserHarness] Could not read screenshot %s: %s", resolved, exc)
+        logger.warning("[Browser] Could not read screenshot %s: %s", resolved, exc)
         return None
     return _write_image(payload, ctx, ext=suffix, mime=mime)
 

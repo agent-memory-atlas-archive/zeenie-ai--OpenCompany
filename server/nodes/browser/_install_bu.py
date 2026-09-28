@@ -3,10 +3,11 @@
 ``uv tool install browser-use==<pin>`` into ``UV_TOOL_DIR`` /
 ``UV_TOOL_BIN_DIR``. The desktop app already sets both (next to the Python
 it bundles, so uninstalling the app cannot orphan the tool); anywhere else
-they default to ``<DATA_DIR>/packages/browser-use/{tools,bin}``. The install
-runs as an async subprocess with a timeout, never on the event loop, and a
-failure is retried after a cooldown. ``install.json`` records what was
-installed; a different pin reinstalls.
+they default to ``<DATA_DIR>/packages/browser-use/{tools,bin}`` (both
+variables must be set for the override to apply). The install runs as an
+async subprocess with a timeout, never on the event loop, and a failure is
+retried after a cooldown. ``opencompany-browser-use.json`` in the tool dir
+records what was installed; a different pin reinstalls.
 """
 
 from __future__ import annotations

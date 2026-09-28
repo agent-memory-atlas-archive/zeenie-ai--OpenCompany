@@ -47,9 +47,13 @@ version, platform checksums and the browser-use CLI pin live in
 [`server/config/browser_runtime.json`](../server/config/browser_runtime.json).
 Only testing mode installs Chrome under `<DATA_DIR>/packages/chrome-for-testing/`.
 Both modes install the pinned browser-use CLI through an isolated uv tool
-installation under `<DATA_DIR>/packages/browser-use/`, outside the shared Bun
-package tree. `uv` must be on PATH or selected by `OPENCOMPANY_UV_BIN`.
-Installation can outlive the open request; the workspace reports progress.
+installation under `<DATA_DIR>/packages/browser-use/{tools,bin}`, outside the
+shared Bun package tree. When both `UV_TOOL_DIR` and `UV_TOOL_BIN_DIR` are set
+(the desktop app sets them beside its bundled Python), the tool installs there
+instead. `opencompany-browser-use.json` in the tool directory records the
+installed pin; a different pin reinstalls. `uv` must be on PATH or selected by
+`OPENCOMPANY_UV_BIN`. Installation can outlive the open request; the workspace
+reports progress.
 
 Runtime settings are declared in
 [`server/core/config.py`](../server/core/config.py); stream diagnostics reads

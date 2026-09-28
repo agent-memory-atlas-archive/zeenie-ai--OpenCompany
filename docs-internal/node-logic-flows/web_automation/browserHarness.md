@@ -2,7 +2,7 @@
 
 `browserHarness` is no longer a registered node or agent tool. Use the current [Browser node flow](browser.md), [native browser architecture](../../browser.md), and [browser workspace](../../browser_workspace.md).
 
-The replacement `browser` node launches OpenCompany-managed Chrome with persistent owned profiles. The live viewer and human takeover use the native CDP path. Most agent/workflow operations still use the pinned browser-use CLI and its daemon internally; this dependency does not restore the old node or its real-Chrome attachment model.
+The replacement `browser` node launches the installed Chrome, Edge or Chromium (Chrome for Testing only with `BROWSER_RUNTIME=testing`) in persistent OpenCompany-owned profiles. The live viewer and human takeover use the native CDP path. Most agent/workflow operations still use the pinned browser-use CLI and its daemon internally; this dependency does not restore the old node or its real-Chrome attachment model.
 
 [Workflow migration](../../../server/services/workflow_migrations.py) rewrites saved `browserHarness` nodes to `browser`:
 
