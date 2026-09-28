@@ -3,20 +3,25 @@
 1. Read the request (hire_request.py); refuse one without its identity.
 2. Reserve the employee row under the owner's idempotency key. The same
    key again returns the employee that key made (a retry after a lost
-   response); the same key with a different payload is refused.
+   response); the same key with a different payload is refused; the same
+   key while its first attempt is still building is ``busy``. A row a
+   failed attempt left behind is resumed, and so is one still marked
+   building long after any attempt could be (the server stopped mid-way).
 3. Resolve the named apps against the registry (unknown ones are kept as
    unsupported, never blocking), pick the AI model, look up the owner's
    own addresses for reports and the skills that are on in their library,
    and build the graph (builder.py).
 4. Validate it exactly as a Start would (errors refuse the hire), save it
-   as a new workflow, attach it to the row, and announce the hire.
+   as a new workflow, attach it to the row with the apps the graph
+   actually uses (one left out, such as a tool that sends while they ask
+   first, never shows as an app to connect), and announce the hire.
 5. Start it in the background when nothing is missing (every app it uses
    connected, an AI model set up); otherwise it waits, and its card names
    what to connect.
 
 Response: ``{employee, started, missing_apps, needs_ai, unsupported_apps,
 warnings, idempotent}``. Errors: ``invalid_request``, ``too_large``,
-``conflict``, ``not_allowed``, ``build_failed``, ``save_failed``.
+``conflict``, ``busy``, ``not_allowed``, ``build_failed``, ``save_failed``.
 """
 
 from __future__ import annotations
@@ -24,7 +29,8 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-from typing import Any, Dict, List, Set
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, List, Optional, Set
 
 from fastapi import WebSocket
 from pydantic import ValidationError
@@ -47,9 +53,25 @@ logger = get_logger(__name__)
 #: Background starts, kept referenced so they are not garbage collected.
 _starts: Set["asyncio.Task[Any]"] = set()
 
+#: A hire builds and saves in seconds; a row still ``building`` after this
+#: was left by an attempt that never finished, and the next one takes over.
+BUILDING_STALE_AFTER = timedelta(minutes=2)
+
 
 def _fail(code: str, **extra: Any) -> Dict[str, Any]:
     return {"success": False, "error": code, **extra}
+
+
+def _still_building(row: Any) -> bool:
+    """Another attempt with this row's key is building the employee now."""
+    if row.hire_state != "building":
+        return False
+    since = row.updated_at or row.created_at
+    if since is None:
+        return True
+    if since.tzinfo is None:
+        since = since.replace(tzinfo=timezone.utc)
+    return datetime.now(timezone.utc) - since < BUILDING_STALE_AFTER
 
 
 def payload_hash(request: HireEmployeeRequest) -> str:
@@ -111,23 +133,15 @@ async def _library_skills(database: Any) -> List[LibrarySkill]:
     ]
 
 
-def _owner_profile(settings: Dict[str, Any]) -> OwnerProfile:
-    call = str(settings.get("profile_call_name") or "").strip()
-    full = str(settings.get("profile_full_name") or "").strip()
-    return OwnerProfile(
-        name=call or full,
-        role=str(settings.get("profile_role") or "").strip(),
-        preferences=str(settings.get("profile_preferences") or "").strip(),
-    )
-
-
-def _hire_fields(request: HireEmployeeRequest, apps: List[AppSpec], unsupported: List[str]) -> Dict[str, Any]:
+def _hire_fields(request: HireEmployeeRequest, unsupported: List[str]) -> Dict[str, Any]:
+    """The row's hire data. Its apps are set once the graph is built: only
+    the ones the graph uses count."""
     return {
         "role": request.role,
         "description": request.description,
         "job": request.job,
         "color_role": "agent",
-        "apps": [app.id for app in apps],
+        "apps": [],
         "unsupported_apps": unsupported,
         "plan": [step.model_dump(exclude_none=True) for step in request.steps if step.title],
         "rules": request.rules.model_dump(),
@@ -171,45 +185,33 @@ async def _response_for(database: Any, auth_service: Any, workflow_id: str, **ex
     }
 
 
-@ws_response
-async def handle_hire_employee(data: Dict[str, Any], websocket: WebSocket) -> Dict[str, Any]:
-    if len(json.dumps(data, default=str)) > MAX_REQUEST_BYTES:
-        return _fail("too_large")
-    try:
-        request = HireEmployeeRequest.model_validate(data)
-    except ValidationError:
-        return _fail("invalid_request")
-    missing = request.missing_identity()
-    if missing:
-        return _fail("invalid_request", detail=f"{missing} is required")
+async def _earlier_attempt(database: Any, auth_service: Any, row: Any, digest: str) -> Optional[Dict[str, Any]]:
+    """The answer for a key an earlier attempt used, or None to carry on (a
+    failed attempt, or one abandoned mid-build, is resumed)."""
+    if row.payload_hash and row.payload_hash != digest:
+        return _fail("conflict")
+    if row.hire_state == "ready" and row.workflow_id:
+        return await _response_for(database, auth_service, row.workflow_id, started=False, warnings=[], idempotent=True)
+    if _still_building(row):
+        return _fail("busy")
+    return None
 
-    from core.container import container
+
+async def _build_and_save(
+    database: Any,
+    auth_service: Any,
+    request: HireEmployeeRequest,
+    row_id: str,
+    *,
+    owner: str,
+    connections: Connections,
+    connected: List[str],
+    apps: List[AppSpec],
+    unsupported: List[str],
+) -> Dict[str, Any]:
     from services.node_allowlist import is_hire_allowed
     from services.workflow_storage.persist import PersistError, persist_new_workflow
     from services.workflow_validator import validate_workflow
-
-    database = container.database()
-    auth_service = container.auth_service()
-    owner = execution_principal(data, websocket)
-    digest = payload_hash(request)
-
-    existing = await store.get_by_idempotency_key(database, owner, request.idempotency_key)
-    if existing is not None:
-        if existing.payload_hash and existing.payload_hash != digest:
-            return _fail("conflict")
-        if existing.hire_state == "ready" and existing.workflow_id:
-            return await _response_for(database, auth_service, existing.workflow_id, started=False, warnings=[], idempotent=True)
-
-    connections = Connections(auth_service)
-    connected = await connections.connected_app_ids()
-    apps, unsupported = _resolve_apps(request, connected)
-    row, _created = await store.reserve(
-        database,
-        owner_id=owner,
-        idempotency_key=request.idempotency_key,
-        payload_hash=digest,
-        fields=_hire_fields(request, apps, unsupported),
-    )
 
     try:
         settings = await database.get_user_settings(SETTINGS_USER_ID) or {}
@@ -225,7 +227,7 @@ async def handle_hire_employee(data: Dict[str, Any], websocket: WebSocket) -> Di
                 apps=apps,
                 unsupported_apps=unsupported,
                 connected_app_ids=set(connected),
-                owner=_owner_profile(settings),
+                owner=OwnerProfile.from_settings(settings),
                 owner_values=await _owner_values(connections, auth_service),
                 timezone=str(settings.get("profile_timezone") or "UTC"),
                 llm=llm,
@@ -235,13 +237,13 @@ async def handle_hire_employee(data: Dict[str, Any], websocket: WebSocket) -> Di
             )
         )
     except BuildError as exc:
-        await store.mark_failed(database, row.id)
+        await store.mark_failed(database, row_id)
         logger.warning("Hire could not be built", code=exc.code)
         return _fail(exc.code)
 
     report = await validate_workflow(nodes=built.nodes, edges=built.edges, parameters_by_id=built.parameters)
     if report.get("errors"):
-        await store.mark_failed(database, row.id)
+        await store.mark_failed(database, row_id)
         logger.warning("Hire failed validation", codes=[issue.get("code") for issue in report["errors"]])
         return _fail("build_failed", report=report)
 
@@ -257,12 +259,12 @@ async def handle_hire_employee(data: Dict[str, Any], websocket: WebSocket) -> Di
             owner_id=owner,
         )
     except PersistError as exc:
-        await store.mark_failed(database, row.id)
+        await store.mark_failed(database, row_id)
         return _fail(exc.code)
 
     # Ids are canonical already; map through any alias the save made anyway.
     roles = {role: persisted.aliases.get(node_id, node_id) for role, node_id in built.node_roles.items()}
-    ready = await store.mark_ready(database, row.id, workflow_id=persisted.workflow_id, node_roles=roles)
+    ready = await store.mark_ready(database, row_id, workflow_id=persisted.workflow_id, node_roles=roles)
     if ready is not None:
         await store.update_employee(
             database,
@@ -270,7 +272,7 @@ async def handle_hire_employee(data: Dict[str, Any], websocket: WebSocket) -> Di
             {
                 "llm": {"provider": llm.provider, "model": llm.model} if llm else {},
                 "trigger": built.trigger,
-                "apps": built.app_ids or [app.id for app in apps],
+                "apps": built.app_ids,
             },
         )
 
@@ -288,10 +290,61 @@ async def handle_hire_employee(data: Dict[str, Any], websocket: WebSocket) -> Di
         trigger=built.trigger.get("kind"),
         delivery=built.delivery,
         started=started,
-        apps=len(apps),
+        apps=len(built.app_ids),
         unsupported=len(unsupported),
     )
     return {**response, "started": started}
+
+
+@ws_response
+async def handle_hire_employee(data: Dict[str, Any], websocket: WebSocket) -> Dict[str, Any]:
+    if len(json.dumps(data, default=str)) > MAX_REQUEST_BYTES:
+        return _fail("too_large")
+    try:
+        request = HireEmployeeRequest.model_validate(data)
+    except ValidationError:
+        return _fail("invalid_request")
+    missing = request.missing_identity()
+    if missing:
+        return _fail("invalid_request", detail=f"{missing} is required")
+
+    from core.container import container
+
+    database = container.database()
+    auth_service = container.auth_service()
+    owner = execution_principal(data, websocket)
+    digest = payload_hash(request)
+
+    existing = await store.get_by_idempotency_key(database, owner, request.idempotency_key)
+    if existing is not None:
+        answer = await _earlier_attempt(database, auth_service, existing, digest)
+        if answer is not None:
+            return answer
+
+    connections = Connections(auth_service)
+    connected = await connections.connected_app_ids()
+    apps, unsupported = _resolve_apps(request, connected)
+    row, created = await store.reserve(
+        database,
+        owner_id=owner,
+        idempotency_key=request.idempotency_key,
+        payload_hash=digest,
+        fields=_hire_fields(request, unsupported),
+    )
+    if not created:
+        # The row an earlier attempt reserved, perhaps since the lookup above.
+        answer = await _earlier_attempt(database, auth_service, row, digest)
+        if answer is not None:
+            return answer
+
+    try:
+        return await _build_and_save(
+            database, auth_service, request, row.id, owner=owner, connections=connections, connected=connected, apps=apps, unsupported=unsupported
+        )
+    except Exception:
+        # A retry resumes a failed row; one left "building" would answer busy.
+        await store.mark_failed(database, row.id)
+        raise
 
 
 __all__ = ["handle_hire_employee", "payload_hash"]

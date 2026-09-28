@@ -1,35 +1,37 @@
 /**
- * Listens for backend-pushed `workflow_ops_apply` events and applies
- * them to the live React Flow canvas via the standard
- * `applyOperations` reconciler.
+ * The two listeners for backend-pushed `workflow_ops_apply` batches
+ * (server/services/workflow_ops.py `broadcast_workflow_ops`).
  *
- * Source of events: `services/status_broadcaster.send_custom_event`
- * called by the Agent Builder's tool functions
- * (`server/nodes/tool/agent_builder.py`) after a successful mutation.
+ * `useWorkflowOpsListener`, mounted in Dashboard, applies a batch for the
+ * open workflow to the live React Flow canvas:
+ *   - a batch the server already saved (`persisted: true`: the Agent
+ *     Builder, Turn on Talk) is adopted with the server's ids, and nothing
+ *     is saved again (a re-save would replace the rows the server merged);
+ *   - any other goes through `applyOperations`, which saves its rows;
+ *   - a batch for another workflow shows a toast naming who changed.
  *
- * Filtering:
- *   - Events whose `workflow_id` matches the current workflow apply
- *     to the canvas in-place.
- *   - Events for OTHER workflows (e.g. `create_workflow` returning a
- *     fresh id) surface as a sonner toast with a Switch action so the
- *     user can jump to the new workflow without losing their place.
- *
- * Mounted once in Dashboard.
+ * `useSavedGraphSync`, mounted once in the app shell, adopts saved batches
+ * into the app store's copy of the workflow the editor holds, on either
+ * screen, and puts their parameter rows in the parameter cache. Without it
+ * a workflow left open in Dev while Home is showing keeps its old graph,
+ * and the editor's next save replaces the server's additions.
  */
 
 import { useEffect } from 'react';
 import type { Node, Edge } from 'reactflow';
 import { toast } from 'sonner';
+import { useQueryClient } from '@tanstack/react-query';
 
-import { useWebSocket } from '../contexts/WebSocketContext';
+import { useWebSocket, useWebSocketActions, type NodeParameters } from '../contexts/WebSocketContext';
 import { useAppStore } from '../store/useAppStore';
-import { applyOperations, type WorkflowOperation } from '../lib/workflowOps';
-
-interface WorkflowOpsApplyEvent {
-  workflow_id?: string | null;
-  caller_node_id?: string | null;
-  operations?: WorkflowOperation[];
-}
+import {
+  addSavedEdges,
+  addSavedNodes,
+  applyOperations,
+  type WorkflowOpsApplyEvent,
+} from '../lib/workflowOps';
+import { WORKFLOWS_QUERY_KEY, type SavedWorkflow } from './useWorkflowsQuery';
+import { nodeParamsQueryKey } from './useNodeParamsQuery';
 
 interface UseWorkflowOpsListenerProps {
   nodes: Node[];
@@ -46,28 +48,27 @@ export function useWorkflowOpsListener({
 }: UseWorkflowOpsListenerProps) {
   const { addEventListener, saveNodeParameters } = useWebSocket();
   const currentWorkflowId = useAppStore(s => s.currentWorkflow?.id);
-  const loadWorkflow = useAppStore(s => s.loadWorkflow);
+  const queryClient = useQueryClient();
 
   useEffect(() => {
     const unsubscribe = addEventListener('workflow_ops_apply', (raw: WorkflowOpsApplyEvent) => {
       const ops = raw?.operations ?? [];
-      if (ops.length === 0 && !raw?.workflow_id) return;
+      if (ops.length === 0) return;
 
-      // Different workflow -- surface a toast with a switch action.
-      // Used by `create_workflow`, which persists a new workflow but
-      // doesn't try to mutate the canvas the user is currently on.
+      // Another workflow changed (an employee adding a tool from Talk).
       if (raw.workflow_id && raw.workflow_id !== currentWorkflowId) {
-        toast.message('New workflow created', {
-          description: `Workflow ${raw.workflow_id} is ready.`,
-          action: {
-            label: 'Switch',
-            onClick: () => loadWorkflow(raw.workflow_id!),
-          },
-        });
+        const name = queryClient
+          .getQueryData<SavedWorkflow[]>(WORKFLOWS_QUERY_KEY)
+          ?.find(workflow => workflow.id === raw.workflow_id)?.name;
+        toast.message(`${name ?? 'An employee'} updated their tools`);
         return;
       }
 
-      if (ops.length === 0) return;
+      if (raw.persisted) {
+        setNodes(ns => addSavedNodes(ns, ops));
+        setEdges(es => addSavedEdges(es, ops));
+        return;
+      }
 
       void applyOperations(ops, {
         workflowId: currentWorkflowId,
@@ -85,7 +86,28 @@ export function useWorkflowOpsListener({
 
     return unsubscribe;
   }, [
-    addEventListener, currentWorkflowId, loadWorkflow,
+    addEventListener, currentWorkflowId, queryClient,
     nodes, edges, setNodes, setEdges, saveNodeParameters,
   ]);
+}
+
+export function useSavedGraphSync(): void {
+  const { addEventListener } = useWebSocketActions();
+  const queryClient = useQueryClient();
+
+  useEffect(() => addEventListener('workflow_ops_apply', (raw: WorkflowOpsApplyEvent) => {
+    if (!raw?.persisted || !raw.workflow_id) return;
+    const ops = raw.operations ?? [];
+    for (const op of ops) {
+      if (op.type !== 'add_node' && op.type !== 'set_node_parameters') continue;
+      // Either carries the node's whole row as saved: a new node's, or a merged one.
+      const nodeId = op.type === 'add_node' ? op.minted_id : op.node_id;
+      if (!nodeId) continue;
+      queryClient.setQueryData<NodeParameters | null>(nodeParamsQueryKey(nodeId), prev => ({
+        parameters: op.parameters,
+        version: (prev?.version ?? 0) + 1,
+      }));
+    }
+    useAppStore.getState().adoptSavedOperations(raw.workflow_id, ops);
+  }), [addEventListener, queryClient]);
 }

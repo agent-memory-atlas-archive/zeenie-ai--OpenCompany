@@ -15,6 +15,7 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { disposeOrb } from '../features/home/orb/orb';
 import { useSoundSync } from '../hooks/useSound';
 import { useSaveUserSettingsMutation } from '../hooks/useUserSettingsQuery';
+import { useSavedGraphSync } from '../hooks/useWorkflowOpsListener';
 import { useShellDialogsStore } from '../stores/shellDialogsStore';
 import { useWorkflowSettingsStore } from '../stores/workflowSettingsStore';
 import { ShellModeSwitch } from './ShellModeSwitch';
@@ -32,6 +33,8 @@ function ShellEffects() {
   useSoundSync();
   usePageActivitySync();
   useCurrentWorkflowSync();
+  // Server-saved canvas changes reach the editor's copy on either screen.
+  useSavedGraphSync();
   useUIDefaultsOnce();
   useModeShortcut();
   // Home's orb keeps its renderer across mode switches; free it with the app.

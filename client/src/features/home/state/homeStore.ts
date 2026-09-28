@@ -1,8 +1,9 @@
 /**
  * Normal mode's UI state: which view is showing, the sidebar, the Settings
- * dialog, the Workspace dock, and the one-shot "look here" signals (a
- * sidebar row's glow, the logo pulse) that the hire choreography fires.
- * Server data lives in TanStack Query (features/home/data), never here.
+ * dialog, the guided "Connect an AI model" dialog, the Workspace dock, and
+ * the one-shot signals the hire choreography fires (a sidebar row's glow,
+ * the logo pulse, what a hire could not set up as asked). Server data lives
+ * in TanStack Query (features/home/data), never here.
  */
 
 import { z } from 'zod';
@@ -53,6 +54,15 @@ function saveWorkspacePrefs(state: HomeState): void {
   }
 }
 
+/** What a hire could not set up as asked (a tool left out while they ask
+ *  first, a skill an employee cannot be given), shown on the new
+ *  employee's page until the owner dismisses it or moves on. */
+export interface HireNotice {
+  workflowId: string;
+  name: string;
+  warnings: string[];
+}
+
 function loadSidebarOpen(): boolean {
   try {
     return localStorage.getItem(SIDEBAR_KEY) !== 'false';
@@ -75,6 +85,10 @@ interface HomeState {
   logoPulse: number;
   /** Bumped to ask the composer to take focus. */
   composerFocus: number;
+  /** The guided "Connect an AI model" dialog (connectAI/ConnectAIDialog). */
+  connectAIOpen: boolean;
+  /** What the last hire said, for its employee's page (hire/HireNotice). */
+  hireNotice: HireNotice | null;
   /** The Workspace dock. Open, width and tab persist; the rest is this
    *  session's. */
   workspaceOpen: boolean;
@@ -92,6 +106,9 @@ interface HomeState {
   setSettingsTab: (tab: SettingsTab) => void;
   glowRow: (workflowId: string) => void;
   pulseLogo: () => void;
+  openConnectAI: () => void;
+  closeConnectAI: () => void;
+  setHireNotice: (notice: HireNotice | null) => void;
   /** The composer took the focus it was asked for; a remount must not
    *  take it again. */
   consumeComposerFocus: () => void;
@@ -114,6 +131,8 @@ export const useHomeStore = create<HomeState>((set, get) => ({
   glow: null,
   logoPulse: 0,
   composerFocus: 0,
+  connectAIOpen: false,
+  hireNotice: null,
   workspaceOpen: workspace.open,
   workspaceWidth: workspace.widthPx,
   workspaceTab: workspace.tab,
@@ -124,8 +143,14 @@ export const useHomeStore = create<HomeState>((set, get) => ({
     set((state) => ({
       view: { kind: 'hire' },
       composerFocus: options?.focus ? state.composerFocus + 1 : state.composerFocus,
+      hireNotice: null,
     })),
-  showEmployee: (workflowId) => set({ view: { kind: 'employee', workflowId }, workspaceFor: workflowId }),
+  showEmployee: (workflowId) =>
+    set((state) => ({
+      view: { kind: 'employee', workflowId },
+      workspaceFor: workflowId,
+      hireNotice: state.hireNotice?.workflowId === workflowId ? state.hireNotice : null,
+    })),
   toggleSidebar: () =>
     set((state) => {
       const next = !state.sidebarOpen;
@@ -145,6 +170,12 @@ export const useHomeStore = create<HomeState>((set, get) => ({
   glowRow: (workflowId) =>
     set((state) => ({ glow: { workflowId, nonce: (state.glow?.nonce ?? 0) + 1 } })),
   pulseLogo: () => set((state) => ({ logoPulse: state.logoPulse + 1 })),
+  openConnectAI: () => {
+    if (!get().connectAIOpen) spikeOrb(SPIKE.connect);
+    set({ connectAIOpen: true });
+  },
+  closeConnectAI: () => set({ connectAIOpen: false }),
+  setHireNotice: (notice) => set({ hireNotice: notice }),
   consumeComposerFocus: () => set((state) => (state.composerFocus === 0 ? state : { composerFocus: 0 })),
   openWorkspace: (workflowId) => {
     if (!get().workspaceOpen) spikeOrb(SPIKE.workspace);

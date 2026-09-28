@@ -21,6 +21,7 @@ import { z } from 'zod';
 import Prism from 'prismjs';
 import 'prismjs/components/prism-json';
 import { ChevronDown, Columns2, Send } from 'lucide-react';
+import { toast } from 'sonner';
 import { useWebSocket, ConsoleLogEntry } from '../../contexts/WebSocketContext';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -286,7 +287,9 @@ const ConsolePanel: React.FC<ConsolePanelProps> = ({
       await sendChatMessage(message, selectedChatTriggerId || undefined);
       setChatInput('');
     } catch (error) {
-      console.error('Failed to send chat message:', error);
+      // Nothing listens while the workflow is stopped, so the server saved nothing.
+      if (error instanceof Error && error.message === 'not_running') toast.error('Start this workflow to chat with it.');
+      else console.error('Failed to send chat message:', error);
     } finally {
       setIsSending(false);
     }

@@ -1,6 +1,6 @@
 """Employee summaries: every workflow is an employee, hired or built in the
-editor, with status, task text, apps and control from the same sources the
-editor reads."""
+editor, with status, task text, apps, control and Talk from the same
+sources the editor reads."""
 
 from __future__ import annotations
 
@@ -15,6 +15,9 @@ from services.employees.summaries import (
     list_employee_summaries,
     schedule_text,
 )
+from services.graph_build import main_edge
+from services.workflow_migrations import normalize_workflow_graph
+from services.workflow_sanitizer import sanitize_workflow_graph
 
 
 class FakeAuth:
@@ -313,3 +316,97 @@ async def test_an_editor_workflow_shows_its_canvas_and_none_means_no_board(real_
     summaries = {s["workflow_id"]: s for s in await list_employee_summaries(real_database, auth_service=FakeAuth(keys={"openai"}))}
     assert summaries["7"]["canvas_node_id"] == "7:canvas:1"
     assert summaries["8"]["canvas_node_id"] is None
+
+
+# ----- Talk, asking first, changes waiting for a restart -----
+
+
+def talking(workflow_id, *extra_nodes, reply=True):
+    """Chat -> Sam (-> Reply in Chat), with canonical ids."""
+    nodes = [
+        node(f"{workflow_id}:chatTrigger:1", "chatTrigger", "Chat"),
+        node(f"{workflow_id}:aiAgent:1", "aiAgent", "Sam"),
+        *extra_nodes,
+    ]
+    edges = [main_edge(f"{workflow_id}:chatTrigger:1", f"{workflow_id}:aiAgent:1").to_dict()]
+    if reply:
+        nodes.append(node(f"{workflow_id}:chatReply:1", "chatReply", "Reply in Chat"))
+        edges.append(main_edge(f"{workflow_id}:aiAgent:1", f"{workflow_id}:chatReply:1").to_dict())
+    return {"nodes": nodes, "edges": edges}
+
+
+def snapshot(workflow_id, data):
+    """The graph a Start admits (normalized and sanitized)."""
+    return sanitize_workflow_graph(normalize_workflow_graph(workflow_id, data["nodes"], data["edges"]).graph_data())
+
+
+async def test_talk_is_read_off_the_saved_graph_when_nothing_runs(real_database):
+    await save(real_database, "20", "Sam", talking("20"))
+    await save(real_database, "21", "Quiet", talking("21", reply=False))
+    await save(real_database, "22", "Maya", RECEPTIONIST)
+    summaries = {s["workflow_id"]: s for s in await list_employee_summaries(real_database, auth_service=FakeAuth(keys={"openai"}))}
+    assert summaries["20"]["talk"] == {"state": "on", "agent_node_id": "20:aiAgent:1"}
+    assert summaries["21"]["talk"] == {"state": "off", "agent_node_id": None}
+    assert summaries["22"]["talk"] == {"state": "off", "agent_node_id": None}
+    assert summaries["20"]["pending_changes"] is False
+    assert summaries["20"]["task"]["text"] == "Ready to start"
+    detail = await get_employee_detail(real_database, "20", auth_service=FakeAuth(keys={"openai"}))
+    assert detail["trigger_text"] == "When you message them"
+
+
+async def test_a_hired_employee_watches_its_talk_agent_too(real_database):
+    data = talking("23")
+    data["nodes"].insert(0, node("23:aiAgent:2", "aiAgent", "Worker"))
+    data["nodes"].insert(0, node("23:writeTodos:1", "writeTodos", "Checklist"))
+    await save(real_database, "23", "Sam", data)
+    await _hired(real_database, "23", {"agent": "23:aiAgent:2", "todos": "23:writeTodos:1", "talk_agent": "23:aiAgent:1"})
+    summary = await get_employee_summary(real_database, "23", auth_service=FakeAuth(keys={"openai"}))
+    assert summary["watch_node_ids"] == ["23:aiAgent:2", "23:writeTodos:1", "23:aiAgent:1"]
+    assert summary["talk"]["agent_node_id"] == "23:aiAgent:1"
+
+
+async def test_talk_follows_the_live_generation_and_changes_wait_for_a_restart(real_database):
+    # Talk was turned on in the saved graph, but the running generation
+    # started before it: nobody answers yet, and a restart is waiting.
+    await save(real_database, "24", "Sam", talking("24"))
+    await control(real_database, "24", "running", graph_snapshot=snapshot("24", talking("24", reply=False)))
+    summary = await get_employee_summary(real_database, "24", auth_service=FakeAuth(keys={"openai"}))
+    assert summary["talk"] == {"state": "off", "agent_node_id": None}
+    assert summary["pending_changes"] is True
+
+    await control(real_database, "24", "running", generation=2, graph_snapshot=snapshot("24", talking("24")))
+    summary = await get_employee_summary(real_database, "24", auth_service=FakeAuth(keys={"openai"}))
+    assert summary["talk"] == {"state": "on", "agent_node_id": "24:aiAgent:1"}
+    assert summary["pending_changes"] is False
+    assert "24:aiAgent:1" in summary["watch_node_ids"]
+
+
+async def test_asking_first(real_database):
+    await save(real_database, "25", "Ask", RECEPTIONIST)
+    await hire(real_database, "25", rules={"ask_first": True})
+    await save(real_database, "26", "Free", RECEPTIONIST)
+    await hire(real_database, "26", rules={"ask_first": False})
+    await save(real_database, "27", "Unset", RECEPTIONIST)
+    await hire(real_database, "27")
+    await save(real_database, "28", "Gated", graph(node("28:aiAgent:1", "aiAgent"), node("28:approvalGate:1", "approvalGate")))
+    await save(real_database, "29", "Open", graph(node("29:aiAgent:1", "aiAgent")))
+    summaries = {s["workflow_id"]: s["asks_first"] for s in await list_employee_summaries(real_database, auth_service=FakeAuth())}
+    # A hire's rule, missing meaning on; built in the editor: an approval gate.
+    assert summaries == {"25": True, "26": False, "27": True, "28": True, "29": False}
+
+
+async def test_a_hired_employees_apps_are_the_ones_its_graph_uses(real_database):
+    # Hired naming Stripe, which asking first left out of the graph: no
+    # phantom "Connect Stripe to start".
+    await save(real_database, "30", "Maya", RECEPTIONIST)
+    await hire(real_database, "30", apps=["whatsapp", "stripe"])
+    summary = await get_employee_summary(real_database, "30", auth_service=FakeAuth(keys={"openai"}))
+    assert [a["app_id"] for a in summary["apps"]] == ["whatsapp"]
+    assert [a["app_id"] for a in summary["missing_apps"]] == ["whatsapp"]
+
+
+async def test_a_stopped_employee_points_at_dev_mode(real_database):
+    await save(real_database, "31", "Maya", RECEPTIONIST)
+    await control(real_database, "31", "failed")
+    summary = await get_employee_summary(real_database, "31", auth_service=FakeAuth(keys={"openai"}))
+    assert summary["task"] == {"label": "Paused", "text": "Stopped after a problem. Open it in Dev mode to see what happened."}

@@ -43,7 +43,9 @@ def test_catalogue_prompt_lists_every_component_and_action():
     prompt = catalog_prompt()
     catalog = load_genui_catalog()
     for name, spec in catalog["components"].items():
-        assert f"- {name} {spec['props']} — {spec['description']}" in prompt
+        line = f"- {name} {spec['props']} — {spec['description']}"
+        # The client inserts these itself; the model is never offered them.
+        assert (line not in prompt) if spec.get("inserted") else (line in prompt)
     for name, description in catalog["actions"].items():
         assert f"- {name} {description}" in prompt
     assert prompt.startswith('Reply ONLY with a JSON object, no code fences: {"text": string, "spec": UISpec}.')
@@ -58,6 +60,19 @@ def test_prompt_carries_the_additions():
     assert "actionParams {name, role, apps, trigger, sendsVia}" in prompt
     assert '"kind": "app_event"|"schedule"|"manual"' in prompt
     assert 'names it in "app"' in prompt
+
+
+def test_the_schedule_times_offered_are_the_ones_it_can_run():
+    times = "|".join(f'"{value}"' for value in load_genui_catalog()["trigger"]["times"])
+    assert f'"at"?: {times}' in catalog_prompt()
+
+
+def test_working_when_the_owner_messages_them_is_not_discouraged():
+    # Every employee can be talked to on Home, so a manual trigger is a
+    # choice like the others.
+    prompt = catalog_prompt()
+    assert '"manual" when the owner gives them work by messaging them' in prompt
+    assert "Prefer those" not in prompt and "only when the job is purely on request" not in prompt
 
 
 def test_system_prompt_ends_with_the_owner_context():

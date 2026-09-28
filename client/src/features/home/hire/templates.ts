@@ -1,17 +1,34 @@
 /**
  * Starter jobs (design handoff "Template chips" and Settings > Plugins).
- * One list, in starters.json, serves both: the chips under the composer
- * send a starter's job, and Plugins installs a starter (its skills into the
- * library, then its job to the setup model).
+ * One list, in starters.json, serves both: a chip puts a starter's job in
+ * the composer, and "Hire now" (on the chip, or a Plugins card) hires the
+ * starter as it stands, its skills into the library first.
  *
  * Each starter names the apps its job needs; the job text names them too,
  * since it is all the setup model reads. The skills are built-ins from the
- * employee folder. server/tests/test_home_catalog_contract.py checks both.
+ * employee folder. `hire` is the starter's own setup, the one "Hire now"
+ * sends (genui/hirePayload.ts starterHirePayload): a few names to pick an
+ * unused one from, the role, a one-line description, the routine, what
+ * starts the work and the app they answer through. It always asks first.
+ * server/tests/test_home_catalog_contract.py checks all of it, and that
+ * each starter builds that way without losing an app.
  */
 
 import { z } from 'zod';
 import { COLOR_ROLES } from '../data/schemas';
 import starters from './starters.json';
+
+const starterHireSchema = z.object({
+  names: z.array(z.string().min(1)).min(1),
+  role: z.string().min(1),
+  description: z.string().min(1),
+  steps: z
+    .array(z.object({ title: z.string().min(1), detail: z.string().optional(), role: z.string(), app: z.string().optional() }))
+    .min(1),
+  /** Snapped like the setup screen's before it is sent. */
+  trigger: z.record(z.string(), z.unknown()),
+  sends_via: z.string().optional(),
+});
 
 const starterSchema = z.object({
   id: z.string().min(1),
@@ -21,6 +38,7 @@ const starterSchema = z.object({
   job: z.string().min(1),
   apps: z.array(z.string().min(1)),
   skills: z.array(z.string().min(1)).min(1),
+  hire: starterHireSchema,
 });
 
 export type Starter = z.infer<typeof starterSchema>;

@@ -1,56 +1,45 @@
 /**
- * One employee (design handoff "Employee view"): who they are, what they
- * are doing now, the apps they use, how much they did today, and what to
- * do next (Pause, Resume, Start, or connect what they are missing).
+ * One employee (design handoff "Employee view"): their card, then the
+ * conversation with them (EmployeeTalk), whose message box stays pinned to
+ * the bottom of the page.
  *
  * The card shows the server's summary, which the server re-sends the
- * moment the control plane moves. Start / Pause / Resume send the
- * summary's control revision; after one returns, the button keeps its
- * "Pausing…" label until the summary has caught up with the new state (or
- * a few seconds pass and the list is refetched), so it never flashes the
- * old label in between. "Open workflow" opens this employee's graph in Dev
- * mode, and "Watch live" opens the Workspace on this employee ("Help in
- * browser", on its Browser tab, while the agent is waiting for the owner).
+ * moment the control plane moves: who they are, what they are doing now,
+ * the drafts waiting for the owner, the apps they use, how much they did
+ * today, and what to do next (Pause, Resume, Start, or connect what they
+ * are missing; useEmployeeControl, shared with the message box). "Watch
+ * live" opens the Workspace on this employee ("Help in browser", on its
+ * Browser tab, while the agent is waiting for the owner), and More opens
+ * their workflow in Dev mode.
  */
 
-import { useQueryClient } from '@tanstack/react-query';
-import { Code, Monitor } from 'lucide-react';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { Code, Ellipsis, Monitor } from 'lucide-react';
+import { useLayoutEffect, useRef, type RefObject } from 'react';
 import { ActionButton } from '@/components/ui/action-button';
 import { Button } from '@/components/ui/button';
-import { Skeleton } from '@/components/ui/skeleton';
 import {
-  mergeWorkflowControlStatus,
-  useWebSocketActions,
-  type WorkflowControlStatus,
-} from '@/contexts/WebSocketContext';
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { Skeleton } from '@/components/ui/skeleton';
 import { animate } from '@/lib/motion';
 import { cn } from '@/lib/utils';
-import { useWorkflowControlPending } from '@/stores/workflowControlStore';
 import { enterDev } from '../../../app/useShellActions';
-import { invalidateEmployees, useEmployeeDetailQuery, useEmployeesQuery } from '../data/employees';
+import { useEmployeeDetailQuery, useEmployeesQuery } from '../data/employees';
 import { useLiveTask } from '../data/liveTask';
-import { busyLabelFor, presentEmployee, primaryActionLabel, type PrimaryAction } from '../data/presentation';
+import { OPEN_IN_DEV_LABEL } from '../data/presentation';
 import type { EmployeeSummary } from '../data/schemas';
+import { HireNotice } from '../hire/HireNotice';
 import { OrbSlot } from '../orb/OrbSlot';
 import { SPIKE, spikeOrb } from '../orb/orb';
 import { useHomeStore } from '../state/homeStore';
-import { pillToast } from '../ui/pillToast';
 import { AppMark, Avatar, MicroLabel, StatusPill } from '../ui/primitives';
 import { DraftsSection } from './DraftsSection';
-
-/** How long a finished Start / Pause / Resume waits for the summary to catch up. */
-const SYNC_WAIT_MS = 4000;
-
-const CONTROL_ERRORS: Record<string, string> = {
-  control_revision_conflict: 'That changed a moment ago. Try again.',
-  missing_apps: 'Connect the apps they use first.',
-};
-
-function controlErrorMessage(error: unknown): string {
-  const message = error instanceof Error ? error.message : '';
-  return CONTROL_ERRORS[message] ?? 'That did not work. Try again.';
-}
+import { EmployeeTalk } from './EmployeeTalk';
+import { PrimaryActionButton } from './PrimaryActionButton';
+import { useEmployeeControl, type EmployeeControl } from './useEmployeeControl';
 
 function TaskBox({ employee }: { employee: EmployeeSummary }) {
   const live = useLiveTask(employee);
@@ -86,21 +75,39 @@ function TaskBox({ employee }: { employee: EmployeeSummary }) {
   );
 }
 
-type ControlKind = Extract<PrimaryAction['kind'], 'pause' | 'resume' | 'start'>;
+/** Less-used actions, out of the way: opening the workflow in the editor. */
+function MoreMenu({ workflowId }: { workflowId: string }) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="quiet" size="icon" aria-label="More" title="More" className="size-9 rounded-row border-border-strong text-fg-default">
+          <Ellipsis aria-hidden className="size-4" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-max">
+        <DropdownMenuItem onSelect={() => void enterDev({ workflowId })}>
+          <Code aria-hidden />
+          {OPEN_IN_DEV_LABEL}
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
 
-function EmployeeCard({ employee, onConnect }: { employee: EmployeeSummary; onConnect: (providerId: string) => void }) {
-  const pending = useWorkflowControlPending(employee.workflow_id);
-  const view = presentEmployee(employee, pending);
-  const actions = useWebSocketActions();
-  const queryClient = useQueryClient();
-  const openSettings = useHomeStore((s) => s.openSettings);
+function EmployeeCard({
+  employee,
+  control,
+  cardRef,
+}: {
+  employee: EmployeeSummary;
+  control: EmployeeControl;
+  cardRef: RefObject<HTMLDivElement | null>;
+}) {
   const openWorkspace = useHomeStore((s) => s.openWorkspace);
   const setWorkspaceTab = useHomeStore((s) => s.setWorkspaceTab);
   const helpInBrowser = employee.browser_request !== null;
-  const [running, setRunning] = useState<ControlKind | null>(null);
-  const [awaiting, setAwaiting] = useState<{ kind: ControlKind; target: WorkflowControlStatus } | null>(null);
-  const cardRef = useRef<HTMLDivElement>(null);
   const countRef = useRef<HTMLSpanElement>(null);
+  const { view } = control;
 
   // One more done today: the count bumps in green.
   const shownDone = useRef(employee.done_today);
@@ -118,57 +125,6 @@ function EmployeeCard({ employee, onConnect }: { employee: EmployeeSummary; onCo
       { duration: 700, fill: 'none' },
     );
   }, [employee.done_today]);
-
-  // Caught up once the summary's control is at least as new as the result.
-  const caughtUp = !awaiting || mergeWorkflowControlStatus(awaiting.target, employee.control) === employee.control;
-  const waiting = Boolean(awaiting) && !caughtUp;
-  useEffect(() => {
-    if (!waiting) return;
-    const timer = window.setTimeout(() => {
-      setAwaiting(null);
-      invalidateEmployees(queryClient);
-    }, SYNC_WAIT_MS);
-    return () => window.clearTimeout(timer);
-  }, [waiting, queryClient]);
-
-  const control = async (kind: ControlKind) => {
-    const { workflow_id: id, control: current } = employee;
-    setRunning(kind);
-    try {
-      const run =
-        kind === 'pause'
-          ? actions.pauseWorkflow(id, current.revision)
-          : kind === 'resume'
-            ? actions.resumeWorkflow(id, current.revision)
-            : actions.startEmployee(id, current.revision);
-      setAwaiting({ kind, target: await run });
-    } catch (error) {
-      pillToast(controlErrorMessage(error), { tone: 'error' });
-      if (error instanceof Error && error.message === 'control_revision_conflict') invalidateEmployees(queryClient);
-    } finally {
-      setRunning(null);
-    }
-  };
-
-  const act = () => {
-    const { primary } = view;
-    if (primary.kind === 'connect_app') onConnect(primary.app.provider_id);
-    else if (primary.kind === 'connect_ai') openSettings('connectors', 'ai');
-    else if (primary.kind === 'open_workflow') void enterDev({ workflowId: employee.workflow_id });
-    else {
-      animate(cardRef.current, [{ transform: 'scale(1)' }, { transform: 'scale(.97)', offset: 0.3 }, { transform: 'scale(1)' }], {
-        duration: 420,
-        easing: 'spring',
-        fill: 'none',
-      });
-      void control(primary.kind);
-    }
-  };
-
-  const inFlight = running ?? (waiting ? awaiting?.kind : null) ?? null;
-  const label = view.busyLabel ?? (inFlight ? busyLabelFor(inFlight) : primaryActionLabel(view.primary));
-  const busy = Boolean(pending) || Boolean(inFlight);
-  const quiet = view.primary.kind === 'pause' || view.primary.kind === 'open_workflow';
 
   return (
     <div
@@ -222,31 +178,7 @@ function EmployeeCard({ employee, onConnect }: { employee: EmployeeSummary; onCo
       )}
 
       <div className="flex flex-wrap gap-2">
-        {quiet ? (
-          <Button
-            variant="quiet"
-            disabled={busy}
-            onClick={act}
-            className="h-9 gap-2 rounded-row border-border-strong px-4 font-semibold text-fg-default"
-          >
-            {view.primary.kind === 'open_workflow' && !busy && <Code aria-hidden className="size-3.25" />}
-            {label}
-          </Button>
-        ) : (
-          <ActionButton intent="run" disabled={busy} onClick={act} className="h-9 rounded-row px-4">
-            {label}
-          </ActionButton>
-        )}
-        {view.primary.kind !== 'open_workflow' && (
-          <Button
-            variant="quiet"
-            onClick={() => void enterDev({ workflowId: employee.workflow_id })}
-            className="h-9 gap-2 rounded-row border-border-strong px-3.5 font-semibold text-fg-default"
-          >
-            <Code aria-hidden className="size-3.25" />
-            Open workflow
-          </Button>
-        )}
+        <PrimaryActionButton control={control} />
         <ActionButton
           intent="tools"
           onClick={() => {
@@ -258,8 +190,23 @@ function EmployeeCard({ employee, onConnect }: { employee: EmployeeSummary; onCo
           <Monitor aria-hidden className="size-3.5" />
           {helpInBrowser ? 'Help in browser' : 'Watch live'}
         </ActionButton>
+        {/* The primary button already opens Dev mode when it can do nothing else. */}
+        {view.primary.kind !== 'open_workflow' && <MoreMenu workflowId={employee.workflow_id} />}
       </div>
     </div>
+  );
+}
+
+function EmployeePage({ employee, onConnect }: { employee: EmployeeSummary; onConnect: (providerId: string) => void }) {
+  const cardRef = useRef<HTMLDivElement>(null);
+  const control = useEmployeeControl(employee, onConnect, cardRef);
+  return (
+    <section aria-label={employee.name} className="flex w-full max-w-(--w-employee-card) flex-1 flex-col items-center gap-4.5">
+      <OrbSlot size="employee" />
+      <EmployeeCard employee={employee} control={control} cardRef={cardRef} />
+      <HireNotice workflowId={employee.workflow_id} />
+      <EmployeeTalk employee={employee} control={control} />
+    </section>
   );
 }
 
@@ -300,12 +247,7 @@ export function EmployeeView({ workflowId, onConnect }: { workflowId: string; on
     );
   }
 
-  return (
-    <section aria-label={employee.name} className="flex w-full max-w-(--w-employee-card) flex-col items-center gap-4.5">
-      <OrbSlot size="employee" />
-      <EmployeeCard employee={employee} onConnect={onConnect} />
-    </section>
-  );
+  return <EmployeePage employee={employee} onConnect={onConnect} />;
 }
 
 export default EmployeeView;

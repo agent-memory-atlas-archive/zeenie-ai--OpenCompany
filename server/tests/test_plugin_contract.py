@@ -330,11 +330,11 @@ class TestNeedsCanvasContract:
         assert BaseNode.needs_canvas is False, "BaseNode.needs_canvas must default to False — only canvas-mutating " "plugins (agentBuilder) opt in to True"
 
     def test_agent_builder_opts_in(self):
-        """AgentBuilderNode walks edges to resolve its calling agent
-        and mutates the canvas. Without ``needs_canvas = True`` the
-        F4.B path drops the canvas and ``_resolve_caller`` falls back
-        to self-as-caller — newly-spawned tools wire to agentBuilder
-        instead of the parent AI Agent."""
+        """AgentBuilderNode reads the run's canvas (``ctx.nodes`` /
+        ``ctx.edges``) to tell a tool saved earlier but missing from the
+        running snapshot, which it binds for this run instead of adding
+        it again. Without ``needs_canvas = True`` the F4.B path drops the
+        canvas and every such tool looks new."""
         from nodes.tool.agent_builder import AgentBuilderNode
 
         assert AgentBuilderNode.needs_canvas is True

@@ -212,6 +212,17 @@
       },
       "width": 64,
       "height": 86
+    },
+    {
+      "id": "3:chatReply:1",
+      "position": {
+        "x": 1720,
+        "y": 240
+      },
+      "type": "chatReply",
+      "data": {
+        "label": "Reply in Chat"
+      }
     }
   ],
   "edges": [
@@ -347,6 +358,20 @@
       "targetHandle": "input-context",
       "data": {
         "systemManaged": true
+      }
+    },
+    {
+      "id": "e-3:claude_code_agent:1-output-main-3:chatReply:1-input-main",
+      "source": "3:claude_code_agent:1",
+      "sourceHandle": "output-main",
+      "target": "3:chatReply:1",
+      "targetHandle": "input-main",
+      "data": {
+        "condition": {
+          "field": "result.response",
+          "operator": "neq",
+          "value": "NO_REPLY"
+        }
       }
     }
   ],
@@ -558,6 +583,9 @@
       "cwd": "",
       "timeout": 30,
       "label": "Shell"
+    },
+    "3:chatReply:1": {
+      "message": "{{claudecode.response}}"
     }
   },
   "requirements": {
@@ -630,6 +658,10 @@
       {
         "type": "context",
         "version": 2
+      },
+      {
+        "type": "chatReply",
+        "version": 1
       }
     ]
   }

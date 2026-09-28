@@ -23,8 +23,10 @@ Neither the job text nor the model's reply is ever logged.
 
 Response: ``{success, draft_token, reply, provider, model, usage, retried,
 finish_reason, apps}`` where ``apps`` maps each app name the reply
-mentions (lower-cased) to an AppRef, so the client can connect "Gmail"
-without its own copy of the app registry. Failures: ``{success: false,
+mentions (lower-cased) to an AppRef plus ``can_trigger`` (the app can
+start the work), so the client can connect "Gmail" and offer "When
+something new arrives in Gmail" without its own copy of the app registry.
+Failures: ``{success: false,
 error}`` with error one of ``no_ai_provider``, ``timeout``,
 ``provider_error``, ``unparseable``, ``cancelled``, ``busy``,
 ``invalid_request``.
@@ -127,7 +129,8 @@ def reset_for_tests() -> None:
 
 
 async def _resolve_apps(connections: Connections, reply: str) -> Dict[str, Dict[str, Any]]:
-    """AppRefs for the app names the reply mentions."""
+    """AppRefs for the app names the reply mentions, each saying whether the
+    app can start the work (it has a trigger in the registry)."""
     names = app_names(reply)
     if not names:
         return {}
@@ -136,7 +139,7 @@ async def _resolve_apps(connections: Connections, reply: str) -> Dict[str, Dict[
     for name in names:
         app = resolve_app(name, connected)
         if app is not None:
-            refs[name.lower()] = await connections.app_ref(app)
+            refs[name.lower()] = {**await connections.app_ref(app), "can_trigger": app.trigger is not None}
         else:
             refs[name.lower()] = {
                 "app_id": "",
@@ -145,6 +148,7 @@ async def _resolve_apps(connections: Connections, reply: str) -> Dict[str, Dict[
                 "icon_ref": None,
                 "connected": False,
                 "supported": False,
+                "can_trigger": False,
             }
     return refs
 

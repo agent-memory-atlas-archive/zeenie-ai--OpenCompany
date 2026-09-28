@@ -820,6 +820,17 @@
       },
       "width": 64,
       "height": 86
+    },
+    {
+      "id": "2:chatReply:1",
+      "position": {
+        "x": 840,
+        "y": -840
+      },
+      "type": "chatReply",
+      "data": {
+        "label": "Reply in Chat"
+      }
     }
   ],
   "edges": [
@@ -1244,6 +1255,20 @@
       "target": "2:tool_agent:1",
       "targetHandle": "input-tools",
       "type": "step"
+    },
+    {
+      "id": "e-2:ai_employee:1-output-main-2:chatReply:1-input-main",
+      "source": "2:ai_employee:1",
+      "sourceHandle": "output-main",
+      "target": "2:chatReply:1",
+      "targetHandle": "input-main",
+      "data": {
+        "condition": {
+          "field": "result.response",
+          "operator": "neq",
+          "value": "NO_REPLY"
+        }
+      }
     }
   ],
   "createdAt": "2026-09-02T02:59:19.002Z",
@@ -2021,6 +2046,9 @@
       "scan_limit": 250,
       "categories": null,
       "label": "Task Manager"
+    },
+    "2:chatReply:1": {
+      "message": "{{aiemployee.response}}"
     }
   },
   "requirements": {
@@ -2298,6 +2326,10 @@
       {
         "type": "context",
         "version": 2
+      },
+      {
+        "type": "chatReply",
+        "version": 1
       }
     ]
   }

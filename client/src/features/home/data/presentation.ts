@@ -11,13 +11,22 @@
  * | working               | Working                   | Pause                           |
  * | ready                 | Ready                     | Connect {App} / Connect AI / Start |
  * | paused                | Paused                    | Resume                          |
- * | attention             | Needs attention           | Resume when possible, else Open workflow |
+ * | attention             | Needs attention           | Resume when possible, else Open in Dev mode |
  * | pending_approvals > 0 | Needs you (overrides pill) | (the drafts are the action)    |
  * | browser_request       | Needs you (overrides pill) | (Help in browser opens the Workspace) |
+ *
+ * The message box follows the control state the way the server's
+ * `send_chat_message` does (its `delivery`): a message goes now while the
+ * employee runs, starts or resumes, waits while it is paused or pausing,
+ * and cannot be sent otherwise.
  */
 
 import type { AppRef, ColorRole, EmployeeSummary } from './schemas';
-import type { WorkflowControlPendingMutation } from '@/contexts/WebSocketContext';
+import type {
+  WorkflowControlPendingMutation,
+  WorkflowControlState,
+  WorkflowControlStatus,
+} from '@/contexts/WebSocketContext';
 
 /** `live` is the Workspace's "watching now" pill, not an employee state. */
 export type StatusTone = 'working' | 'ready' | 'paused' | 'attention' | 'waiting' | 'live';
@@ -90,6 +99,9 @@ export function busyLabelFor(action: WorkflowControlPendingMutation['action']): 
   return BUSY[action];
 }
 
+/** Opening the employee's workflow in the editor. */
+export const OPEN_IN_DEV_LABEL = 'Open in Dev mode';
+
 export function primaryActionLabel(action: PrimaryAction): string {
   switch (action.kind) {
     case 'pause':
@@ -103,8 +115,51 @@ export function primaryActionLabel(action: PrimaryAction): string {
     case 'connect_ai':
       return 'Connect an AI model';
     case 'open_workflow':
-      return 'Open workflow';
+      return OPEN_IN_DEV_LABEL;
   }
+}
+
+// ----- the message box -----
+
+/** `send`: delivered now. `queue`: waits for Resume. `start`: nothing to send to yet. */
+export type TalkMode = 'send' | 'queue' | 'start';
+
+const TALK_MODE: Record<WorkflowControlState, TalkMode> = {
+  running: 'send',
+  starting: 'send',
+  resuming: 'send',
+  paused: 'queue',
+  pausing: 'queue',
+  never_started: 'start',
+  ready: 'start',
+  resetting: 'start',
+  failed: 'start',
+};
+
+export function talkMode(control: WorkflowControlStatus): TalkMode {
+  return TALK_MODE[control.state] ?? 'start';
+}
+
+/** The line above the message box, or null while messages go straight through.
+ *  `queued`: a message sent while paused is waiting. */
+export function talkNoticeText(mode: TalkMode, name: string, queued = false): string | null {
+  switch (mode) {
+    case 'send':
+      return null;
+    case 'queue':
+      return queued
+        ? `Your message is waiting. ${name} will read it when you resume them.`
+        : `${name} is paused. They’ll read your message when you resume them.`;
+    case 'start':
+      return `${name} isn’t running, so they can’t read messages right now.`;
+  }
+}
+
+/** Said before anything that restarts an employee (Turn on Talk, Apply): a
+ *  restart cancels the drafts waiting for the owner. */
+export function restartDraftsWarning(name: string, drafts: number): string {
+  const them = drafts === 1 ? 'it' : 'them';
+  return `${name} has ${drafts} ${drafts === 1 ? 'draft' : 'drafts'} waiting for you. Restarting throws ${them} away, so check ${them} first.`;
 }
 
 // ----- token classes (Tailwind scans these literals) -----

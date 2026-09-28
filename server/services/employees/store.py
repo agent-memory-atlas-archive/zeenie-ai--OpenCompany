@@ -1,4 +1,5 @@
-"""Employee rows (models.employees.Employee): reserve, finish, read, delete.
+"""Employee rows (models.employees.Employee): reserve, finish, read, update,
+delete.
 
 Functions take the ``Database`` and open their own session, like
 services.agent_context.conversation. They never import ``nodes/``.
@@ -6,7 +7,9 @@ services.agent_context.conversation. They never import ``nodes/``.
 The hire path is: ``reserve`` (a ``building`` row keyed by the owner's
 idempotency key) -> save the workflow -> ``mark_ready`` with its id. A
 retried Hire with the same key gets the same row back from ``reserve``;
-``created`` tells the caller whether it is the first attempt.
+``created`` tells the caller whether it is the first attempt. Parts added
+to the graph later (Turn on Talk) join ``node_roles`` through
+``merge_node_roles``.
 """
 
 from __future__ import annotations
@@ -133,6 +136,20 @@ async def mark_failed(database: Any, employee_id: str) -> None:
         await session.commit()
 
 
+async def merge_node_roles(database: Any, workflow_id: str, roles: Dict[str, str]) -> Optional[Employee]:
+    """Add node roles to a hired employee (parts added after the hire, such
+    as a talk line), keeping the others; one named again is replaced."""
+    async with database.get_session() as session:
+        result = await session.execute(select(Employee).where(Employee.workflow_id == workflow_id))
+        row = result.scalar_one_or_none()
+        if row is None:
+            return None
+        row.node_roles = {**(row.node_roles or {}), **roles}
+        row.updated_at = _utcnow()
+        await session.commit()
+        return row
+
+
 async def update_employee(database: Any, workflow_id: str, fields: Dict[str, Any]) -> Optional[Employee]:
     """Update hire data on an existing employee (a refined setup)."""
     values = _hire_fields(fields)
@@ -164,6 +181,7 @@ __all__ = [
     "list_by_workflow_ids",
     "mark_failed",
     "mark_ready",
+    "merge_node_roles",
     "reserve",
     "update_employee",
 ]

@@ -12,6 +12,7 @@ import {
 import type { ImportedWorkflow } from '../utils/workflowExport';
 import { workflowApi } from '../services/workflowApi';
 import { queryClient } from '../lib/queryClient';
+import { addSavedEdges, addSavedNodes, type WorkflowOperation } from '../lib/workflowOps';
 import { BRAND_STORAGE_KEYS, readAndMigrateStorageValue } from '../lib/brandStorage';
 import { WORKFLOWS_QUERY_KEY } from '../hooks/useWorkflowsQuery';
 
@@ -87,6 +88,12 @@ interface AppStore {
   loadWorkflow: (id: string) => Promise<void>;
   deleteWorkflow: (id: string) => Promise<boolean>;
   migrateCurrentWorkflow: () => Promise<void>;
+  /** Adopt a batch the server already saved (`workflow_ops_apply` with
+   *  `persisted: true`) into the open workflow, whichever screen shows.
+   *  Leaves `hasUnsavedChanges` and `lastModified` alone: nothing new
+   *  needs saving, and an open canvas is not reset. No-op for any other
+   *  workflow. */
+  adoptSavedOperations: (workflowId: string, operations: WorkflowOperation[]) => void;
 
   // UI actions
   setSelectedNode: (node: Node | null) => void;
@@ -380,6 +387,15 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
     invalidateWorkflowsList();
     return true;
+  },
+
+  adoptSavedOperations: (workflowId, operations) => {
+    const workflow = get().currentWorkflow;
+    if (!workflow || workflow.id !== workflowId) return;
+    const nodes = addSavedNodes(workflow.nodes, operations);
+    const edges = addSavedEdges(workflow.edges, operations);
+    if (nodes === workflow.nodes && edges === workflow.edges) return;
+    set({ currentWorkflow: { ...workflow, nodes, edges } });
   },
 
   migrateCurrentWorkflow: async () => {

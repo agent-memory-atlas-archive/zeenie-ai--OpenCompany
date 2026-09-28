@@ -15,7 +15,7 @@ import asyncio
 import uuid
 import weakref
 from typing import Dict, Any, Callable, Awaitable, Optional, Set
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from services.status_broadcaster import get_status_broadcaster
@@ -1077,36 +1077,26 @@ async def handle_get_ai_models(data: Dict[str, Any], websocket: WebSocket) -> Di
 
 @ws_handler("message")
 async def handle_send_chat_message(data: Dict[str, Any], websocket: WebSocket) -> Dict[str, Any]:
-    """Handle chat message from console panel - dispatches to chatTrigger nodes.
+    """Send a chat message to a workflow's chatTrigger nodes, and keep it in
+    the workflow's thread (services/chat_thread.py).
 
-    This handler receives messages from the frontend chat panel and dispatches
-    them as 'chat_message_received' events to any waiting chatTrigger nodes.
-    Also saves the message to database for persistence across restarts.
+    A workflow's session (``session_id`` = its id) takes a message only
+    while a deployment would read it: the response's ``delivery`` is
+    ``"now"`` while it runs, ``"queued"`` while it is paused (it runs on
+    Resume). Otherwise the answer is ``not_running`` and nothing is saved
+    or sent. Session ``"default"`` (no workflow open) is saved and
+    broadcast to every deployment, as it always was.
     """
     # Wave 12 B7: route through chat_trigger plugin _events.py wrapper —
     # the chat_message_received event wire shape lives with the plugin,
     # not in this central WS router.
     from nodes.trigger.chat_trigger._events import dispatch_chat_message_received
+    from services.chat_thread import delivery_for, record_chat_message
 
     message = data["message"]
     role = data.get("role", "user")
     session_id = data.get("session_id", "default")
-    timestamp = data.get("timestamp") or datetime.now().isoformat()
-
-    # Save to database for persistence
-    database = container.database()
-    control = await database.get_latest_workflow_control(session_id)
-    execution_id = (
-        control.root_execution_id
-        if control is not None and control.status != "reset"
-        else None
-    )
-    await database.add_chat_message(
-        session_id, role, message, execution_id=execution_id,
-    )
-
-    # Build event data matching chatTrigger output schema
-    event_data = {"message": message, "timestamp": timestamp, "session_id": session_id}
+    timestamp = data.get("timestamp") or datetime.now(timezone.utc).isoformat()
 
     # Chat is inherently workflow-scoped: the panel is bound to ONE
     # workflow and its ``session_id`` IS that workflow's id ("default"
@@ -1119,6 +1109,19 @@ async def handle_send_chat_message(data: Dict[str, Any], websocket: WebSocket) -
     # dispatch — the plugin factory only carries the field.
     workflow_scope = session_id if session_id and session_id != "default" else None
 
+    database = container.database()
+    delivery = None
+    if workflow_scope is not None:
+        delivery = delivery_for(await database.get_latest_workflow_control(session_id))
+        if delivery is None:
+            return {"success": False, "error": "not_running"}
+
+    # Kept in the thread, stamped with the live generation.
+    await record_chat_message(database, session_id, role, message)
+
+    # Build event data matching chatTrigger output schema
+    event_data = {"message": message, "timestamp": timestamp, "session_id": session_id}
+
     # Dispatch via canary CloudEvents path — Visibility-query Signal
     # fan-out to running TriggerListenerWorkflow consumers + in-process
     # WS broadcast on ``chat_message_received``.
@@ -1126,24 +1129,37 @@ async def handle_send_chat_message(data: Dict[str, Any], websocket: WebSocket) -
 
     logger.info(f"[ChatMessage] Dispatched canary event for session={session_id}")
 
-    return {"success": True, "message": "Chat message sent", "timestamp": timestamp}
+    response = {"success": True, "message": "Chat message sent", "timestamp": timestamp}
+    if delivery is not None:
+        response["delivery"] = delivery
+    return response
 
 
 @ws_handler()
 async def handle_get_chat_messages(data: Dict[str, Any], websocket: WebSocket) -> Dict[str, Any]:
-    """Get chat messages from database for a session."""
+    """A session's messages, oldest first, the newest ``limit`` of them:
+    ``{id, role, message, timestamp, run_key}``. ``run_key`` is the
+    generation the message was written in. The live generation's only,
+    unless ``all_generations`` (Home's thread, which spans restarts)."""
     session_id = data.get("session_id", "default")
     limit = data.get("limit")  # Optional limit
 
     database = container.database()
-    control = await database.get_latest_workflow_control(session_id)
-    if control is not None and control.status == "reset":
-        messages = []
+    if data.get("all_generations"):
+        rows = await database.get_chat_messages(session_id, limit)
     else:
-        messages = await database.get_chat_messages(
-            session_id, limit,
-            execution_id=control.root_execution_id if control is not None else None,
-        )
+        control = await database.get_latest_workflow_control(session_id)
+        if control is not None and control.status == "reset":
+            rows = []
+        else:
+            rows = await database.get_chat_messages(
+                session_id, limit,
+                execution_id=control.root_execution_id if control is not None else None,
+            )
+    messages = [
+        {"id": row["id"], "role": row["role"], "message": row["message"], "timestamp": row["timestamp"], "run_key": row["execution_id"]}
+        for row in rows
+    ]
 
     return {"success": True, "messages": messages, "session_id": session_id}
 
@@ -1151,10 +1167,10 @@ async def handle_get_chat_messages(data: Dict[str, Any], websocket: WebSocket) -
 @ws_handler()
 async def handle_clear_chat_messages(data: Dict[str, Any], websocket: WebSocket) -> Dict[str, Any]:
     """Clear all chat messages for a session."""
-    session_id = data.get("session_id", "default")
+    from services.chat_thread import clear_chat_thread
 
-    database = container.database()
-    count = await database.clear_chat_messages(session_id)
+    session_id = data.get("session_id", "default")
+    count = await clear_chat_thread(container.database(), session_id)
 
     return {"success": True, "message": f"Cleared {count} chat messages", "cleared_count": count}
 
@@ -1226,20 +1242,10 @@ async def handle_clear_console_logs(data: Dict[str, Any], websocket: WebSocket) 
 @ws_handler("message", "role")
 async def handle_save_chat_message(data: Dict[str, Any], websocket: WebSocket) -> Dict[str, Any]:
     """Save a single chat message (used for assistant responses)."""
-    message = data["message"]
-    role = data["role"]
-    session_id = data.get("session_id", "default")
+    from services.chat_thread import record_chat_message
 
-    database = container.database()
-    control = await database.get_latest_workflow_control(session_id)
-    success = await database.add_chat_message(
-        session_id, role, message,
-        execution_id=(
-            control.root_execution_id
-            if control is not None and control.status != "reset"
-            else None
-        ),
-    )
+    session_id = data.get("session_id", "default")
+    success = await record_chat_message(container.database(), session_id, data["role"], data["message"])
 
     return {"success": success, "message": "Chat message saved" if success else "Failed to save chat message"}
 

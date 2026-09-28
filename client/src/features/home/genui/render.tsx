@@ -7,19 +7,46 @@
  * read through the catalogue's schema, so an odd value degrades one prop.
  * Each element sits in its own error boundary: one that throws disappears
  * and the rest of the screen stays.
+ *
+ * When they work (Schedule) reads as one plain sentence; Edit offers only
+ * what the hire can build: the owner messaging them, a schedule at the
+ * times it can run, or a new message in one of the apps the server says can
+ * start the work. Once the owner changes it, the routine's "When" step
+ * follows.
  */
 
-import { Component, createContext, Fragment, useCallback, useContext, useLayoutEffect, useRef, type ReactNode } from 'react';
+import {
+  Component,
+  createContext,
+  Fragment,
+  useCallback,
+  useContext,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 import { ActionButton } from '@/components/ui/action-button';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { animate } from '@/lib/motion';
 import { cn } from '@/lib/utils';
 import { MicroLabel } from '../ui/primitives';
-import { PROP_SCHEMAS, type ComponentType, type PropsOf, type StepRole, type Tone } from './catalog';
-import { bindingPath, evalCondition, resolveValue, type UiState } from './expressions';
+import { PROP_SCHEMAS, STATE_PATHS, type ComponentType, type PropsOf, type StepRole, type Tone } from './catalog';
+import { bindingPath, evalCondition, getPath, resolveValue, type UiState } from './expressions';
+import {
+  LAST_MONTH_DAY,
+  SCHEDULE_EVERY,
+  SCHEDULE_TIMES,
+  WEEKDAYS,
+  routineSteps,
+  snapTrigger,
+  triggerSentence,
+  type HireTrigger,
+} from './hirePayload';
 import type { NormalizedSpec, SpecElement } from './normalize';
 
 interface SpecContextValue {
@@ -28,6 +55,8 @@ interface SpecContextValue {
   revealed: ReadonlySet<string>;
   onAction: (action: string, rawParams: unknown) => void;
   onValue: (path: string, value: unknown) => void;
+  /** Apps that can start the work: any name the reply used -> the app's own name. */
+  triggerApps: Readonly<Record<string, string>>;
 }
 
 const SpecContext = createContext<SpecContextValue | null>(null);
@@ -85,7 +114,17 @@ const STEP_TONE: Record<StepRole, string> = {
     'border-node-workflow-edge bg-linear-135/srgb from-node-workflow-fill to-bg-elevated shadow-[0_0_18px_var(--node-workflow-soft)]',
 };
 
-const STEP_LABEL: Record<StepRole, string> = { trigger: 'When', agent: 'Agent', tool: 'Uses', workflow: 'Then' };
+const STEP_LABEL: Record<StepRole, string> = { trigger: 'When', agent: 'They', tool: 'Using', workflow: 'Then' };
+
+const EVERY_LABEL: Record<NonNullable<HireTrigger['every']>, string> = {
+  hour: 'Every hour',
+  day: 'Every day',
+  weekday: 'Weekdays',
+  week: 'Every week',
+  month: 'Every month',
+};
+
+const MONTH_DAYS = Array.from({ length: LAST_MONTH_DAY }, (_, index) => String(index + 1));
 
 const STACK_GAP = { sm: 'gap-2', md: 'gap-3', lg: 'gap-4.5' } as const;
 
@@ -236,18 +275,27 @@ function PlanStep({ step }: { step: PropsOf<'Plan'>['steps'][number] }) {
   );
 }
 
+/** The app's own name, when the reply's name for it is one that can start the work. */
+function appNameOf(trigger: HireTrigger, triggerApps: Readonly<Record<string, string>>): string | undefined {
+  return trigger.app ? (triggerApps[trigger.app.toLowerCase()] ?? trigger.app) : undefined;
+}
+
 function PlanView({ props }: { props: PropsOf<'Plan'> }) {
   const enter = useEnter<HTMLDivElement>();
+  const { spec, state, triggerApps } = useSpec();
+  const current = snapTrigger(getPath(state, STATE_PATHS.trigger));
+  const written = snapTrigger(getPath(spec.state, STATE_PATHS.trigger));
+  const steps = routineSteps(props.steps, written, current, appNameOf(current, triggerApps));
   return (
     <div ref={enter} className="flex min-w-0 flex-col gap-3.5 rounded-card border border-border-default bg-bg-elevated p-4">
       <div className="flex items-center gap-2">
-        <span className="text-lead font-semibold text-fg-default">{props.title || 'Automation'}</span>
+        <span className="text-lead font-semibold text-fg-default">{props.title || 'Their routine'}</span>
         <span className="ml-auto font-mono text-2xs text-fg-faint">
-          {props.steps.length} {props.steps.length === 1 ? 'step' : 'steps'}
+          {steps.length} {steps.length === 1 ? 'step' : 'steps'}
         </span>
       </div>
       <div className="flex min-w-0 items-stretch overflow-x-auto overflow-y-hidden pb-1 [scrollbar-width:thin]">
-        {props.steps.map((step, index) => (
+        {steps.map((step, index) => (
           <Fragment key={index}>
             {index > 0 && (
               <div aria-hidden className="flex w-5.5 shrink-0 items-center">
@@ -258,6 +306,152 @@ function PlanView({ props }: { props: PropsOf<'Plan'> }) {
           </Fragment>
         ))}
       </div>
+    </div>
+  );
+}
+
+function ScheduleField({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <span className="text-xs font-medium text-fg-muted">{label}</span>
+      {children}
+    </div>
+  );
+}
+
+function SchedulePicker({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string | undefined;
+  options: readonly { value: string; label: string }[];
+  onChange: (value: string) => void;
+}) {
+  return (
+    <Select value={value} onValueChange={onChange}>
+      <SelectTrigger aria-label={label} className="min-w-28 rounded-lg bg-bg-app text-fg-default dark:bg-bg-app">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {options.map((option) => (
+          <SelectItem key={option.value} value={option.value}>
+            {option.label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
+function ScheduleView({ props, raw }: { props: PropsOf<'Schedule'>; raw: SpecElement['props'] }) {
+  const enter = useEnter<HTMLDivElement>();
+  const { onValue, triggerApps } = useSpec();
+  const [editing, setEditing] = useState(false);
+  const path = bindingPath(raw.value);
+  const trigger = snapTrigger(props.value);
+  const appName = appNameOf(trigger, triggerApps);
+  const apps = [...new Set(Object.values(triggerApps))];
+  const change = (next: HireTrigger) => path && onValue(path, snapTrigger(next));
+  const starts = trigger.kind === 'app_event' ? `app:${appName ?? ''}` : trigger.kind;
+  const pickStart = (value: string) => {
+    if (value === 'manual' || value === 'schedule') change({ kind: value });
+    else change({ kind: 'app_event', app: value.slice('app:'.length) });
+  };
+  return (
+    <div ref={enter} className="flex flex-col gap-3 rounded-card border border-border-default bg-bg-elevated p-4">
+      <div className="flex items-center gap-3">
+        <div className="flex min-w-0 flex-1 flex-col gap-1">
+          <MicroLabel>When they work</MicroLabel>
+          <span className="text-base font-medium text-fg-default">{triggerSentence(trigger, appName)}</span>
+        </div>
+        {path && (
+          <Button
+            variant="quiet"
+            aria-expanded={editing}
+            onClick={() => setEditing((on) => !on)}
+            className="h-8 rounded-lg border-border-strong px-3 font-semibold text-fg-default"
+          >
+            {editing ? 'Done' : 'Edit'}
+          </Button>
+        )}
+      </div>
+      {editing && path && (
+        <div className="flex flex-col gap-3 border-t border-border-default pt-3">
+          <ScheduleField label="What starts their work">
+            <ToggleGroup
+              type="single"
+              variant="chips"
+              aria-label="What starts their work"
+              value={starts}
+              onValueChange={(next) => next && pickStart(next)}
+              className="flex-wrap gap-1.5"
+            >
+              <ToggleGroupItem value="manual">When you message them</ToggleGroupItem>
+              <ToggleGroupItem value="schedule">On a schedule</ToggleGroupItem>
+              {apps.map((app) => (
+                <ToggleGroupItem key={app} value={`app:${app}`}>
+                  When something new arrives in {app}
+                </ToggleGroupItem>
+              ))}
+            </ToggleGroup>
+          </ScheduleField>
+          {trigger.kind === 'schedule' && (
+            <>
+              <ScheduleField label="How often">
+                <ToggleGroup
+                  type="single"
+                  variant="segmented"
+                  aria-label="How often"
+                  value={trigger.every ?? ''}
+                  onValueChange={(next) => next && change({ ...trigger, every: next as HireTrigger['every'] })}
+                  className="flex-wrap self-start"
+                >
+                  {SCHEDULE_EVERY.map((every) => (
+                    <ToggleGroupItem key={every} value={every} className="border-0">
+                      {EVERY_LABEL[every]}
+                    </ToggleGroupItem>
+                  ))}
+                </ToggleGroup>
+              </ScheduleField>
+              {trigger.every !== 'hour' && (
+                <div className="flex flex-wrap gap-4">
+                  {trigger.every === 'week' && (
+                    <ScheduleField label="On">
+                      <SchedulePicker
+                        label="Day of the week"
+                        value={trigger.day}
+                        options={WEEKDAYS.map((day) => ({ value: day, label: `${day.charAt(0).toUpperCase()}${day.slice(1)}` }))}
+                        onChange={(day) => change({ ...trigger, day })}
+                      />
+                    </ScheduleField>
+                  )}
+                  {trigger.every === 'month' && (
+                    <ScheduleField label="On day">
+                      <SchedulePicker
+                        label="Day of the month"
+                        value={trigger.day}
+                        options={MONTH_DAYS.map((day) => ({ value: day, label: day }))}
+                        onChange={(day) => change({ ...trigger, day })}
+                      />
+                    </ScheduleField>
+                  )}
+                  <ScheduleField label="At">
+                    <SchedulePicker
+                      label="Time"
+                      value={trigger.at}
+                      options={SCHEDULE_TIMES.map((time) => ({ value: time, label: time }))}
+                      onChange={(at) => change({ ...trigger, at })}
+                    />
+                  </ScheduleField>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -508,6 +702,8 @@ function renderLeaf(type: ComponentType, props: unknown, raw: SpecElement['props
       return <BadgeView props={props as PropsOf<'Badge'>} />;
     case 'Plan':
       return <PlanView props={props as PropsOf<'Plan'>} />;
+    case 'Schedule':
+      return <ScheduleView props={props as PropsOf<'Schedule'>} raw={raw} />;
     case 'AgentCard':
       return <AgentCardView props={props as PropsOf<'AgentCard'>} />;
     case 'List':
@@ -540,15 +736,9 @@ function SpecNode({ id }: { id: string }) {
   return <ElementBoundary>{renderLeaf(element.type, parsed.data, element.props, children)}</ElementBoundary>;
 }
 
-export function SpecView({
-  spec,
-  state,
-  revealed,
-  onAction,
-  onValue,
-}: SpecContextValue) {
+export function SpecView({ spec, state, revealed, onAction, onValue, triggerApps }: SpecContextValue) {
   return (
-    <SpecContext.Provider value={{ spec, state, revealed, onAction, onValue }}>
+    <SpecContext.Provider value={{ spec, state, revealed, onAction, onValue, triggerApps }}>
       <div className="flex min-w-0 flex-col gap-3">
         <SpecNode id={spec.root} />
       </div>

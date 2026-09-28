@@ -1,10 +1,18 @@
 """A hired employee's standing instructions (the agent's ``system_message``).
 
 Written once at hire time from what the setup screen captured and the
-owner's profile; the owner can edit it later in Dev mode like any agent's
-instructions. At most ``MAX_CHARS`` characters: when the owner's words run
-long, they are shortened, never the ground rules or the delivery rules
-that follow them.
+owner's profile (and again for a talk agent added later, from the saved
+employee: ``request_from_employee``); the owner can edit it later in Dev
+mode like any agent's instructions. At most ``MAX_CHARS`` characters: when
+the owner's words run long, they are shortened, never the ground rules or
+the delivery rules that follow them.
+
+Delivery ``talk`` is for the agent that answers the owner in Talk (a chat
+hire's worker, or the talk agent beside any other worker): its answer
+goes straight to the owner. With the Agent Builder tool it may add tools
+and skills when the owner asks. A workflow built in the editor has no hire
+to write from, so its talk agent gets the worker's own instructions plus
+``talk_addendum``.
 
 Everything that came from a person or a model (the job, names, rules,
 preferences) has its ``{{`` and ``}}`` broken up first: the agent's
@@ -16,7 +24,7 @@ node's output into the instructions.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List, Literal, Optional, Sequence
+from typing import Any, List, Literal, Mapping, Optional, Sequence
 
 # NO_REPLY: the agent answers exactly this when a message needs no reply;
 # the builder's delivery edges only fire on anything else.
@@ -26,7 +34,7 @@ from services.employees.hire_request import HireEmployeeRequest
 MAX_CHARS = 8000
 
 
-Delivery = Literal["reply", "report", "chat"]
+Delivery = Literal["reply", "report", "talk"]
 
 
 def neutralize_templates(text: str) -> str:
@@ -40,13 +48,42 @@ class OwnerProfile:
     role: str = ""
     preferences: str = ""
 
+    @classmethod
+    def from_settings(cls, settings: Mapping[str, Any]) -> "OwnerProfile":
+        """Settings > Profile: the name they go by, else their full name."""
+        call = str(settings.get("profile_call_name") or "").strip()
+        full = str(settings.get("profile_full_name") or "").strip()
+        return cls(
+            name=call or full,
+            role=str(settings.get("profile_role") or "").strip(),
+            preferences=str(settings.get("profile_preferences") or "").strip(),
+        )
+
+
+def request_from_employee(employee: Any, name: str) -> HireEmployeeRequest:
+    """A saved employee (models.employees.Employee) as the hire it came
+    from, to write instructions for it again."""
+    return HireEmployeeRequest.model_validate(
+        {
+            "idempotency_key": employee.idempotency_key or employee.id,
+            "name": name,
+            "role": employee.role,
+            "job": employee.job,
+            "description": employee.description,
+            "steps": list(employee.plan or []),
+            "rules": dict(employee.rules or {}),
+            "choices": list(employee.choices or []),
+            "trigger": dict(employee.trigger or {}) or None,
+        }
+    )
+
 
 @dataclass
 class PromptInputs:
     request: HireEmployeeRequest
     owner: OwnerProfile = field(default_factory=OwnerProfile)
     #: How the answer goes out: a reply to whoever wrote in, a report to the
-    #: owner, or the owner's own chat.
+    #: owner, or straight to the owner in Talk.
     delivery: Delivery = "report"
     #: The app the answer goes out through ("WhatsApp"), if any.
     delivery_app: Optional[str] = None
@@ -60,6 +97,8 @@ class PromptInputs:
     has_browser: bool = False
     #: The browser may only read pages (ask-first employees).
     browser_read_only: bool = False
+    #: The Agent Builder tool, to add tools and skills when the owner asks.
+    has_builder: bool = False
 
 
 def _clean(text: str) -> str:
@@ -110,7 +149,12 @@ def _rules(inputs: PromptInputs, owner: str) -> List[str]:
     request = inputs.request
     subject = "The owner" if owner == "the owner" else owner
     out = ["Ground rules:"]
-    if request.rules.ask_first:
+    if request.rules.ask_first and inputs.delivery == "talk":
+        out.append(
+            f"- {subject} checks everything before it goes out, so you cannot send or spend anything for them. When "
+            "something should go out, write it for them to send."
+        )
+    elif request.rules.ask_first:
         out.append(
             f"- {subject} checks everything before it goes out: what you write is shown to them as a draft, and "
             "they send it or discard it. Write every answer ready to send."
@@ -134,8 +178,8 @@ def _rules(inputs: PromptInputs, owner: str) -> List[str]:
             "- If a message needs no reply (spam, an automated notice, a thank-you that ends the conversation), "
             f"answer exactly {NO_REPLY} and nothing else."
         )
-    elif inputs.delivery == "chat":
-        out.append(f"- {subject} talks to you in Chat. Answer them there, directly.")
+    elif inputs.delivery == "talk":
+        out.append(f"- {subject} talks to you in Talk. Your answer goes straight to them, so answer them directly.")
     else:
         out.append(f"- Your final answer is your report to {owner}, sent{via}. Lead with what matters; keep it short.")
         out.append(f"- If there is nothing worth reporting this time, answer exactly {NO_REPLY} and nothing else.")
@@ -170,6 +214,16 @@ def _rules(inputs: PromptInputs, owner: str) -> List[str]:
                 f"- Before anything on a site that spends money, sends something for {owner} or cannot be undone, "
                 f"call request_user so {owner} can check it, unless they already told you to go ahead."
             )
+    if inputs.has_builder:
+        out.append(
+            f"- When {owner} asks you to take on something you have no tool or skill for, add it with the agent_builder "
+            "tool: call inspect_canvas first to see what you can add, and add only what they asked for."
+        )
+        if request.rules.ask_first:
+            out.append(
+                f"- While {owner} asks you to check with them first, you cannot add anything that sends or spends. If "
+                "they ask for that, tell them so plainly."
+            )
     if inputs.unsupported_apps:
         names = ", ".join(_clean(name) for name in inputs.unsupported_apps)
         out.append(
@@ -189,4 +243,23 @@ def build_system_message(inputs: PromptInputs) -> str:
     return f"{head}\n\n{tail}"
 
 
-__all__ = ["MAX_CHARS", "NO_REPLY", "OwnerProfile", "PromptInputs", "build_system_message", "neutralize_templates"]
+def talk_addendum(owner: str) -> str:
+    """Added to a worker's own instructions for the talk agent copied from
+    it (a workflow built in the editor)."""
+    who = _clean(owner) or "the owner"
+    return (
+        f"\n\nHere you are not doing your usual work: {who} is talking to you in Talk. Your answer goes straight to "
+        "them, so answer them directly."
+    )
+
+
+__all__ = [
+    "MAX_CHARS",
+    "NO_REPLY",
+    "OwnerProfile",
+    "PromptInputs",
+    "build_system_message",
+    "neutralize_templates",
+    "request_from_employee",
+    "talk_addendum",
+]

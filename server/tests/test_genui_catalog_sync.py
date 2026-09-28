@@ -87,6 +87,26 @@ def test_trigger_lists_match():
     manifest = load_genui_catalog()
     assert _string_list(source, "TRIGGER_KINDS") == manifest["trigger"]["kinds"]
     assert _string_list(source, "SCHEDULE_EVERY") == manifest["trigger"]["every"]
+    assert _string_list(source, "SCHEDULE_TIMES") == manifest["trigger"]["times"]
+
+
+def test_schedule_choices_are_the_ones_the_builder_runs():
+    """The setup screen offers only times and weekdays the employee's
+    schedule can run at, so what the owner picks is never moved to another
+    on the way in (services/employees/builder.py snaps anything else)."""
+    from services.employees.builder import SCHEDULE_TIMES, WEEKDAYS
+
+    assert load_genui_catalog()["trigger"]["times"] == list(SCHEDULE_TIMES)
+    assert sorted(_string_list(_source(HIRE_PAYLOAD_TS), "WEEKDAYS")) == sorted(WEEKDAYS)
+
+
+def test_inserted_components_are_plain_leaves(manifest):
+    """The client inserts these itself; neither the model nor the rules
+    card's control filing may own them."""
+    inserted = [name for name, spec in manifest["components"].items() if spec.get("inserted")]
+    assert inserted == ["Schedule"]
+    for name in inserted:
+        assert name not in manifest["container_types"] and name not in manifest["control_types"]
 
 
 def test_every_component_has_a_prop_schema(catalog_ts):

@@ -1,7 +1,8 @@
 /**
  * The hire view (design handoff "Hire view"): the orb, a greeting, the
- * question, the composer, starter jobs, and the new employee's setup
- * screen once the owner has described one.
+ * question, the composer, starter jobs (each can also be hired as it
+ * stands), and the new employee's setup screen once the owner has
+ * described one.
  *
  * The hero rises in on arrival (every `[data-intro]` element, staggered).
  */
@@ -11,16 +12,18 @@ import { stagger } from '@/lib/motion';
 import { useConnectors } from '../data/connectors';
 import { useEmployeesQuery } from '../data/employees';
 import { callName, useOwnerSettings } from '../data/profile';
-import { HireDraftPanel, useHireComposer } from '../genui';
+import { HireDraftPanel, useHireComposer, useStarterHire } from '../genui';
 import { ENERGY, setEnergyTarget } from '../orb/orb';
 import { OrbSlot } from '../orb/OrbSlot';
 import { useHomeStore } from '../state/homeStore';
 import { Composer } from './Composer';
 import { greetingFor } from './greeting';
 import { TemplateChips } from './TemplateChips';
+import { HIRE_TEMPLATES } from './templates';
 
 export function HireView({ onConnect }: { onConnect: (providerId: string) => void }) {
   const composer = useHireComposer();
+  const starterHire = useStarterHire();
   const { connectedApps } = useConnectors();
   const { data: employees } = useEmployeesQuery();
   const { data: settings } = useOwnerSettings();
@@ -53,6 +56,7 @@ export function HireView({ onConnect }: { onConnect: (providerId: string) => voi
   const working = employees?.filter((employee) => employee.status === 'working').length ?? 0;
   const name = callName(settings);
   const apps = connectedApps.map((provider) => ({ id: provider.id, name: provider.name, icon_ref: provider.icon_ref }));
+  const picked = HIRE_TEMPLATES.find((template) => template.job === composer.value.trim()) ?? null;
 
   return (
     <div ref={rootRef} className="flex w-full flex-col items-center">
@@ -91,7 +95,12 @@ export function HireView({ onConnect }: { onConnect: (providerId: string) => voi
         onFocusChange={setFocused}
         maxLength={2000}
       />
-      <TemplateChips onPick={(template) => composer.pick(template.job)} disabled={composer.working} />
+      <TemplateChips
+        picked={picked}
+        onPick={(template) => composer.pick(template.job)}
+        onHireNow={(template) => void starterHire.hire(template)}
+        disabled={composer.working}
+      />
       <HireDraftPanel onConnect={onConnect} />
     </div>
   );

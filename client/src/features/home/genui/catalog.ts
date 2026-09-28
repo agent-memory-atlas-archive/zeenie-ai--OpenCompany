@@ -23,6 +23,7 @@ export const COMPONENT_TYPES = [
   'Metric',
   'Badge',
   'Plan',
+  'Schedule',
   'AgentCard',
   'List',
   'Draft',
@@ -38,7 +39,8 @@ export type ComponentType = (typeof COMPONENT_TYPES)[number];
 /** Components that lay out children; every other component is a leaf. */
 export const CONTAINER_TYPES = ['Stack', 'Grid', 'Card'] as const;
 
-/** Controls that write to UI state through `{"$bindState": "/path"}`. */
+/** Controls that write to UI state through `{"$bindState": "/path"}`.
+ *  Schedule writes one too, but the normalizer places it itself. */
 export const CONTROL_TYPES = ['Toggle', 'Choice', 'Input'] as const;
 
 export const ACTION_TYPES = ['setState', 'hire_employee', 'refine', 'connect_app', 'open_connectors'] as const;
@@ -59,6 +61,7 @@ export const STATE_PATHS = {
   askFirst: '/rules/askFirst',
   choices: '/choices',
   inputs: '/inputs',
+  trigger: '/trigger',
 } as const;
 
 export const ASK_FIRST_LABEL = 'Ask me before sending anything';
@@ -138,6 +141,8 @@ export const PROP_SCHEMAS = {
   Metric: z.object({ label: line(60), value: line(40), hint: optionalLine(), tone }),
   Badge: z.object({ label: line(40), tone }),
   Plan: z.object({ title: optionalLine(60), steps: listOf(planStep, LIMITS.maxSteps) }),
+  // What starts the work (the state at /trigger), read through hirePayload's snapTrigger.
+  Schedule: z.object({ value: z.unknown().optional() }),
   AgentCard: z.object({
     name: line(40),
     role: line(60),

@@ -15,6 +15,13 @@ single-workflow status handler stays the place that reconciles.
 
 The server decides status and default task text; the client only overlays
 live node activity on the task line and maps status to a pill.
+
+Talking to the employee (``talk``: state and the agent that answers,
+talk.py) reads the running generation's graph while one is live, since its
+node ids are the ones that report status; otherwise the saved graph.
+``pending_changes`` says the saved graph would run differently from the
+live generation (a tool added in Talk, an edit in Dev mode), so a restart
+("Apply") is waiting.
 """
 
 from __future__ import annotations
@@ -25,6 +32,7 @@ from zoneinfo import ZoneInfo
 
 from core.logging import get_logger
 from services.deployment.control import serialize_control
+from services.deployment.restart import LIVE_STATES, pending_changes
 from services.employees import runs, store
 from services.employees.context import SETTINGS_USER_ID
 from services.employees.apps import get_app
@@ -35,6 +43,8 @@ from services.employees.graph_index import (
     GraphIndex,
     index_graph,
 )
+from services.employees.policy import asks_first
+from services.employees.talk import TalkState, talk_state
 
 logger = get_logger(__name__)
 
@@ -90,7 +100,7 @@ def _trigger_text(employee: Any, graph: GraphIndex) -> str:
     if kind == "schedule":
         return schedule_text(trigger)
     if kind == "manual":
-        return "When you message them in Chat"
+        return "When you message them"
     app = graph.primary_trigger_app()
     if app is not None:
         return app.phrase("when", f"When something arrives in {app.name}")
@@ -98,7 +108,7 @@ def _trigger_text(employee: Any, graph: GraphIndex) -> str:
     if SCHEDULE_TRIGGER_TYPE in types:
         return "On a schedule"
     if CHAT_TRIGGER_TYPE in types:
-        return "When you message them in Chat"
+        return "When you message them"
     if types:
         return "When the workflow is triggered"
     return "When you start them"
@@ -135,7 +145,7 @@ def _attention_text(control: Mapping[str, Any]) -> str:
     detail = control.get("pause_detail") or control.get("terminal_reason")
     if control.get("state") in PAUSED_STATES:
         return str(detail) if detail else "Paused after repeated errors. Resume when it's fixed."
-    return "Stopped after an error. Open the workflow to see what happened."
+    return "Stopped after a problem. Open it in Dev mode to see what happened."
 
 
 #: Task text while the agent waits in ``request_user``, by its reason.
@@ -209,14 +219,19 @@ def _derived_role(graph: GraphIndex) -> str:
     return "Workflow"
 
 
-def _app_ids(employee: Any, graph: GraphIndex) -> List[str]:
-    """Hired: the apps the owner agreed to (known ones), plus any the graph
-    uses that the row does not list. Derived: the graph's apps."""
-    ids: List[str] = []
-    for app_id in list(getattr(employee, "apps", None) or []) + list(graph.app_ids):
-        if app_id not in ids and get_app(app_id) is not None:
-            ids.append(app_id)
-    return ids
+def _app_ids(graph: GraphIndex) -> List[str]:
+    """The apps the graph's nodes use, hired or not: an app the hire named
+    but the graph left out (a tool that sends while they ask first) is not
+    one to connect, and one added later is."""
+    return [app_id for app_id in graph.app_ids if get_app(app_id) is not None]
+
+
+def _talk(graph: GraphIndex, control_row: Any) -> TalkState:
+    """The live generation's talk line while one is live (the agent there
+    is the one whose status the page follows), else the saved graph's."""
+    if control_row is not None and control_row.status in LIVE_STATES:
+        return talk_state(control_row.graph_snapshot or {})
+    return graph.talk
 
 
 async def _summary(
@@ -234,13 +249,16 @@ async def _summary(
     graph = index_graph(getattr(workflow, "data", None))
     control = serialize_control(control_row)
     control.setdefault("workflow_id", workflow.id)
-    apps = [await connections.app_ref(get_app(app_id)) for app_id in _app_ids(employee, graph)]
+    apps = [await connections.app_ref(get_app(app_id)) for app_id in _app_ids(graph)]
     missing = [ref for ref in apps if not ref["connected"]]
     status = _status(control)
     roles = getattr(employee, "node_roles", None) or {}
     watch = [roles[key] for key in ("agent", "todos") if roles.get(key)] if roles else []
     if not watch:
         watch = list(graph.agent_ids) + list(graph.todo_ids)
+    talk = _talk(graph, control_row)
+    if talk.agent_node_id is not None and talk.agent_node_id not in watch:
+        watch.append(talk.agent_node_id)
     # The board Home's Workspace shows: the one the hire made, while it is
     # still in the graph, else the first canvas the owner added.
     canvas = roles.get("canvas") if roles else None
@@ -277,6 +295,12 @@ async def _summary(
         #: A browser node waiting for the owner ({node_id, reason, since}),
         #: else None. Read live, so it changes without a new revision.
         "browser_request": browser_request,
+        #: {state: on | off | unsupported, agent_node_id}.
+        "talk": talk.summary(),
+        #: A hire's "ask me first" rule; built in the editor: whether its
+        #: replies wait at an approval gate.
+        "asks_first": asks_first(employee) if employee is not None else bool(graph.gate_ids),
+        "pending_changes": pending_changes(workflow, control_row),
         "revision": _millis(
             getattr(workflow, "updated_at", None),
             getattr(employee, "updated_at", None),

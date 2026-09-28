@@ -1023,11 +1023,18 @@ async def prepare_agent_payload(context: Dict[str, Any]) -> Dict[str, Any]:
     # journal-backed agent ends up starting every run with no history. The
     # keys are read with ``.get`` and never interpreted here — whichever
     # plugin produced the descriptor owns its meaning.
+    #
+    # Only a legacy memory descriptor names a node to append markdown turns
+    # to (``agent.persist_turn``). A Context descriptor also carries a
+    # ``node_id``, the Context node's own, and its conversation is saved by
+    # the LLM step instead: reading it here wrote legacy markdown into the
+    # Context node's parameter row every turn. The in-process path drops the
+    # same data once a Context is connected (``AIService.execute_agent``).
     memory_node_id = ""
     memory_content = ""
     memory_window_size = 10
     context_descriptor: Dict[str, Any] = dict(memory_data or {})
-    if memory_data:
+    if memory_data and memory_data.get("kind") != "context":
         memory_node_id = memory_data.get("node_id") or ""
         memory_content = memory_data.get("memory_content") or ""
         memory_window_size = int(memory_data.get("window_size") or 10)
@@ -1363,11 +1370,14 @@ async def refresh_agent_tools(payload: Dict[str, Any]) -> Dict[str, Any]:
         # dual-purpose ActionNode with usable_as_tool=True (the bulk of
         # spawnable plugins — twitterSearch / googleGmail / pythonExecutor
         # / fileRead / etc.). Exclude chat-model plugins even when
-        # usable_as_tool=True.
+        # usable_as_tool=True, and the Skills node (masterSkill is
+        # tool-kind but feeds input-skill; it is never an LLM tool).
         is_agent_delegate = kind == "agent"
         is_tool = kind == "tool"
         is_dual_purpose = bool(getattr(cls, "usable_as_tool", False)) and kind != "model"
         if not (is_tool or is_dual_purpose or is_agent_delegate):
+            continue
+        if (getattr(cls, "ui_hints", None) or {}).get("isMasterSkillEditor"):
             continue
         tool_info: Dict[str, Any] = {
             "node_id": op.get("minted_id") or op.get("client_ref") or f"new_{node_type}",

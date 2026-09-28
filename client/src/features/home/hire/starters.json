@@ -3,36 +3,83 @@
     "id": "receptionist",
     "label": "Receptionist",
     "role": "agent",
-    "summary": "Answers customer messages and books appointments for you.",
-    "job": "A receptionist who answers customer messages on WhatsApp, handles common questions and books appointments in my calendar.",
-    "apps": ["WhatsApp", "Google Calendar"],
-    "skills": ["write-like-a-person", "reply-in-their-language", "book-appointments"]
+    "summary": "Answers customer messages on WhatsApp and writes down bookings for you.",
+    "job": "A receptionist who answers customer messages on WhatsApp, handles common questions and writes down booking requests for me to confirm.",
+    "apps": ["WhatsApp"],
+    "skills": ["write-like-a-person", "reply-in-their-language", "ask-for-reviews"],
+    "hire": {
+      "names": ["Maya", "Rosa", "Nina"],
+      "role": "Receptionist",
+      "description": "Answers customer messages on WhatsApp and writes down bookings for you.",
+      "steps": [
+        { "title": "A customer messages you", "detail": "On WhatsApp", "role": "trigger", "app": "WhatsApp" },
+        { "title": "Answer their question", "detail": "Kindly and briefly", "role": "agent" },
+        { "title": "Write down booking requests", "detail": "For you to confirm", "role": "workflow" }
+      ],
+      "trigger": { "kind": "app_event", "app": "WhatsApp" },
+      "sends_via": "WhatsApp"
+    }
   },
   {
     "id": "inbox-assistant",
     "label": "Inbox assistant",
     "role": "model",
-    "summary": "Sorts your email, flags what's urgent and drafts replies.",
-    "job": "An inbox assistant who sorts my email every morning, flags anything urgent and drafts replies for me to approve.",
+    "summary": "Reads each new email in Gmail and drafts a reply for you to approve.",
+    "job": "An inbox assistant who reads each new email in my Gmail, flags anything urgent and drafts a reply for me to approve.",
     "apps": ["Gmail"],
-    "skills": ["write-like-a-person", "short-reports"]
-  },
-  {
-    "id": "bookkeeper",
-    "label": "Bookkeeper",
-    "role": "workflow",
-    "summary": "Tracks payments, chases unpaid invoices and reports weekly.",
-    "job": "A bookkeeper who tracks payments in Stripe, politely chases unpaid invoices and sends me a weekly summary.",
-    "apps": ["Stripe"],
-    "skills": ["chase-late-payments", "short-reports"]
+    "skills": ["write-like-a-person", "short-reports"],
+    "hire": {
+      "names": ["Iris", "Ella", "Leo"],
+      "role": "Inbox assistant",
+      "description": "Reads each new email in Gmail and drafts a reply for you to approve.",
+      "steps": [
+        { "title": "A new email arrives", "detail": "In your Gmail", "role": "trigger", "app": "Gmail" },
+        { "title": "Read it and flag what is urgent", "role": "agent" },
+        { "title": "Draft a reply", "detail": "For you to approve", "role": "workflow", "app": "Gmail" }
+      ],
+      "trigger": { "kind": "app_event", "app": "Gmail" },
+      "sends_via": "Gmail"
+    }
   },
   {
     "id": "social-media-helper",
     "label": "Social media helper",
     "role": "trigger",
-    "summary": "Drafts posts about your business for you to approve.",
-    "job": "A social media helper who drafts three posts a week about my business and sends them to me for approval.",
+    "summary": "Drafts three posts about your business every week, for you to review.",
+    "job": "A social media helper who drafts three posts about my business every Monday morning for me to review.",
     "apps": [],
-    "skills": ["social-posts", "write-like-a-person"]
+    "skills": ["social-posts", "write-like-a-person"],
+    "hire": {
+      "names": ["Sam", "Zoe", "Kai"],
+      "role": "Social media helper",
+      "description": "Drafts three posts about your business every week, for you to review.",
+      "steps": [
+        { "title": "Every Monday at 09:00", "role": "trigger" },
+        { "title": "Draft three posts", "detail": "In your business's voice", "role": "agent" },
+        { "title": "Send them to you to review", "role": "workflow" }
+      ],
+      "trigger": { "kind": "schedule", "every": "week", "day": "monday", "at": "09:00" }
+    }
+  },
+  {
+    "id": "daily-briefer",
+    "label": "Daily briefer",
+    "role": "workflow",
+    "summary": "A short morning briefing on the news that matters to your business.",
+    "job": "A daily briefer who checks the news about my business and my industry every weekday morning and sends me a short briefing.",
+    "apps": [],
+    "skills": ["short-reports", "write-like-a-person"],
+    "hire": {
+      "names": ["Nora", "Theo", "Ivy"],
+      "role": "Daily briefer",
+      "description": "A short morning briefing on the news that matters to your business.",
+      "steps": [
+        { "title": "Every weekday at 08:00", "role": "trigger" },
+        { "title": "Search the news", "detail": "About your business and industry", "role": "tool" },
+        { "title": "Write a short briefing", "detail": "What needs you comes first", "role": "agent" },
+        { "title": "Send it to you", "role": "workflow" }
+      ],
+      "trigger": { "kind": "schedule", "every": "weekday", "at": "08:00" }
+    }
   }
 ]

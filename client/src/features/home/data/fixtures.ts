@@ -5,7 +5,9 @@
  * with no workflows set up. Production builds drop this module (the only
  * import sits behind `import.meta.env.DEV`).
  *
- * The rows go through the real parser, so they also exercise it.
+ * Each has a different talk state (on, off, unsupported), so all three
+ * shapes of the employee page can be checked. The rows go through the real
+ * parser, so they also exercise it.
  */
 
 import { parseEmployees, type EmployeeSummary } from './schemas';
@@ -46,6 +48,8 @@ const ROWS = [
     missing_apps: [],
     control: control('running', 3),
     revision: 3,
+    talk: { state: 'on', agent_node_id: 'fixture-maya:talk' },
+    asks_first: true,
   },
   {
     workflow_id: 'fixture-leo',
@@ -60,6 +64,8 @@ const ROWS = [
     missing_apps: [],
     control: control('paused', 5),
     revision: 5,
+    talk: { state: 'off', agent_node_id: null },
+    asks_first: true,
   },
   {
     workflow_id: 'fixture-nora',
@@ -75,6 +81,7 @@ const ROWS = [
     unsupported_apps: ['QuickBooks'],
     control: control('never_started', 0),
     revision: 1,
+    talk: { state: 'unsupported', agent_node_id: null },
   },
 ];
 

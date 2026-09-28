@@ -1,5 +1,5 @@
 {
-  "_comment": "Normal mode's setup-screen vocabulary: what a model may use when it writes a new employee's setup screen. The prompt (services/employees/setup_prompt.py) is generated from this file; the client's renderer (client/src/features/home/genui/catalog.ts) must list the same components, actions, tones, roles, state paths and limits, which tests/test_genui_catalog_sync.py checks.",
+  "_comment": "Normal mode's setup-screen vocabulary: what a model may use when it writes a new employee's setup screen. The prompt (services/employees/setup_prompt.py) is generated from this file; the client's renderer (client/src/features/home/genui/catalog.ts, hirePayload.ts) must list the same components, actions, tones, roles, state paths, limits and trigger lists, which tests/test_genui_catalog_sync.py checks. A component marked `inserted` is added by the client's normalizer, never by the model, so the prompt leaves it out. `trigger.times` are the times a schedule can run at (services/employees/builder.py SCHEDULE_TIMES).",
   "spec_version": 1,
   "components": {
     "Stack": {
@@ -33,6 +33,11 @@
     "Plan": {
       "props": "{title, steps:[{title, detail, role:\"trigger\"|\"agent\"|\"tool\"|\"workflow\", app?}]}",
       "description": "An automation shown as a chain of steps: trigger first (\"When…\"), then agent/tool steps. A step that uses an app names it in \"app\"."
+    },
+    "Schedule": {
+      "props": "{value:{\"$bindState\":\"/trigger\"}}",
+      "description": "When they work, as a sentence the owner can change: what starts the work, and for a schedule how often and when. Seeded from the hire button's trigger.",
+      "inserted": true
     },
     "AgentCard": {
       "props": "{name, role, description, apps:[string], status:\"ready\"|\"working\"|\"paused\"}",
@@ -89,12 +94,14 @@
     "rules": "/rules",
     "askFirst": "/rules/askFirst",
     "choices": "/choices",
-    "inputs": "/inputs"
+    "inputs": "/inputs",
+    "trigger": "/trigger"
   },
   "ask_first_label": "Ask me before sending anything",
   "trigger": {
     "kinds": ["app_event", "schedule", "manual"],
-    "every": ["hour", "day", "weekday", "week", "month"]
+    "every": ["hour", "day", "weekday", "week", "month"],
+    "times": ["00:00", "02:00", "04:00", "06:00", "08:00", "09:00", "10:00", "12:00", "14:00", "16:00", "18:00", "20:00", "22:00"]
   },
   "limits": {
     "maxElements": 16,

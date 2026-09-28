@@ -1,7 +1,8 @@
 /**
  * The shared corpus of model replies (genui/__fixtures__/replies.json):
  * each one parses and normalizes to a renderable screen exactly when it is
- * marked salvageable. The server's salvage check runs the same corpus
+ * marked salvageable, and every such screen can be hired, changed, asks
+ * first by default and says when they work. The server's salvage check runs the same corpus
  * (server/tests/services/employees/test_setup_salvage_parity.py), so the
  * two sides agree on which replies are worth retrying.
  */
@@ -71,6 +72,11 @@ describe('model reply corpus', () => {
     );
     expect(askFirst).toHaveLength(1);
     expect(typeof getPath(spec.state, STATE_PATHS.askFirst)).toBe('boolean');
+    // And says when they work.
+    const schedule = elements(spec).filter(([, element]) => element.type === 'Schedule');
+    expect(schedule).toHaveLength(1);
+    expect(bindingPath(schedule[0][1].props.value)).toBe(STATE_PATHS.trigger);
+    expect(getPath(spec.state, STATE_PATHS.trigger)).toMatchObject({ kind: expect.any(String) });
     expect(Object.keys(spec.elements).length).toBeLessThanOrEqual(16);
 
     if ('hasAgent' in want) {

@@ -1,195 +1,141 @@
 ---
 name: agent-builder-skill
-description: How to use the Agent Builder tool's five canvas-mutation operations to inspect and grow your own toolset / skills / teammates / workflows mid-execution
+description: How to use the Agent Builder tool (agent_builder) to inspect your canvas and add tools, skills and teammates while you run, including the rules a hired employee works under
 allowed-tools: "agentBuilder"
 metadata:
   author: opencompany
-  version: "3.0"
+  version: "4.0"
   category: autonomous
 ---
 
 # Agent Builder
 
-You are connected to an **Agent Builder** node. It exposes ONE
-LLM-callable tool, `agentBuilder`, which dispatches to FIVE
-canvas-mutation operations via the `operation` field:
+You are connected to an **Agent Builder** node. It gives you ONE tool,
+`agent_builder`, with five operations chosen by the `operation` field:
 
-| `operation` value | Purpose |
+| `operation` | What it does |
 |---|---|
-| `inspect_canvas` | Read-only view of the canvas PLUS the full catalogue of every tool, agent, and skill you can spawn. ALWAYS call this first. |
-| `add_tool` | Spawn a tool node + wire it to your `input-tools` handle. Idempotent — already-wired tools return success with no change. |
-| `add_skill` | Toggle a skill on your Master Skill (auto-creates one if missing). Idempotent — already-enabled skills return success with no change. |
-| `add_subagent` | Team-leads only — spawn a delegate agent + wire to your `input-teammates`. Idempotent — already-wired teammates return success with no change. |
-| `create_workflow` | **Temporarily disabled.** Mutate the current workflow instead. |
+| `inspect_canvas` | Read-only: the canvas, what is wired to you, and the catalogue of everything you may add. ALWAYS call this first. |
+| `add_tool` | Wire a tool to you (`node_type` from `available_tools`). |
+| `add_skill` | Give you a skill (`skill_name` from `available_skills`). |
+| `add_subagent` | Team leads only: add a teammate (`agent_type` from `available_agents`). |
+| `create_workflow` | **Disabled.** Change the current workflow instead. |
 
-Every call is `agentBuilder({operation: "<one-of-above>", ...op-specific-fields})`. There are no separate tools.
+Every call is `agent_builder({operation: "<one of the above>", ...fields})`.
 
 ## The cardinal rule
 
-**Call `agentBuilder({operation: "inspect_canvas"})` BEFORE any
-mutation.** The response carries the full registry of spawnable types
-(plus the live canvas) so you can pick the right one in a single
-follow-up call instead of guessing. Skipping `inspect_canvas` means
-you're flying blind on what's available.
+**Call `agent_builder({operation: "inspect_canvas"})` before any change.**
+Pick values only from its catalogues: `available_tools[].type`,
+`available_skills[].name`, `available_agents[].type`. Never guess one.
 
-## Hot rebind (default: ON)
+## When a change works
 
-By default, tools / skills / teammates you spawn become callable
-**in the same run, on your very next response**. The mutation summary
-ends with *"Available immediately — call it in your next response."*
-Take this literally: you may invoke the new tool right away. No need
-to tell the user "send another message".
+Every change is saved at once and shows on the canvas.
 
-If the user has disabled the **"Auto-Rebind Tools After Canvas Changes"**
-toggle in Settings, mutation summaries end with *"Available on your
-next turn."* In that case the new wiring is staged but not callable
-this run — tell the user and stop calling that tool.
+- **A tool** is callable in this same run, in your next response, when the
+  summary says *"Available immediately"* or *"You can use it now"*. Call it
+  directly. If it says *"Available on your next turn"* (the owner turned off
+  "Auto-Rebind Tools After Canvas Changes"), it is not callable in this run:
+  say so and stop calling it.
+- **A deployed workflow runs from a snapshot taken when it started.** A tool
+  you added in an earlier run is saved, but a later run may start without it.
+  If a tool you added before is not in your tool list, call `add_tool` for
+  it again: it is bound again at once, and nothing is added twice. Do not
+  call `add_tool` again for a tool you already added in this run.
+- **A skill** added to a Skills node you already have applies from the next
+  run (the next message). A new Skills node applies after a restart.
 
-The summary text is your signal. Read it.
+## If you are a hired employee
+
+`inspect_canvas` returns an `employee` block (`{asks_first, agents}`) when
+you are one of the owner's AI employees. Then:
+
+- What you add goes to both of your agents: the one that does the work and
+  the one the owner talks to (`employee.agents`).
+- `available_tools` lists only what you may be given: the tools every hire
+  has (web search, checklist, clock, memory, canvas) and the tools of the
+  apps in the app registry. An app tool shows `connected: false` until the
+  owner connects that app, and `read_only: true` when it is given in a safe,
+  read-only form (the browser, while the owner asks to be asked first).
+- While `asks_first` is true, nothing that can send messages or spend money
+  can be added. Say so plainly; do not look for a way around it.
+- `available_skills` lists the owner's own skills (Settings > Skills) and
+  the Discover skills. A skill's text is copied in when you add it.
+- `available_agents` is empty: a hired employee does not add teammates.
+- Changes work for you now, in this conversation. They become part of all
+  your work once the owner presses **Apply** on your page (that restarts
+  you). Tell the owner that when you add something.
+- **When a change is refused, the summary is one plain sentence meant for
+  the owner.** Pass it on as it is, for example: *"Google Calendar can send
+  things on your behalf, so it stays off while "Ask me before sending
+  anything" is on."* or *"Google Sheets isn't connected yet. Connect it in
+  Settings > Connectors first."*
 
 ## Operation reference
 
-### `operation: "inspect_canvas"`
+### `inspect_canvas`
 
-No additional fields. Returns:
+No other fields. Returns:
 
 ```json
 {
   "operation": "inspect_canvas",
-  "summary": "<live counts: nodes, tools wired, available types>",
-  "nodes": [{ "id", "type", "label", "key_params" }, ...],
-  "edges": [{ "source", "target", "source_handle", "target_handle" }, ...],
-  "you": {
-    "node_id": "agent-1",
-    "incoming": [...], "outgoing": [...]
-  },
-  "available_tools": [{ "type", "display_name", "description" }, ...],
-  "available_agents": [{ "type", "display_name", "description" }, ...],
-  "available_skills": [{ "folder", "name", "description" }, ...]
+  "summary": "<counts>",
+  "nodes": [{ "id", "type", "label", "key_params" }],
+  "edges": [{ "source", "target", "source_handle", "target_handle" }],
+  "you": { "node_id", "incoming": [...], "outgoing": [...] },
+  "employee": { "asks_first": true, "agents": ["..."] },
+  "available_tools": [{ "type", "display_name", "description" }],
+  "available_agents": [{ "type", "display_name", "description" }],
+  "available_skills": [{ "name", "description" }]
 }
 ```
 
-- `available_tools` — every value `add_tool({node_type: ...})` will accept, with descriptions.
-- `available_agents` — every value `add_subagent({agent_type: ...})` will accept (team-leads only).
-- `available_skills` — every value `add_skill({skill_folder: ...})` will accept.
-- `you.incoming` — connections wired TO your handles. Use this to see what tools / skills / teammates you already have.
+- `you.incoming`: what is wired to your handles (tools on `input-tools`,
+  skills on `input-skill`, teammates on `input-teammates`).
+- `key_params` shows only planner-relevant fields (`provider`, `model`,
+  `operation`, `url`, `query`), never secrets.
+- `employee` is present only for a hired employee.
 
-API keys, prompts, and other secrets are **stripped** from
-`key_params`. Only safe planner-relevant fields surface
-(`provider`, `model`, `operation`, `url`, `query`).
+### `add_tool`
 
-### `operation: "add_tool"`
+Field: `node_type`. Wires the tool to you (and, for an employee, to both
+agents). If you already have a tool of that type, nothing is added: the
+summary says so, and the tool is callable.
 
-Required field: `node_type` (string).
+### `add_skill`
 
-Spawns a tool node and wires it to your `input-tools` handle. Pick
-`node_type` from `inspect_canvas.available_tools`.
+Field: `skill_name`. Adds the skill to the Skills node wired to you, or to
+a new one when you have none. An already enabled skill changes nothing.
 
-**Idempotency**: if a tool of this exact type is already wired to
-you, `add_tool` returns success with `operations: []` and a summary
-like *"Tool 'httpRequest' is already wired (node id=…). Reusing
-existing instance."* Don't loop trying again — the tool is callable.
+### `add_subagent`
 
-If the tool has a paired teaching skill, the auto-add-skill
-handler enables it too — no separate `add_skill` call needed.
+Field: `agent_type`. Team leads only (`orchestrator_agent`, `ai_employee`),
+and never another team lead. Adds a specialized agent with its own Context
+and wires it to your `input-teammates`. Assign it work with
+`task_manager(operation="assign_task", assignee_node_id=...)`; never call a
+`delegate_to_*` tool directly. The new agent starts without a model: tell
+the user to set its provider and model.
 
-### `operation: "add_skill"`
+## Example
 
-Required field: `skill_folder` (string).
-
-Enables a skill on your Master Skill. Pick `skill_folder` from
-`inspect_canvas.available_skills`. If no Master Skill is wired to
-your `input-skill` yet, one is created and wired automatically.
-
-**Idempotency**: if the skill is already `enabled=True` in your
-Master Skill's config, `add_skill` returns success with `operations: []`
-and *"Skill 'X' is already enabled on your Master Skill. No change
-needed."*
-
-### `operation: "add_subagent"`
-
-Required field: `agent_type` (string).
-
-**Team-leads only** (`orchestrator_agent`, `ai_employee`). Pick
-`agent_type` from `inspect_canvas.available_agents`. Spawns a
-specialized agent (`coding_agent`, `web_agent`, `task_agent`, etc.)
-and wires it to your `input-teammates` handle. The new agent appears in the
-Task Manager connected-teammate list on your next turn. Assign work with
-`task_manager(operation="assign_task", assignee_node_id=...)`; do not call a
-`delegate_to_*` tool directly.
-
-**Idempotency**: if a teammate of this exact type is already wired
-to you, `add_subagent` returns *"Teammate 'X' is already wired
-(node id=…). Reusing existing instance."*
-
-The new agent starts with empty configuration — the user will need
-to set its provider/model after the run. Mention this in your
-response.
-
-### `operation: "create_workflow"` — temporarily disabled
-
-This operation is currently disabled. Calling it returns a polite
-"temporarily disabled" summary; no workflow is created. Mutate the
-current workflow instead via `add_tool` / `add_skill` /
-`add_subagent`.
-
-## Worked examples
-
-### Adding a new tool and using it immediately
-
-User: "Search the web for current weather in Tokyo and tell me."
+The owner says: "Search the web for today's weather in Tokyo."
 
 ```
-1. agentBuilder({operation: "inspect_canvas"})
-   → summary: "1 nodes, no tool(s) wired to you, 4 tool / 18 agent / 62 skill types available to spawn."
-   → available_tools: [..., {type: "duckduckgoSearch", display_name: "DuckDuckGo Search", description: "..."}, ...]
-   You see no web-search tool wired and one in the catalogue.
-
-2. agentBuilder({operation: "add_tool", node_type: "duckduckgoSearch"})
-   → "Added 'duckduckgoSearch' as a tool. Available immediately — call it in your next response."
-
-3. duckduckgoSearch({query: "Tokyo weather today"})
-   → search results
-
-4. Tell the user the weather.
+1. agent_builder({operation: "inspect_canvas"})
+   → available_tools includes {type: "duckduckgoSearch", display_name: "Web search"}
+2. agent_builder({operation: "add_tool", node_type: "duckduckgoSearch"})
+   → "Added Web search. You can use it now in this conversation. ..."
+3. Call the web search tool with the query.
+4. Answer, and mention that the owner can press Apply to keep web search for all your work.
 ```
-
-### Handling an already-wired tool
-
-User: "Add the calculator tool and compute 17 + 25."
-
-```
-1. agentBuilder({operation: "inspect_canvas"})
-   → you.incoming includes a tool wired with source_type "calculatorTool".
-
-2. agentBuilder({operation: "add_tool", node_type: "calculatorTool"})
-   → "Tool 'calculatorTool' is already wired to you (node id=calc-1). Reusing existing instance."
-   → operations: []
-
-3. calculator({a: 17, b: 25, op: "add"})  ← already callable; no rebind needed
-   → 42
-
-4. Tell the user the answer.
-```
-
-You did NOT need to retry `add_tool` or wait for "next turn" — the
-existing instance is callable right now.
 
 ## What NOT to do
 
-- **Don't skip `inspect_canvas`**. It's read-only, cheap, and gives
-  you the full catalogue + canvas state in one call.
-- **Don't guess `node_type` / `agent_type` / `skill_folder` values.**
-  Pick from the catalogues returned by `inspect_canvas`.
-- **Don't retry `add_tool` / `add_skill` / `add_subagent` on success
-  with `operations: []`.** That's an idempotent success, not a
-  failure. The existing instance is callable.
-- **Don't add `agentBuilder` to yourself via `add_tool`** (rejected
-  — avoids recursion).
-- **Don't spawn another team-lead** as a subagent (rejected —
-  team-leads delegate to specialists, not to other team-leads).
-- **Don't call `create_workflow`** — it's temporarily disabled and
-  will return a no-op summary. Mutate the current workflow instead.
-- **Don't ignore the "Available on your next turn" wording.** If
-  you see it (toggle is OFF), the tool is staged but NOT callable
-  this run. Tell the user and stop.
+- Don't skip `inspect_canvas`, and don't guess types or names.
+- Don't retry a change that returned no operations: it is a success (you
+  already have it) or a refusal to pass on, not an error.
+- Don't try to add `agent_builder` itself, a Skills node, or Task Manager
+  as a tool.
+- Don't call `create_workflow`.

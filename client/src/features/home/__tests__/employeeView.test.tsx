@@ -1,12 +1,15 @@
 /**
- * The employee card's main button: Connect goes to the provider's connect
- * dialog, Pause sends the summary's revision, and the button says
- * "Pausing…" until the summary shows the pause (never flashing "Pause"
- * again in between). Watch live opens the Workspace on the employee.
+ * The employee page: the card's main button (Connect goes to the provider's
+ * connect dialog, Pause sends the summary's revision and says "Pausing…"
+ * until the summary shows the pause, never flashing "Pause" again in
+ * between), Watch live, More > Open in Dev mode, and the conversation under
+ * the card, which offers the same main action while the employee cannot
+ * read messages.
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 const actions = {
@@ -24,6 +27,7 @@ vi.mock('@/contexts/WebSocketContext', async (importOriginal) => ({
 }));
 
 vi.mock('../../../app/useShellActions', () => ({ enterDev: vi.fn() }));
+vi.mock('../ui/pillToast', () => ({ pillToast: vi.fn() }));
 
 import { normalizeWorkflowControlStatus } from '@/contexts/WebSocketContext';
 import { enterDev } from '../../../app/useShellActions';
@@ -32,6 +36,7 @@ import { parseEmployee, type EmployeeSummary } from '../data/schemas';
 import { ThemeProvider } from '@/contexts/ThemeContext';
 import { EmployeeView } from '../employee/EmployeeView';
 import { useHomeStore } from '../state/homeStore';
+import { pillToast } from '../ui/pillToast';
 
 function summary(patch: Record<string, unknown>, control: Record<string, unknown>): EmployeeSummary {
   return parseEmployee({
@@ -57,10 +62,12 @@ function renderCard(employee: EmployeeSummary, onConnect = vi.fn()) {
 }
 
 beforeEach(() => {
+  actions.sendRequest.mockReset();
   actions.pauseWorkflow.mockReset();
   actions.resumeWorkflow.mockReset();
   actions.startEmployee.mockReset();
   vi.mocked(enterDev).mockClear();
+  vi.mocked(pillToast).mockClear();
 });
 
 describe('EmployeeView', () => {
@@ -92,6 +99,22 @@ describe('EmployeeView', () => {
     expect(await screen.findByRole('button', { name: 'Resume' })).toBeEnabled();
   });
 
+  it('says to connect an AI model, and opens that dialog, when Start is refused for want of one', async () => {
+    useHomeStore.setState({ connectAIOpen: false });
+    actions.startEmployee.mockRejectedValue(new Error('needs_ai'));
+    renderCard(summary({ status: 'ready' }, { state: 'never_started' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Start' }));
+    await waitFor(() => expect(pillToast).toHaveBeenCalledWith('Connect an AI model first.', { tone: 'error' }));
+    expect(useHomeStore.getState().connectAIOpen).toBe(true);
+  });
+
+  it('opens the "Connect an AI model" dialog from the card', () => {
+    useHomeStore.setState({ connectAIOpen: false });
+    renderCard(summary({ status: 'ready', needs_ai: true }, { state: 'never_started' }));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Connect an AI model' })[0]);
+    expect(useHomeStore.getState().connectAIOpen).toBe(true);
+  });
+
   it('opens the Workspace on this employee', () => {
     useHomeStore.setState({ workspaceOpen: false, workspaceFor: null });
     renderCard(summary({ status: 'working' }, { state: 'running' }));
@@ -99,10 +122,42 @@ describe('EmployeeView', () => {
     expect(useHomeStore.getState()).toMatchObject({ workspaceOpen: true, workspaceFor: 'w1' });
   });
 
-  it('opens the workflow in the editor', () => {
+  it('opens the workflow in Dev mode from More', async () => {
+    const user = userEvent.setup();
     renderCard(summary({ status: 'working' }, { state: 'running' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Open workflow' }));
+    expect(screen.queryByRole('button', { name: 'Open in Dev mode' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'More' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Open in Dev mode' }));
     expect(enterDev).toHaveBeenCalledWith({ workflowId: 'w1' });
+  });
+
+  it('makes Open in Dev mode the main button when nothing else is possible', () => {
+    renderCard(summary({ status: 'attention' }, { state: 'failed', can_resume: false }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open in Dev mode' }));
+    expect(enterDev).toHaveBeenCalledWith({ workflowId: 'w1' });
+    expect(screen.queryByRole('button', { name: 'More' })).not.toBeInTheDocument();
+  });
+
+  it('offers Start under the conversation while the employee is not running', async () => {
+    actions.sendRequest.mockResolvedValue({ success: true, messages: [] });
+    actions.startEmployee.mockReturnValue(new Promise(() => {}));
+    renderCard(summary({ status: 'ready', talk: { state: 'on', agent_node_id: 'w1:talk' } }, { state: 'never_started', revision: 3 }));
+    const talk = await screen.findByRole('region', { name: 'Talk with Maya' });
+    expect(talk).toHaveTextContent('Maya isn’t running, so they can’t read messages right now.');
+    expect(screen.queryByRole('textbox', { name: 'Message Maya' })).not.toBeInTheDocument();
+
+    const starts = screen.getAllByRole('button', { name: 'Start' });
+    expect(starts).toHaveLength(2);
+    fireEvent.click(starts[1]);
+    expect(actions.startEmployee).toHaveBeenCalledWith('w1', 3);
+    // One control for the page: both buttons follow the same request.
+    expect(screen.getAllByRole('button', { name: 'Starting…' })).toHaveLength(2);
+  });
+
+  it('notes when the employee cannot take messages', () => {
+    renderCard(summary({ status: 'working' }, { state: 'running' }));
+    expect(screen.getByText('You can’t message Maya here. Their setup has no way to answer you.')).toBeInTheDocument();
+    expect(actions.sendRequest).not.toHaveBeenCalledWith('get_chat_messages', expect.anything());
   });
 
   it('says so when the employee is gone', async () => {

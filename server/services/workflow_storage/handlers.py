@@ -16,6 +16,7 @@ from fastapi import WebSocket
 from core.config import Settings
 from core.container import container
 from core.logging import get_logger
+from services.workflow_storage.listeners import notify_graph_changed
 from services.ws_handler_registry import ws_handler
 
 logger = get_logger(__name__)
@@ -174,6 +175,8 @@ async def handle_save_workflow(data: Dict[str, Any], websocket: WebSocket) -> Di
     The frontend's auto-save chain (TopToolbar inline rename ->
     ``updateWorkflow({name})`` -> debounced save) flows through this
     handler, so renaming happens here — no dedicated rename endpoint.
+    A saved graph is announced to the graph-changed listeners
+    (listeners.py).
     """
     from services.workflow_naming import next_available_slug
 
@@ -284,6 +287,7 @@ async def handle_save_workflow(data: Dict[str, Any], websocket: WebSocket) -> Di
                 aliases=normalization.aliases,
             )
             context_archives_pending = 0
+        notify_graph_changed(workflow_id)
     else:
         context_archives_completed = 0
         context_archives_pending = 0

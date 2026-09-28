@@ -18,6 +18,13 @@ Protocol notes:
   application.
 * The protocol is a declarative wire format, not a diff reconciler.
   Re-applying a batch is not assumed to be idempotent.
+* A batch the server already saved (nodes, edges and parameter rows) is
+  pushed with ``persisted: true`` (``broadcast_workflow_ops`` below). Its
+  ops carry the server's node ids (``minted_id``), edge ids
+  (``edge_id``), absolute positions and the node's full parameters; the
+  editor adopts them without saving anything, and skips ids it already
+  has (the same batch can arrive twice when a retried write re-announces
+  it).
 
 Adding a new operation type:
 
@@ -30,7 +37,15 @@ Adding a new operation type:
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Literal, Optional, TypedDict, Union
+from typing import Any, Dict, List, Literal, Mapping, Optional, Sequence, TypedDict, Union
+
+from core.logging import get_logger
+from services.events.envelope import WorkflowEvent
+
+logger = get_logger(__name__)
+
+#: The push delivery's wire key (``client/src/hooks/useWorkflowOpsListener``).
+WIRE_KEY = "workflow_ops_apply"
 
 
 # ---------------------------------------------------------------------------
@@ -90,6 +105,8 @@ class AddNodeOp(TypedDict, total=False):
     # agentBuilder so the rebind path's status broadcasts route to the
     # same React Flow node id the canvas renders the new node under.
     minted_id: str
+    # Node data beyond the label (a Context's link to its agent).
+    data: Dict[str, Any]
 
 
 class AddEdgeOp(TypedDict, total=False):
@@ -98,6 +115,10 @@ class AddEdgeOp(TypedDict, total=False):
     target: NodeRef
     source_handle: str
     target_handle: str
+    # The server's id for an edge it already saved; the FE adopts it.
+    edge_id: str
+    # Follow the edge only when this holds (saved as ``data.condition``).
+    condition: Dict[str, Any]
 
 
 class SetNodeParametersOp(TypedDict, total=False):
@@ -154,6 +175,8 @@ def add_node(
     *,
     label: Optional[str] = None,
     position: Optional[PositionSpec] = None,
+    minted_id: Optional[str] = None,
+    data: Optional[Dict[str, Any]] = None,
 ) -> AddNodeOp:
     op: AddNodeOp = {
         "type": "add_node",
@@ -165,6 +188,10 @@ def add_node(
         op["label"] = label
     if position is not None:
         op["position"] = position
+    if minted_id is not None:
+        op["minted_id"] = minted_id
+    if data:
+        op["data"] = data
     return op
 
 
@@ -174,6 +201,8 @@ def add_edge(
     *,
     source_handle: Optional[str] = None,
     target_handle: Optional[str] = None,
+    edge_id: Optional[str] = None,
+    condition: Optional[Dict[str, Any]] = None,
 ) -> AddEdgeOp:
     op: AddEdgeOp = {
         "type": "add_edge",
@@ -184,6 +213,10 @@ def add_edge(
         op["source_handle"] = source_handle
     if target_handle is not None:
         op["target_handle"] = target_handle
+    if edge_id is not None:
+        op["edge_id"] = edge_id
+    if condition:
+        op["condition"] = condition
     return op
 
 
@@ -247,3 +280,55 @@ def anchored(
 def empty() -> Dict[str, List[WorkflowOperation]]:
     """Standard empty response (``{"operations": []}``)."""
     return {"operations": []}
+
+
+# ---------------------------------------------------------------------------
+# Push delivery
+# ---------------------------------------------------------------------------
+
+
+def workflow_ops_applied(
+    *,
+    workflow_id: str,
+    caller_node_id: Optional[str],
+    operations: Sequence[Mapping[str, Any]],
+    persisted: bool = False,
+) -> WorkflowEvent:
+    """A batch for the editors that have ``workflow_id`` open.
+    ``persisted``: the server already saved it, so the editor adopts the
+    ops' ids instead of saving them again."""
+    data: Dict[str, Any] = {
+        "workflow_id": workflow_id,
+        "caller_node_id": caller_node_id,
+        "operations": [dict(op) for op in operations],
+    }
+    if persisted:
+        data["persisted"] = True
+    return WorkflowEvent(
+        source="opencompany://services/workflow_ops",
+        type="com.opencompany.workflow.ops.applied",
+        subject=workflow_id,
+        data=data,
+    )
+
+
+async def broadcast_workflow_ops(
+    *,
+    workflow_id: str,
+    caller_node_id: Optional[str],
+    operations: Sequence[Mapping[str, Any]],
+    persisted: bool = False,
+) -> None:
+    """Push a batch to every client as ``workflow_ops_apply``. The frame is
+    the event's flat data (``{workflow_id, caller_node_id, operations,
+    persisted?}``), the shape ``useWorkflowOpsListener`` reads. Best-effort:
+    a failed push is logged, never raised."""
+    if not operations:
+        return
+    from services.status_broadcaster import get_status_broadcaster
+
+    event = workflow_ops_applied(workflow_id=workflow_id, caller_node_id=caller_node_id, operations=operations, persisted=persisted)
+    try:
+        await get_status_broadcaster().broadcast({"type": WIRE_KEY, "data": event.data})
+    except Exception:
+        logger.warning("workflow_ops_apply broadcast failed", workflow_id=workflow_id, exc_info=True)

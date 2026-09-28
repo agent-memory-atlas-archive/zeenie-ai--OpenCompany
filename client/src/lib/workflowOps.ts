@@ -8,6 +8,11 @@
  * via `client_ref` placeholders, and persisting parameter changes
  * through `saveNodeParameters`.
  *
+ * A batch the server already saved (`workflow_ops_apply` with
+ * `persisted: true`) goes through `addSavedNodes` / `addSavedEdges`
+ * instead: it carries the server's ids and full parameter rows, and
+ * nothing is saved again.
+ *
  * Full protocol spec: docs-internal/workflow_ops_protocol.md
  *
  * Adding a new operation type:
@@ -50,6 +55,8 @@ export interface AddNodeOp {
    * keep their existing semantics.
    */
   minted_id?: string;
+  /** Node data beyond the label (a Context's link to its agent). */
+  data?: Record<string, any>;
 }
 
 export interface AddEdgeOp {
@@ -58,6 +65,10 @@ export interface AddEdgeOp {
   target: NodeRef;
   source_handle?: string;
   target_handle?: string;
+  /** The server's id for an edge it already saved; adopted as is. */
+  edge_id?: string;
+  /** Follow the edge only when this holds (kept as `edge.data.condition`). */
+  condition?: Record<string, any>;
 }
 
 export interface SetNodeParametersOp {
@@ -100,6 +111,16 @@ export type WorkflowOperation =
   | MoveNodeOp
   | ReplaceNodeOp;
 
+/** The `workflow_ops_apply` push (services/workflow_ops.py
+ *  `broadcast_workflow_ops`). `persisted`: the server already saved the
+ *  batch's nodes, edges and parameter rows. */
+export interface WorkflowOpsApplyEvent {
+  workflow_id?: string | null;
+  caller_node_id?: string | null;
+  operations?: WorkflowOperation[];
+  persisted?: boolean;
+}
+
 // ---------------------------------------------------------------------------
 // Apply context + result
 // ---------------------------------------------------------------------------
@@ -113,7 +134,7 @@ export interface ApplyContext {
   edges: Edge[];
   setNodes: (updater: (ns: Node[]) => Node[]) => void;
   setEdges: (updater: (es: Edge[]) => Edge[]) => void;
-  /** Persist params for a node id; backend WS round-trip. */
+  /** Save a node's whole parameter row (it replaces the row); backend WS round-trip. */
   saveNodeParameters: (nodeId: string, parameters: Record<string, any>) => Promise<boolean>;
   /** Optional fallback position when an anchor node is missing. */
   defaultPosition?: AbsolutePosition;
@@ -142,10 +163,10 @@ function resolveNodeRef(ref: NodeRef, refMap: Record<string, string>): string | 
 
 function resolvePosition(
   spec: PositionSpec | undefined,
-  ctx: ApplyContext,
   liveNodes: Node[],
+  defaultPosition?: AbsolutePosition,
 ): AbsolutePosition {
-  if (!spec) return ctx.defaultPosition ?? { x: 200, y: 200 };
+  if (!spec) return defaultPosition ?? { x: 200, y: 200 };
   if ('x' in spec && 'y' in spec) return { x: spec.x, y: spec.y };
   const anchor = liveNodes.find(n => n.id === spec.anchor_node_id);
   if (anchor) {
@@ -154,7 +175,63 @@ function resolvePosition(
       y: anchor.position.y + (spec.offset?.y ?? 0),
     };
   }
-  return spec.fallback ?? ctx.defaultPosition ?? { x: 200, y: 200 };
+  return spec.fallback ?? defaultPosition ?? { x: 200, y: 200 };
+}
+
+function nodeFromOp(op: AddNodeOp, id: string, position: AbsolutePosition): Node {
+  const label = op.label ?? op.parameters?.label ?? op.node_type;
+  return { id, type: op.node_type, position, data: { label, ...op.data } };
+}
+
+function edgeFromOp(op: AddEdgeOp, source: string, target: string): Edge {
+  return {
+    id: op.edge_id ?? `e-${source}-${target}-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    source,
+    target,
+    sourceHandle: op.source_handle ?? null,
+    targetHandle: op.target_handle ?? null,
+    ...(op.condition ? { data: { condition: op.condition } } : {}),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Batches the server already saved
+// ---------------------------------------------------------------------------
+
+/**
+ * `nodes` with the new nodes of a saved batch (`persisted: true`), under
+ * the server's ids, positions and data. An id already there is skipped:
+ * the same batch can arrive twice. Returns `nodes` itself when nothing is
+ * new. Nothing is saved; the server wrote the parameter rows.
+ */
+export function addSavedNodes(nodes: Node[], ops: WorkflowOperation[]): Node[] {
+  let next = nodes;
+  for (const op of ops) {
+    if (op.type !== 'add_node' || !op.minted_id || next.some(n => n.id === op.minted_id)) continue;
+    next = next.concat(nodeFromOp(op, op.minted_id, resolvePosition(op.position, next)));
+  }
+  return next;
+}
+
+/**
+ * `edges` with the new edges of a saved batch, under the server's ids. An
+ * edge already there (the same id, or the same ends and handles) is
+ * skipped. Returns `edges` itself when nothing is new.
+ */
+export function addSavedEdges(edges: Edge[], ops: WorkflowOperation[]): Edge[] {
+  let next = edges;
+  for (const op of ops) {
+    if (op.type !== 'add_edge' || typeof op.source !== 'string' || typeof op.target !== 'string') continue;
+    const edge = edgeFromOp(op, op.source, op.target);
+    const known = next.some(e => e.id === edge.id || (
+      e.source === edge.source
+      && e.target === edge.target
+      && (e.sourceHandle ?? null) === edge.sourceHandle
+      && (e.targetHandle ?? null) === edge.targetHandle
+    ));
+    if (!known) next = next.concat(edge);
+  }
+  return next;
 }
 
 // ---------------------------------------------------------------------------
@@ -193,17 +270,10 @@ export async function applyOperations(
             liveNodes,
           );
           result.refMap[op.client_ref] = id;
-          const position = resolvePosition(op.position, ctx, liveNodes);
-          const label = op.label ?? op.parameters?.label ?? op.node_type;
-          const node: Node = {
-            id,
-            type: op.node_type,
-            position,
-            data: { label },
-          };
+          const node = nodeFromOp(op, id, resolvePosition(op.position, liveNodes, ctx.defaultPosition));
           liveNodes = liveNodes.concat(node);
           ctx.setNodes(ns => ns.concat(node));
-          await ctx.saveNodeParameters(id, { label, ...op.parameters });
+          await ctx.saveNodeParameters(id, { label: node.data.label, ...op.parameters });
           break;
         }
 
@@ -213,13 +283,7 @@ export async function applyOperations(
           if (!source || !target) {
             throw new Error('add_edge: unresolved client_ref');
           }
-          const edge: Edge = {
-            id: `e-${source}-${target}-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-            source,
-            target,
-            sourceHandle: op.source_handle ?? null,
-            targetHandle: op.target_handle ?? null,
-          };
+          const edge = edgeFromOp(op, source, target);
           liveEdges = liveEdges.concat(edge);
           ctx.setEdges(es => es.concat(edge));
           break;
@@ -246,7 +310,7 @@ export async function applyOperations(
         }
 
         case 'move_node': {
-          const position = resolvePosition(op.position, ctx, liveNodes);
+          const position = resolvePosition(op.position, liveNodes, ctx.defaultPosition);
           liveNodes = liveNodes.map(n => (n.id === op.node_id ? { ...n, position } : n));
           ctx.setNodes(ns => ns.map(n => (n.id === op.node_id ? { ...n, position } : n)));
           break;

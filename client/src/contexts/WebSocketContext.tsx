@@ -824,6 +824,10 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [consoleLogs, setConsoleLogs] = useState<ConsoleLogEntry[]>([]);
   const [terminalLogs, setTerminalLogs] = useState<TerminalLogEntry[]>([]);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  // Bumped by a `chat.updated` for the open workflow's session; an effect
+  // after `sendRequest` reloads `chatMessages` then (handleMessage is
+  // defined before sendRequest, so it cannot send the request itself).
+  const [devChatRevision, setDevChatRevision] = useState(0);
   // Per-workflow node statuses live in a dedicated Zustand store
   // (`stores/nodeStatusStore.ts`). The store is built on
   // useSyncExternalStore so consumers can subscribe to a single
@@ -1192,6 +1196,22 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           // refetches through the authorized `list_memory_items` handler.
           void queryClient.invalidateQueries({ queryKey: ['memoryItems'] });
           void queryClient.invalidateQueries({ queryKey: ['memoryItem'] });
+          break;
+        }
+
+        case 'chat.updated': {
+          // CloudEvents-typed chat row change from services/chat_thread.py,
+          // sent after every chat insert and clear. Identity only: Home's
+          // thread refetches through `get_chat_messages`, and Dev's chat
+          // pane reloads when the session is the open workflow's.
+          const identity = (data as WorkflowEvent<{ workflow_id?: string; session_id?: string; role?: string }>)?.data;
+          const sessionId = identity?.session_id;
+          if (sessionId) {
+            void queryClient.invalidateQueries({ queryKey: queryKeys.chatThread.bySession(sessionId).queryKey });
+            if (sessionId === (useAppStore.getState().currentWorkflow?.id || 'default')) {
+              setDevChatRevision((revision) => revision + 1);
+            }
+          }
           break;
         }
 
@@ -1790,6 +1810,8 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
               return next;
             });
             queryClient.removeQueries({ queryKey: queryKeys.compactionStats._def });
+            // Home's thread spans restarts: refetch it rather than clear it.
+            void queryClient.invalidateQueries({ queryKey: queryKeys.chatThread.bySession(workflowId).queryKey });
             if (useAppStore.getState().currentWorkflow?.id === workflowId) {
               setConsoleLogs([]);
               setChatMessages([]);
@@ -2204,6 +2226,8 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         // to the in-memory cache immediately. Debounced (300ms trailing) so
         // it coalesces with other broadcast-driven invalidations.
         invalidateCatalogue(queryClient);
+        // Chat rows written while the socket was down broadcast to nobody.
+        void queryClient.invalidateQueries({ queryKey: queryKeys.chatThread._def });
 
         // Page-state restore (background). Fire-and-forget — these writes
         // hydrate panels that PersistQueryClient doesn't cache (terminal /
@@ -2591,7 +2615,8 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       timestamp
     };
 
-    // Add to local messages immediately for UI feedback
+    // Add to local messages immediately for UI feedback; taken back out if
+    // the send fails (`not_running` means the server saved nothing).
     setChatMessages(prev => [...prev, chatMessage]);
 
     // Send to backend to dispatch to chatTrigger nodes (also saves to database).
@@ -2599,18 +2624,45 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     // this is what scopes the persisted chat history to a single workflow.
     try {
       const workflowId = useAppStore.getState().currentWorkflow?.id || 'default';
-      await sendRequest('send_chat_message', {
+      const response = await sendRequest<{ success?: boolean; error?: string }>('send_chat_message', {
         message,
         role: 'user',
         node_id: nodeId,  // Target specific chatTrigger node if specified
         session_id: workflowId,
         timestamp
       });
+      if (response?.success === false) throw new Error(response.error || 'send_failed');
     } catch (error) {
+      setChatMessages(prev => prev.filter((entry) => entry !== chatMessage));
       console.error('[WebSocket] Failed to send chat message:', error);
       throw error;
     }
   }, [sendRequest]);
+
+  // Reload the chat pane after a `chat.updated` for the open workflow's
+  // session: a reply, a routine report, or a message from another tab.
+  useEffect(() => {
+    if (devChatRevision === 0) return;
+    let current = true;
+    const sessionId = useAppStore.getState().currentWorkflow?.id || 'default';
+    sendRequest<any>('get_chat_messages', { session_id: sessionId })
+      .then((response) => {
+        if (!current || !response?.success || !Array.isArray(response.messages)) return;
+        // A workflow switch meanwhile loads its own history.
+        if (sessionId !== (useAppStore.getState().currentWorkflow?.id || 'default')) return;
+        setChatMessages(response.messages.map((m: any) => ({
+          role: m.role as 'user' | 'assistant',
+          message: m.message,
+          timestamp: m.timestamp,
+        })));
+      })
+      .catch(() => {
+        // The next update, reconnect or workflow switch reloads the pane.
+      });
+    return () => {
+      current = false;
+    };
+  }, [devChatRevision, sendRequest]);
 
   // =========================================================================
   // Node Parameters Operations
@@ -3064,6 +3116,7 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       return next;
     });
     queryClient.removeQueries({ queryKey: queryKeys.compactionStats._def });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.chatThread.bySession(workflowId).queryKey });
     if (useAppStore.getState().currentWorkflow?.id === workflowId) {
       setConsoleLogs([]);
       setChatMessages([]);

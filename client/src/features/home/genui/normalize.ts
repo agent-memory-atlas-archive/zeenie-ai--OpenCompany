@@ -14,8 +14,12 @@
  *   the apps card, the hire and change buttons into the button row);
  * - always has "Ask me before sending anything" bound to /rules/askFirst,
  *   defaulting to on, and exactly one hire button and one change button;
- * - has at most LIMITS.maxElements elements (the buttons and that toggle
- *   are always kept);
+ * - always says when they work: one Schedule, after the routine, bound to
+ *   /trigger, which starts as the hire button's trigger (else the app the
+ *   routine's first "When" step names, else the owner messaging them),
+ *   snapped to one the server builds exactly as it reads;
+ * - has at most LIMITS.maxElements elements (the buttons, that toggle and
+ *   the Schedule are always kept);
  * - cannot reach an object prototype (ids, prop keys and state keys named
  *   `__proto__`, `constructor` or `prototype` are dropped).
  *
@@ -30,6 +34,7 @@
 import {
   ASK_FIRST_LABEL,
   LIMITS,
+  PROP_SCHEMAS,
   STATE_PATHS,
   actionOf,
   isComponentType,
@@ -37,7 +42,8 @@ import {
   isControl,
   type ComponentType,
 } from './catalog';
-import { bindingPath, getPath, isForbiddenKey, sanitizeState, setPath, type UiState } from './expressions';
+import { bindingPath, getPath, isForbiddenKey, resolveValue, sanitizeState, setPath, type UiState } from './expressions';
+import { readTrigger, snapTrigger, type HireTrigger } from './hirePayload';
 
 export interface SpecElement {
   type: ComponentType;
@@ -166,6 +172,21 @@ function removeEverywhere(elements: Elements, id: string): void {
     const index = element.children.indexOf(id);
     if (index !== -1) element.children.splice(index, 1);
   }
+}
+
+/** When they work, as the screen first says it: the hire button's trigger,
+ *  else the app the routine's first "When" step names, else the owner
+ *  messaging them. */
+function seedTrigger(elements: Elements, root: string, state: UiState): HireTrigger {
+  const tree = depthFirst(elements, root).map((id) => elements.get(id)!);
+  const hire = tree.find((element) => buttonAction(element) === 'hire_employee');
+  const params = resolveValue(hire?.props.actionParams, state);
+  const given = readTrigger(isRecord(params) ? params.trigger : undefined);
+  if (given && (given.kind !== 'app_event' || given.app)) return given;
+  const plan = tree.find((element) => element.type === 'Plan');
+  const parsed = plan ? PROP_SCHEMAS.Plan.safeParse(resolveValue(plan.props, state) ?? {}) : null;
+  const app = parsed?.success ? parsed.data.steps.find((step) => step.role === 'trigger')?.app : undefined;
+  return snapTrigger(app ? { kind: 'app_event', app } : { kind: 'manual' });
 }
 
 export function normalizeSpec(spec: unknown): NormalizedSpec | null {
@@ -337,7 +358,25 @@ export function normalizeSpec(spec: unknown): NormalizedSpec | null {
     attach(host, [askFirst]);
   }
 
-  // Cap the size, always keeping the buttons, the toggle and their parents.
+  // When they work: one Schedule bound to /trigger, after the routine (else
+  // the agent card, else first). Hire reads /trigger before the button.
+  state = setPath(state, STATE_PATHS.trigger, seedTrigger(elements, root, state));
+  const schedules = depthFirst(elements, root).filter((id) => elements.get(id)!.type === 'Schedule');
+  schedules.slice(1).forEach((id) => removeEverywhere(elements, id));
+  let schedule = schedules[0];
+  if (!schedule) {
+    schedule = freshId(elements, '__schedule');
+    const tree = depthFirst(elements, root);
+    const anchor =
+      tree.find((id) => elements.get(id)!.type === 'Plan') ?? tree.find((id) => elements.get(id)!.type === 'AgentCard');
+    const parent = (anchor && tree.find((id) => elements.get(id)!.children.includes(anchor))) || root;
+    const siblings = elements.get(parent)!.children;
+    siblings.splice(anchor ? siblings.indexOf(anchor) + 1 : 0, 0, schedule);
+  }
+  elements.set(schedule, { type: 'Schedule', props: { value: { $bindState: STATE_PATHS.trigger } }, children: [] });
+
+  // Cap the size, always keeping the buttons, the toggle, the Schedule and
+  // their parents.
   const full = depthFirst(elements, root);
   const parentOf = new Map<string, string>();
   for (const id of full) for (const child of elements.get(id)!.children) parentOf.set(child, id);
@@ -346,6 +385,7 @@ export function normalizeSpec(spec: unknown): NormalizedSpec | null {
     for (let at = id; at !== undefined; at = parentOf.get(at)) mustKeep.add(at);
   };
   keepWithAncestors(askFirst);
+  keepWithAncestors(schedule);
   full.filter((id) => ['hire_employee', 'refine'].includes(buttonAction(elements.get(id)) ?? '')).forEach(keepWithAncestors);
   let budget = LIMITS.maxElements - mustKeep.size;
   const kept = new Set<string>();

@@ -1,25 +1,30 @@
 /**
  * The draft's request rules: every request has its own token, a reply for
  * an old token changes nothing, a change request carries the job and the
- * earlier replies, and one hire is in flight at a time with a key that
- * repeats for the same payload.
+ * earlier replies, Cancel hands the owner's words back, the screen never
+ * keeps a trigger the resolved apps cannot start, and one hire is in flight
+ * at a time with a key that repeats for the same payload until it hires.
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SPIKE, orbState } from '../../orb/orb';
 import corpus from '../__fixtures__/replies.json';
+import { STATE_PATHS } from '../catalog';
 import {
   HISTORY_TURNS,
   SETUP_TIMEOUT_MS,
   beginHire,
+  cancelDraft,
   discardDraft,
   endHire,
   resetDraftForTests,
   retryDraft,
   setRefining,
   submitDraft,
+  triggerAppNames,
   useDraftStore,
 } from '../draftStore';
+import { getPath } from '../expressions';
 
 const GOOD_REPLY = (corpus as unknown as { name: string; reply: string }[]).find((c) => c.name === 'clean minified reply')!.reply;
 
@@ -149,6 +154,67 @@ describe('submitDraft', () => {
   });
 });
 
+describe('cancelDraft', () => {
+  it('stops a new job and puts its words back in the composer', async () => {
+    const pending = deferred<unknown>();
+    const send = vi.fn<Send>((type) => (type === 'generate_employee_setup' ? pending.promise : Promise.resolve({})));
+    const running = submitDraft(send, 'Answer my WhatsApp');
+    const token = useDraftStore.getState().token;
+    cancelDraft(send);
+    expect(send).toHaveBeenCalledWith('cancel_employee_setup', { draft_token: token });
+    expect(useDraftStore.getState()).toMatchObject({ status: 'idle', input: 'Answer my WhatsApp', token: null });
+    pending.resolve({ success: true, reply: GOOD_REPLY });
+    await running;
+    expect(useDraftStore.getState().spec).toBeNull();
+  });
+
+  it('stops a change and keeps the last version on screen', async () => {
+    const send = vi.fn<Send>().mockResolvedValue({ success: true, reply: GOOD_REPLY });
+    await submitDraft(send, 'the job');
+    const pending = deferred<unknown>();
+    send.mockReturnValueOnce(pending.promise);
+    setRefining(true);
+    const running = submitDraft(send, 'weekdays only');
+    cancelDraft(send);
+    expect(useDraftStore.getState()).toMatchObject({ status: 'ready', input: 'weekdays only', refining: true });
+    pending.resolve({ success: false, error: 'cancelled' });
+    await running;
+    expect(useDraftStore.getState().status).toBe('ready');
+    expect(useDraftStore.getState().spec).not.toBeNull();
+  });
+});
+
+describe('the screen’s trigger', () => {
+  const whatsapp = {
+    app_id: 'whatsapp',
+    provider_id: 'whatsapp',
+    name: 'WhatsApp',
+    icon_ref: null,
+    connected: false,
+    supported: true,
+    can_trigger: true,
+  };
+
+  it('keeps an app that can start the work', async () => {
+    const send = vi.fn<Send>().mockResolvedValue({ success: true, reply: GOOD_REPLY, apps: { whatsapp } });
+    await submitDraft(send, 'job');
+    const state = useDraftStore.getState();
+    expect(getPath(state.uiState, STATE_PATHS.trigger)).toEqual({ kind: 'app_event', app: 'WhatsApp' });
+    expect(triggerAppNames(state.apps)).toEqual({ whatsapp: 'WhatsApp' });
+  });
+
+  it('falls back to the owner messaging them when the app cannot', async () => {
+    const send = vi
+      .fn<Send>()
+      .mockResolvedValue({ success: true, reply: GOOD_REPLY, apps: { whatsapp: { ...whatsapp, can_trigger: false } } });
+    await submitDraft(send, 'job');
+    const state = useDraftStore.getState();
+    expect(getPath(state.uiState, STATE_PATHS.trigger)).toEqual({ kind: 'manual' });
+    // What the model wrote stays the screen's starting point.
+    expect(getPath(state.spec!.state, STATE_PATHS.trigger)).toEqual({ kind: 'app_event', app: 'WhatsApp' });
+  });
+});
+
 describe('beginHire', () => {
   it('allows one hire at a time and repeats the key for the same payload', () => {
     const key = beginHire('payload-a');
@@ -158,6 +224,12 @@ describe('beginHire', () => {
     expect(beginHire('payload-a')).toBe(key);
     endHire();
     expect(beginHire('payload-b')).not.toBe(key);
+  });
+
+  it('forgets the key once it hired someone, so the same setup hires anew', () => {
+    const key = beginHire('payload-a');
+    endHire(true);
+    expect(beginHire('payload-a')).not.toBe(key);
   });
 
   it('blocks a new draft while a hire is in flight', async () => {

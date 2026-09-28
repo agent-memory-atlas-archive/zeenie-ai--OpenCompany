@@ -3,6 +3,7 @@
   "enabled_nodes": [
     "start",
     "chatTrigger",
+    "chatReply",
     "taskTrigger",
     "console",
 
@@ -28,6 +29,7 @@
     "writeTodos",
     "canvas",
     "browser",
+    "agentBuilder",
 
     "context",
     "approvalGate",

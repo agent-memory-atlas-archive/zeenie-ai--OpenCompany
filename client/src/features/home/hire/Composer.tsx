@@ -11,13 +11,14 @@
  */
 
 import { ArrowRight } from 'lucide-react';
-import { useEffect, useLayoutEffect, useRef, type KeyboardEvent } from 'react';
+import { useEffect, useRef, type KeyboardEvent } from 'react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { animate } from '@/lib/motion';
 import { prefersReducedMotion } from '@/lib/useReducedMotion';
 import { cn } from '@/lib/utils';
 import { AppMark } from '../ui/primitives';
+import { useAutoGrow } from '../ui/useAutoGrow';
 import { createLabel, isSendKey } from './composerKeys';
 
 export interface ComposerApp {
@@ -67,15 +68,8 @@ export function Composer({
   const createRef = useRef<HTMLButtonElement>(null);
   const canCreate = value.trim().length > 0 && !working;
 
-  // Grow with the text up to --h-composer-max, then scroll. Runs on every
-  // value change so text set from outside (a template) sizes the box too.
-  useLayoutEffect(() => {
-    const box = boxRef.current;
-    if (!box) return;
-    box.style.height = 'auto';
-    box.style.height = `${box.scrollHeight}px`;
-    box.style.overflowY = box.scrollHeight > box.clientHeight ? 'auto' : 'hidden';
-  }, [value]);
+  // Grow with the text up to --h-composer-max, then scroll.
+  useAutoGrow(boxRef, value);
 
   useEffect(() => {
     if (!focusNonce) return;

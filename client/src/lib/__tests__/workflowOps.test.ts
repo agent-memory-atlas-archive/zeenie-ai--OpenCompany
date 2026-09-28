@@ -12,6 +12,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Node, Edge } from 'reactflow';
 import {
+  addSavedEdges,
+  addSavedNodes,
   applyOperations,
   type ApplyContext,
   type WorkflowOperation,
@@ -196,6 +198,99 @@ describe('add_node', () => {
     expect(state.edges[0].target).toBe('agent-1');
     expect(state.edges[0].sourceHandle).toBe('output-tool');
     expect(state.edges[0].targetHandle).toBe('input-skill');
+  });
+});
+
+describe('server-minted fields', () => {
+  it('keeps node data beyond the label, and an edge id and condition', async () => {
+    const { ctx, state } = makeContext({ nodes: [makeNode('agent', 'aiAgent')] });
+    const condition = { field: 'result.response', operator: 'neq', value: 'NO_REPLY' };
+
+    await applyOperations(
+      [
+        {
+          type: 'add_node',
+          client_ref: 'ctx',
+          node_type: 'context',
+          parameters: {},
+          label: 'Context',
+          minted_id: '7:context:1',
+          data: { systemManaged: true, agentNodeId: 'agent' },
+        },
+        { type: 'add_edge', source: 'agent', target: 'reply', edge_id: 'e-server', condition },
+      ],
+      ctx,
+    );
+
+    expect(state.nodes[1].data).toEqual({ label: 'Context', systemManaged: true, agentNodeId: 'agent' });
+    expect(state.edges[0].id).toBe('e-server');
+    expect(state.edges[0].data).toEqual({ condition });
+  });
+});
+
+// ----- batches the server already saved -------------------------------------
+
+const SAVED: WorkflowOperation[] = [
+  {
+    type: 'add_node',
+    client_ref: 'tool',
+    node_type: 'duckduckgoSearch',
+    parameters: { max_results: 5 },
+    label: 'Web search',
+    position: { x: 120, y: 440 },
+    minted_id: '7:duckduckgoSearch:1',
+  },
+  {
+    type: 'add_edge',
+    source: '7:duckduckgoSearch:1',
+    target: '7:aiAgent:1',
+    source_handle: 'output-tool',
+    target_handle: 'input-tools',
+    edge_id: 'e-7:duckduckgoSearch:1-output-tool-7:aiAgent:1-input-tools',
+  },
+  { type: 'set_node_parameters', node_id: '7:masterSkill:1', parameters: { skills_config: {} } },
+];
+
+describe('addSavedNodes / addSavedEdges', () => {
+  it('adopts the server ids, position and label, and saves nothing', () => {
+    const nodes = addSavedNodes([makeNode('7:aiAgent:1', 'aiAgent')], SAVED);
+    const edges = addSavedEdges([], SAVED);
+
+    expect(nodes[1]).toEqual({
+      id: '7:duckduckgoSearch:1',
+      type: 'duckduckgoSearch',
+      position: { x: 120, y: 440 },
+      data: { label: 'Web search' },
+    });
+    expect(edges).toEqual([
+      {
+        id: 'e-7:duckduckgoSearch:1-output-tool-7:aiAgent:1-input-tools',
+        source: '7:duckduckgoSearch:1',
+        target: '7:aiAgent:1',
+        sourceHandle: 'output-tool',
+        targetHandle: 'input-tools',
+      },
+    ]);
+  });
+
+  it('skips what the canvas has: a batch can arrive twice', () => {
+    const nodes = addSavedNodes([makeNode('7:aiAgent:1', 'aiAgent')], SAVED);
+    const edges = addSavedEdges([], SAVED);
+
+    expect(addSavedNodes(nodes, SAVED)).toBe(nodes);
+    expect(addSavedEdges(edges, SAVED)).toBe(edges);
+  });
+
+  it('skips an edge with the same ends and handles under another id', () => {
+    const drawn: Edge = {
+      id: 'e-drawn',
+      source: '7:duckduckgoSearch:1',
+      target: '7:aiAgent:1',
+      sourceHandle: 'output-tool',
+      targetHandle: 'input-tools',
+    };
+
+    expect(addSavedEdges([drawn], SAVED)).toEqual([drawn]);
   });
 });
 

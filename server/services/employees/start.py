@@ -7,7 +7,12 @@ is set up (``needs_ai``). Returns the start's control envelope.
 
 An employee hired before any AI model existed, or whose model's provider
 has since been disconnected, is moved onto the model the owner has now,
-so Start does not launch an agent that cannot answer.
+so Start does not launch an agent that cannot answer: its worker, and the
+agent it talks to the owner through.
+
+One that stopped after a problem is reset first, so Start works on it
+too. The revision the owner's card showed is the stopped generation's,
+which the reset moves past, so it is checked here instead.
 """
 
 from __future__ import annotations
@@ -26,12 +31,17 @@ from services.plugin.ws import ws_response
 
 logger = get_logger(__name__)
 
+#: The node roles a hired employee's agents play: the worker, and the agent
+#: it talks to the owner through.
+AGENT_ROLES = ("agent", "talk_agent")
+
 
 async def _agent_ids(database: Any, workflow_id: str) -> List[str]:
     row = await store.get_by_workflow(database, workflow_id)
-    agent = (row.node_roles or {}).get("agent") if row is not None else None
-    if agent:
-        return [agent]
+    roles = (row.node_roles or {}) if row is not None else {}
+    agents = list(dict.fromkeys(roles[role] for role in AGENT_ROLES if roles.get(role)))
+    if agents:
+        return agents
     workflow = await database.get_workflow(workflow_id)
     return list(index_graph(getattr(workflow, "data", None)).agent_ids) if workflow is not None else []
 
@@ -83,11 +93,18 @@ async def handle_start_employee(data: Dict[str, Any], websocket: WebSocket) -> D
         return {"success": False, "error": "needs_ai"}
     await heal_agent_models(database, auth_service, Connections(auth_service), workflow_id)
     expected = data.get("expected_revision")
+    expected_revision = int(expected) if expected is not None else None
+    latest = await database.get_latest_workflow_control(workflow_id)
+    if latest is not None and latest.status == "failed":
+        if expected_revision is not None and expected_revision != latest.revision:
+            return {"success": False, "error": "control_revision_conflict"}
+        expected_revision = None  # the reset below moves the revision on
     return await start_saved_workflow(
         workflow_id,
         owner_id=execution_principal(data, websocket),
-        expected_revision=int(expected) if expected is not None else None,
+        expected_revision=expected_revision,
         idempotency_key=str(data.get("idempotency_key") or "") or None,
+        reset_if_failed=True,
     )
 
 

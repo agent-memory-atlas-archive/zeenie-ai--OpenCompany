@@ -17,6 +17,7 @@ from typing import Any
 from services.approvals.listeners import register_approval_listener as _register_approval_listener
 from services.deployment.control import register_control_listener as _register_control_listener
 from services.workflow_storage.hooks import register_workflow_deleted_hook as _register_deleted_hook
+from services.workflow_storage.listeners import register_graph_listener as _register_graph_listener
 from services.ws_handler_registry import register_ws_handlers as _register_ws_handlers
 
 from . import events as _events
@@ -53,5 +54,8 @@ _register_control_listener(_events.employee_changed_now)
 _events.set_summary_builder(_build_summary)
 # A draft waiting, sent or discarded changes the employee's pending count.
 _register_approval_listener(lambda change: _events.employee_changed(change.workflow_id))
+# A saved graph can change the summary (a new tool, a change waiting for a
+# restart). The editor autosaves often, so this takes the coalesced path.
+_register_graph_listener(_events.employee_changed)
 
 __all__ = ["apps", "events", "handlers", "setup", "store", "summaries"]

@@ -6,13 +6,18 @@
  *
  * The shell owns what spans views: the employee broadcasts that keep the
  * team current, the orb behind the content, the Workspace dock on the
- * right, the Settings dialog, and the connect dialog any view can open. Switching views scrolls to the top and
+ * right, the Settings dialog, and the connect dialogs any view can open (an
+ * app's, and "Connect an AI model"). Switching views scrolls to the top and
  * plays the view swap.
+ *
+ * The scrolling area is a column the view fills at least, so an employee's
+ * page can pin its message box to the bottom however short the conversation.
  */
 
 import { useLayoutEffect, useRef, useState } from 'react';
 import { animate } from '@/lib/motion';
 import { useApprovalLifecycle } from './approvals/data';
+import { ConnectAIDialog } from './connectAI/ConnectAIDialog';
 import { useEmployeeLifecycle, useEmployeesQuery } from './data/employees';
 import { EmployeeView } from './employee/EmployeeView';
 import { HomeHeader } from './header/HomeHeader';
@@ -33,6 +38,20 @@ function useViewTitle(): string {
   const { data: employees } = useEmployeesQuery();
   if (view.kind !== 'employee') return 'New employee';
   return employees?.find((employee) => employee.workflow_id === view.workflowId)?.name ?? 'Employee';
+}
+
+/** Whether the employee on screen asks before sending anything. */
+function AsksFirstNote({ workflowId }: { workflowId: string }) {
+  const { data: employees } = useEmployeesQuery();
+  const employee = employees?.find((item) => item.workflow_id === workflowId);
+  if (!employee) return null;
+  return (
+    <p className="m-0 pt-4 text-center text-xs text-fg-muted">
+      {employee.asks_first
+        ? `${employee.name} asks before sending anything on your behalf.`
+        : `${employee.name} doesn’t ask before sending anything on your behalf.`}
+    </p>
+  );
 }
 
 export default function HomeShell() {
@@ -75,25 +94,24 @@ export default function HomeShell() {
         <div
           ref={scrollRef}
           onScroll={(event) => setScrolled(event.currentTarget.scrollTop > HEADER_BORDER_AFTER_PX)}
-          className="relative z-10 min-h-0 flex-1 overflow-x-hidden overflow-y-auto"
+          className="relative z-10 flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto"
         >
-          <div className="mx-auto flex max-w-(--w-home-content) flex-col items-center px-6 pt-2 pb-10">
-            <div ref={viewRef} key={viewKey} className="flex w-full flex-col items-center">
+          <div className="mx-auto flex w-full max-w-(--w-home-content) flex-1 flex-col items-center px-6 pt-2 pb-10">
+            <div ref={viewRef} key={viewKey} className="flex w-full flex-1 flex-col items-center">
               {view.kind === 'employee' ? (
                 <EmployeeView workflowId={view.workflowId} onConnect={openConnect} />
               ) : (
                 <HireView onConnect={openConnect} />
               )}
             </div>
-            <p className="m-0 pt-7 text-center text-xs text-fg-muted">
-              Your employees ask before sending anything on your behalf.
-            </p>
+            {view.kind === 'employee' && <AsksFirstNote workflowId={view.workflowId} />}
           </div>
         </div>
       </main>
       <WorkspaceDock />
       <HomeSettings onConnect={openConnect} />
       <ConnectDialog providerId={connectId} onClose={() => setConnectId(null)} />
+      <ConnectAIDialog />
     </div>
   );
 }

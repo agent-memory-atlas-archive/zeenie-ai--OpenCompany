@@ -1,15 +1,17 @@
 /**
  * The new employee's setup screen under the composer (design handoff
- * "Draft"): a checklist while the model writes it, the screen itself when
- * it arrives, or what went wrong with a way to try again.
+ * "Draft"): while the model writes it, a line saying so with the time it
+ * has taken so far and Cancel; the screen itself when it arrives; or what
+ * went wrong with a way to try again.
  *
  * Buttons on the screen act through genui/actions: a change request puts
  * the composer into editing mode, connect buttons open the provider's
  * connect dialog, and Hire goes through useHire. Discard and a finished
- * hire collapse the panel before it goes.
+ * hire collapse the panel before it goes. The screen's layout JSON is a
+ * developer's view, shown in development builds only.
  */
 
-import { Check, Code, X } from 'lucide-react';
+import { Code, X } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ActionButton } from '@/components/ui/action-button';
 import { Button } from '@/components/ui/button';
@@ -20,13 +22,13 @@ import { useHomeStore } from '../state/homeStore';
 import { MicroLabel } from '../ui/primitives';
 import { pillToast } from '../ui/pillToast';
 import { runSpecAction, type ConnectCandidate } from './actions';
-import { useDraftActions, useDraftStore, type DraftFailure } from './draftStore';
+import { triggerAppNames, useDraftActions, useDraftStore, type DraftFailure } from './draftStore';
 import { SpecView } from './render';
 import { useHire } from './useHire';
 import { useReveal } from './useReveal';
 
-const SETUP_STEPS = ['Understanding the job', 'Picking the right apps', 'Writing their routine'] as const;
-const STEP_EVERY_MS = 1300;
+/** After this long, the line says some models take a few minutes. */
+const SLOW_AFTER_SECONDS = 45;
 
 const FAILURE_DETAIL: Record<DraftFailure['code'], string> = {
   connection: 'The connection dropped part-way.',
@@ -35,55 +37,57 @@ const FAILURE_DETAIL: Record<DraftFailure['code'], string> = {
   unparseable: 'The AI model’s answer came back unreadable.',
   busy: 'Another setup is still being written.',
   invalid_request: 'That description couldn’t be used.',
-  no_ai_provider: 'Connect an AI model first, then try again.',
+  no_ai_provider: 'Connect an AI model first. The setup carries on once one is connected.',
   cancelled: 'It was stopped.',
 };
 
-function WorkingSteps({ token }: { token: string | null }) {
-  const [progress, setProgress] = useState({ token, step: 0 });
-  const step = progress.token === token ? progress.step : 0;
+/** Whole seconds since the request with this token started. */
+function useElapsed(token: string | null): number {
+  const [clock, setClock] = useState({ token, seconds: 0 });
   useEffect(() => {
+    const started = Date.now();
     const timer = window.setInterval(() => {
-      setProgress((current) => ({
-        token,
-        step: Math.min((current.token === token ? current.step : 0) + 1, SETUP_STEPS.length - 1),
-      }));
-    }, STEP_EVERY_MS);
+      setClock({ token, seconds: Math.floor((Date.now() - started) / 1000) });
+    }, 1000);
     return () => window.clearInterval(timer);
   }, [token]);
+  return clock.token === token ? clock.seconds : 0;
+}
+
+function clockText(seconds: number): string {
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+}
+
+function WorkingLine({ token, onCancel }: { token: string | null; onCancel: () => void }) {
+  const seconds = useElapsed(token);
   return (
-    <ol aria-label="Setting up" className="flex flex-col gap-3 px-0.5 pt-1 pb-1.5">
-      {SETUP_STEPS.map((label, index) => {
-        const done = index < step;
-        const active = index === step;
-        return (
-          <li
-            key={label}
-            aria-current={active ? 'step' : undefined}
-            className={cn(
-              'flex items-center gap-2.5 text-base transition-colors duration-(--dur-slow)',
-              index <= step ? 'text-fg-default' : 'text-fg-faint',
-            )}
-          >
-            {done && (
-              <span className="grid size-4.5 shrink-0 place-items-center rounded-full border border-action-run-border bg-action-run-soft text-action-run-ink">
-                <Check aria-hidden className="size-2.5" strokeWidth={3.5} />
-              </span>
-            )}
-            {active && (
-              <span
-                aria-hidden
-                className="mx-0.5 size-3.5 shrink-0 animate-[spin_700ms_linear_infinite] rounded-full border-2 border-node-agent-border border-t-node-agent motion-reduce:animate-none"
-              />
-            )}
-            {!done && !active && (
-              <span aria-hidden className="mx-px size-4 shrink-0 rounded-full border border-dashed border-border-strong" />
-            )}
-            {label}
-          </li>
-        );
-      })}
-    </ol>
+    <div className="flex flex-col gap-1.5 px-0.5 py-1">
+      <div className="flex items-center gap-2.5">
+        <span
+          aria-hidden
+          className="mx-0.5 size-3.5 shrink-0 animate-[spin_700ms_linear_infinite] rounded-full border-2 border-node-agent-border border-t-node-agent motion-reduce:animate-none"
+        />
+        <span role="status" className="text-base text-fg-default">
+          Writing their setup…
+        </span>
+        <span role="timer" aria-label="Time so far" className="font-mono text-xs text-fg-faint">
+          {clockText(seconds)}
+        </span>
+        <Button
+          variant="quiet"
+          onClick={onCancel}
+          className="ml-auto h-8 rounded-lg border-border-strong px-3.5 font-semibold text-fg-default"
+        >
+          Cancel
+        </Button>
+      </div>
+      {seconds >= SLOW_AFTER_SECONDS && (
+        <p className="m-0 text-sm text-fg-muted">
+          Some AI models take a few minutes, especially ones running on this computer. You can keep waiting, or
+          cancel and change the description.
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -138,6 +142,7 @@ export function HireDraftPanel({ onConnect }: { onConnect: (providerId: string) 
   const hiring = useDraftStore((s) => s.hiring);
   const actions = useDraftActions();
   const openSettings = useHomeStore((s) => s.openSettings);
+  const openConnectAI = useHomeStore((s) => s.openConnectAI);
   const { providers } = useConnectors();
   const sectionRef = useRef<HTMLElement>(null);
   const introRef = useRef<HTMLParagraphElement>(null);
@@ -146,6 +151,7 @@ export function HireDraftPanel({ onConnect }: { onConnect: (providerId: string) 
   const visible = status !== 'idle';
   const showSpec = Boolean(spec) && (status === 'ready' || (status === 'failed' && failure?.refine));
   const revealed = useReveal(showSpec && spec ? spec.order : [], version);
+  const triggerApps = useMemo(() => triggerAppNames(apps), [apps]);
 
   // Enter: rise out of a blur the first time the panel appears.
   const wasVisible = useRef(false);
@@ -252,13 +258,9 @@ export function HireDraftPanel({ onConnect }: { onConnect: (providerId: string) 
           </Button>
         </div>
 
-        {status === 'working' && <WorkingSteps token={token} />}
+        {status === 'working' && <WorkingLine token={token} onCancel={actions.cancel} />}
         {status === 'failed' && failure && (
-          <FailureNotice
-            failure={failure}
-            onRetry={() => void actions.retry()}
-            onConnectAi={() => openSettings('connectors', 'ai')}
-          />
+          <FailureNotice failure={failure} onRetry={() => void actions.retry()} onConnectAi={openConnectAI} />
         )}
         {status === 'ready' && intro && (
           <p ref={introRef} className="m-0 text-lead leading-relaxed text-pretty text-fg-default">
@@ -268,23 +270,34 @@ export function HireDraftPanel({ onConnect }: { onConnect: (providerId: string) 
         {showSpec && spec && (
           <>
             <div className={cn('flex min-w-0 flex-col gap-3', hiring && 'pointer-events-none opacity-60')}>
-              <SpecView spec={spec} state={uiState} revealed={revealed} onAction={onAction} onValue={actions.setValue} />
+              <SpecView
+                spec={spec}
+                state={uiState}
+                revealed={revealed}
+                onAction={onAction}
+                onValue={actions.setValue}
+                triggerApps={triggerApps}
+              />
             </div>
-            <Button
-              variant="quiet"
-              size="xs"
-              onClick={() => setShowJson((on) => !on)}
-              title="See the layout the assistant generated"
-              aria-expanded={showJson}
-              className="gap-1.5 self-start font-mono text-2xs font-normal text-fg-faint hover:border-border-default hover:bg-transparent hover:text-fg-muted"
-            >
-              <Code aria-hidden />
-              {showJson ? 'Hide layout JSON' : 'Layout JSON'}
-            </Button>
-            {showJson && (
-              <pre className="m-0 max-h-70 overflow-auto rounded-row border border-border-default bg-bg-app px-3.5 py-3 font-mono text-2xs leading-normal whitespace-pre text-fg-muted">
-                {JSON.stringify(spec, null, 2)}
-              </pre>
+            {import.meta.env.DEV && (
+              <>
+                <Button
+                  variant="quiet"
+                  size="xs"
+                  onClick={() => setShowJson((on) => !on)}
+                  title="See the layout the assistant generated"
+                  aria-expanded={showJson}
+                  className="gap-1.5 self-start font-mono text-2xs font-normal text-fg-faint hover:border-border-default hover:bg-transparent hover:text-fg-muted"
+                >
+                  <Code aria-hidden />
+                  {showJson ? 'Hide layout JSON' : 'Layout JSON'}
+                </Button>
+                {showJson && (
+                  <pre className="m-0 max-h-70 overflow-auto rounded-row border border-border-default bg-bg-app px-3.5 py-3 font-mono text-2xs leading-normal whitespace-pre text-fg-muted">
+                    {JSON.stringify(spec, null, 2)}
+                  </pre>
+                )}
+              </>
             )}
           </>
         )}

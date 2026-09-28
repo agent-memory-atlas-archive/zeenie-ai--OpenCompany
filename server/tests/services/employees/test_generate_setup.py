@@ -1,5 +1,6 @@
 """``generate_employee_setup`` / ``cancel_employee_setup``: the model
-answer comes back with the apps it names resolved; a cut-off or unreadable
+answer comes back with the apps it names resolved (and whether each can
+start the work); a cut-off or unreadable
 answer gets exactly one retry; failures come back as codes; every call is
 booked; a newer draft cancels the older; and the owner's words are never
 logged."""
@@ -138,6 +139,9 @@ async def test_returns_the_reply_with_its_apps_resolved(harness):
     assert result["apps"]["whatsapp"]["provider_id"] == "whatsapp"
     assert result["apps"]["whatsapp"]["connected"] is True
     assert result["apps"]["google calendar"]["provider_id"] == "google"
+    # A new WhatsApp message can start the work; the calendar cannot.
+    assert result["apps"]["whatsapp"]["can_trigger"] is True
+    assert result["apps"]["google calendar"]["can_trigger"] is False
     # One call, booked once, under the owner.
     assert len(harness.unifier.calls) == 1
     assert [row["session_id"] for row in harness.database.metrics] == ["owner-1"]

@@ -9,15 +9,17 @@ additions:
 - ground-rule Toggles bind under ``/rules``, and "Ask me before sending
   anything" binds to ``/rules/askFirst``, on by default; Choices bind under
   ``/choices``;
-- the hire button's params also carry ``trigger`` (what starts the work)
-  and ``sendsVia`` (the app they answer or report through);
-- a push toward app or schedule triggers, since a chat-only employee
-  cannot be given work from Normal mode yet.
+- the hire button's params also carry ``trigger`` (what starts the work,
+  with a schedule's time one of the catalogue's ``trigger.times``) and
+  ``sendsVia`` (the app they answer or report through). No kind of trigger
+  is preferred: every employee can be talked to on Home, so one that works
+  when the owner messages them is as good as any.
 
 The component and action lines come from config/genui_catalog.json, which
-the client's renderer is held to. The server writes every message, the
-"The job: " and "Change the setup: " prefixes included; the client only
-sends the owner's words and the earlier replies.
+the client's renderer is held to; a component the client inserts itself
+(``inserted``) is not offered to the model. The server writes every
+message, the "The job: " and "Change the setup: " prefixes included; the
+client only sends the owner's words and the earlier replies.
 """
 
 from __future__ import annotations
@@ -49,6 +51,7 @@ def catalog_prompt(catalog: Optional[Dict[str, Any]] = None) -> str:
     ask_first = c["ask_first_label"]
     kinds = "|".join(f'"{kind}"' for kind in c["trigger"]["kinds"])
     every = "|".join(f'"{value}"' for value in c["trigger"]["every"])
+    times = "|".join(f'"{value}"' for value in c["trigger"]["times"])
     lines = [
         'Reply ONLY with a JSON object, no code fences: {"text": string, "spec": UISpec}.',
         '"text": one short, warm sentence introducing the new employee by name.',
@@ -56,7 +59,7 @@ def catalog_prompt(catalog: Optional[Dict[str, Any]] = None) -> str:
         "1) AgentCard — a friendly first name, a plain job title as role, one-sentence description, apps they "
         'use, status "ready".',
         '2) Plan titled "Their routine" with 3-5 steps; the first step has role "trigger" (e.g. "When a message '
-        'arrives", "Every weekday at 8am"). Step titles are short present-tense actions. A step that uses an app '
+        'arrives", "Every weekday at 08:00"). Step titles are short present-tense actions. A step that uses an app '
         'names it in "app".',
         f'3) Card titled "Ground rules" containing 2-3 Toggles bound to state under "{paths["rules"]}" (always '
         f'include "{ask_first}" bound to "{paths["askFirst"]}", true in "state") and optionally one Choice bound '
@@ -64,10 +67,11 @@ def catalog_prompt(catalog: Optional[Dict[str, Any]] = None) -> str:
         '4) If a needed app is not connected: a Card with tone "trigger" saying so, with a Button (connect_app).',
         '5) A horizontal Stack with Button "Hire {name}" (primary, action hire_employee, actionParams {name, role, '
         'apps, trigger, sendsVia}) and Button "Change something" (secondary, action refine).',
-        f'"trigger" is {{"kind": {kinds}, "app"?, "every"?: {every}, "at"?: "HH:MM", "day"?}}: '
-        '"app_event" when an app\'s new message or email starts the work, "schedule" for routine work. Prefer '
-        'those; use "manual" only when the job is purely on request. "sendsVia" is the app they answer or report '
-        "through.",
+        f'"trigger" is {{"kind": {kinds}, "app"?, "every"?: {every}, "at"?: {times}, "day"?}}: '
+        '"app_event" when a new message or email in an app starts the work, "schedule" for routine work at set '
+        'times, "manual" when the owner gives them work by messaging them. "at" is the owner\'s local time; "day" '
+        'is a weekday name for "week", or a day of the month from 1 to 28 for "month". "sendsVia" is the app they '
+        "answer or report through.",
         'UISpec is flat: {"root": id, "state": {initial values}, "elements": {id: {"type", "props", "children": '
         '[ids], "visible"?: condition}}}. Max 12 elements. Every child id must exist.',
         'Each element looks like {"type":"Text","props":{"text":"…"},"children":[]} — all component props go '
@@ -78,7 +82,11 @@ def catalog_prompt(catalog: Optional[Dict[str, Any]] = None) -> str:
         "70 characters, descriptions one short line, step details under 8 words.",
         "Components (use ONLY these):",
     ]
-    lines += [f"- {name} {spec['props']} — {spec['description']}" for name, spec in c["components"].items()]
+    lines += [
+        f"- {name} {spec['props']} — {spec['description']}"
+        for name, spec in c["components"].items()
+        if not spec.get("inserted")
+    ]
     lines.append(f"Tones: {', '.join(c['tones'])}.")
     lines.append(
         'Dynamic props: {"$state":"/path"}, {"$template":"Reports ${/freq}"}, '

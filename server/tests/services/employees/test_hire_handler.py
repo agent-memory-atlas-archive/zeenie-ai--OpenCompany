@@ -1,10 +1,13 @@
 """``hire_employee``: a setup becomes a saved, valid workflow with its
 employee row; a retry with the same key finds that employee; a changed
-payload under the same key is refused; and it starts on its own only when
-nothing is missing."""
+payload under the same key is refused, and the same key while its first
+attempt is still building is busy; it starts on its own only when nothing
+is missing; and an app the graph leaves out never shows as one to
+connect."""
 
 from __future__ import annotations
 
+from datetime import timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -12,6 +15,7 @@ import pytest
 import nodes  # noqa: F401 - registers every plugin for the validator
 import services.employees  # noqa: F401 - registers the handlers
 from services.employees import hire, store
+from services.employees.hire_request import HireEmployeeRequest
 from services.employees.llm import LLMChoice
 from services.ws_handler_registry import get_ws_handlers
 
@@ -179,3 +183,75 @@ async def test_an_empty_library_gives_no_skills_node(harness):
     result = await hire.handle_hire_employee(payload(idempotency_key="hire-no-skills"), SOCKET)
     row = await store.get_by_workflow(harness.database, result["employee"]["workflow_id"])
     assert "skills" not in row.node_roles
+
+
+async def _reserve_for(database, request_payload):
+    """A reservation an earlier attempt made for this payload and is building."""
+    request = HireEmployeeRequest.model_validate(request_payload)
+    row, created = await store.reserve(
+        database, owner_id="owner", idempotency_key=request.idempotency_key, payload_hash=hire.payload_hash(request), fields={}
+    )
+    assert created
+    return row
+
+
+async def test_the_same_key_while_it_is_still_building_is_busy(harness):
+    data = payload(idempotency_key="hire-busy")
+    await _reserve_for(harness.database, data)
+    assert await hire.handle_hire_employee(data, SOCKET) == {"success": False, "error": "busy"}
+    assert harness.starts == []
+    assert (await harness.database.get_all_workflows()) == []
+
+
+async def test_a_reservation_made_since_the_lookup_is_busy_too(harness, monkeypatch):
+    data = payload(idempotency_key="hire-race")
+    await _reserve_for(harness.database, data)
+    real_lookup = store.get_by_idempotency_key
+    calls = []
+
+    async def lookup(*args, **kwargs):
+        calls.append(args)
+        # The handler's own first look misses: the other attempt reserved
+        # the key just after it.
+        return None if len(calls) == 1 else await real_lookup(*args, **kwargs)
+
+    monkeypatch.setattr(store, "get_by_idempotency_key", lookup)
+    assert await hire.handle_hire_employee(data, SOCKET) == {"success": False, "error": "busy"}
+    assert (await harness.database.get_all_workflows()) == []
+
+
+async def test_a_reservation_left_by_a_stopped_server_is_taken_over(harness, monkeypatch):
+    data = payload(idempotency_key="hire-stale")
+    row = await _reserve_for(harness.database, data)
+    monkeypatch.setattr(hire, "BUILDING_STALE_AFTER", timedelta(0))
+    result = await hire.handle_hire_employee(data, SOCKET)
+    assert result["success"] is True, result
+    assert (await store.get_by_workflow(harness.database, result["employee"]["workflow_id"])).id == row.id
+
+
+async def test_an_unexpected_error_leaves_the_key_free_to_retry(harness, monkeypatch):
+    real_build = hire.build_employee_graph
+
+    def broken(_inputs):
+        raise RuntimeError("builder bug")
+
+    monkeypatch.setattr(hire, "build_employee_graph", broken)
+    failed = await hire.handle_hire_employee(payload(idempotency_key="hire-retry"), SOCKET)
+    assert failed["success"] is False
+    row = await store.get_by_idempotency_key(harness.database, "owner", "hire-retry")
+    assert row.hire_state == "failed"
+
+    monkeypatch.setattr(hire, "build_employee_graph", real_build)
+    retried = await hire.handle_hire_employee(payload(idempotency_key="hire-retry"), SOCKET)
+    assert retried["success"] is True, retried
+
+
+async def test_an_app_left_out_while_they_ask_first_is_not_one_to_connect(harness):
+    # Stripe's only tool can spend money, so asking first leaves it out.
+    result = await hire.handle_hire_employee(payload(idempotency_key="hire-stripe", apps=["Stripe"]), SOCKET)
+    assert result["success"] is True, result
+    assert result["missing_apps"] == [] and result["employee"]["apps"] == []
+    assert any("Stripe" in warning for warning in result["warnings"])
+    row = await store.get_by_workflow(harness.database, result["employee"]["workflow_id"])
+    assert row.apps == []
+    assert result["started"] is True

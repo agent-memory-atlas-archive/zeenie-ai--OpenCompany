@@ -12,7 +12,11 @@ off disk:
 - every starter bundle (client/src/features/home/hire/starters.json) uses
   only those skills, names apps the hire's app registry resolves, says so in
   its job (the job text is all the setup model reads), and fits the hire's
-  job limit.
+  job limit;
+- every starter's own setup (its ``hire`` block, which "Hire now" sends as
+  it stands through the client's ``starterHirePayload``) is read by the hire
+  exactly as written, and builds with "ask me first" on without losing an
+  app it names or the way it says it starts.
 """
 
 from __future__ import annotations
@@ -25,7 +29,10 @@ import pytest
 import yaml
 
 from services.employees.apps import normalize_name, resolve_app
-from services.employees.hire_request import JOB_MAX
+from services.employees.builder import SCHEDULE_TIMES, WEEKDAYS, BuildInputs, build_employee_graph
+from services.employees.hire import _resolve_apps
+from services.employees.hire_request import DESCRIPTION_MAX, JOB_MAX, NAME_MAX, ROLE_MAX, HireEmployeeRequest
+from services.node_allowlist import is_hire_allowed
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 HOME = REPO_ROOT / "client" / "src" / "features" / "home"
@@ -103,3 +110,69 @@ def test_starters_use_discover_skills_and_name_their_apps(starters, discover_ski
             assert app is not None, f"{starter['id']}: the app registry does not know {app_name!r}"
             words = [normalize_name(word) for word in (app.name, *app.aliases)]
             assert any(word and word in job for word in words), f"{starter['id']}'s job never mentions {app.name}"
+
+
+def _starter_request(starter: dict) -> HireEmployeeRequest:
+    """What "Hire now" sends for a starter: its own setup, asking first."""
+    hire = starter["hire"]
+    return HireEmployeeRequest.model_validate(
+        {
+            "idempotency_key": f"starter-{starter['id']}",
+            "job": starter["job"],
+            "name": hire["names"][0],
+            "role": hire["role"],
+            "description": hire["description"],
+            "apps": starter["apps"],
+            "steps": hire["steps"],
+            "rules": {"ask_first": True, "items": []},
+            "trigger": hire["trigger"],
+            "sends_via": hire.get("sends_via"),
+        }
+    )
+
+
+def test_every_starter_setup_is_read_as_written(starters):
+    for starter in starters:
+        hire = starter["hire"]
+        request = _starter_request(starter)
+        assert request.missing_identity() is None, starter["id"]
+        # Nothing is cut short or swapped for a default on the way in.
+        assert all(0 < len(name) <= NAME_MAX for name in hire["names"]), starter["id"]
+        assert len(hire["role"]) <= ROLE_MAX and len(hire["description"]) <= DESCRIPTION_MAX, starter["id"]
+        assert [
+            {"title": step.title, "detail": step.detail, "role": step.role, "app": step.app} for step in request.steps
+        ] == [
+            {"title": step["title"], "detail": step.get("detail", ""), "role": step["role"], "app": step.get("app")}
+            for step in hire["steps"]
+        ], starter["id"]
+        assert request.trigger is not None and request.trigger.model_dump(exclude_none=True) == hire["trigger"], starter["id"]
+        assert request.sends_via == hire.get("sends_via"), starter["id"]
+        if hire["trigger"]["kind"] == "schedule":
+            # A time the schedule can run at, so it is never moved to another.
+            assert hire["trigger"]["at"] in SCHEDULE_TIMES, starter["id"]
+            if hire["trigger"]["every"] == "week":
+                assert hire["trigger"]["day"] in WEEKDAYS, starter["id"]
+
+
+def test_one_click_starters_keep_their_apps_while_asking_first(starters):
+    """Hired as it stands with "ask me first" on, a starter must build with
+    every app it names: one the builder leaves out (a tool that sends or
+    spends) would promise work the employee cannot do."""
+    for starter in starters:
+        request = _starter_request(starter)
+        named = [resolve_app(name, []) for name in starter["apps"]]
+        connected = [app.id for app in named if app is not None]
+        apps, unsupported = _resolve_apps(request, connected)
+        assert unsupported == [], f"{starter['id']} names apps the registry does not know: {unsupported}"
+        built = build_employee_graph(
+            BuildInputs(
+                workflow_id=f"starter-{starter['id']}",
+                request=request,
+                apps=apps,
+                connected_app_ids=set(connected),
+                allowed=is_hire_allowed,
+            )
+        )
+        dropped = [app.name for app in apps if app.id not in built.app_ids]
+        assert not dropped, f"{starter['id']} loses {dropped} while asking first: {built.warnings}"
+        assert built.trigger["kind"] == request.trigger.kind, f"{starter['id']} does not start the way it says"

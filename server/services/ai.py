@@ -1304,10 +1304,13 @@ class AIService:
 
                 Tool configs are folded into the existing ``tool_configs``
                 closure so ``tool_executor`` can route the LLM's eventual
-                tool_call to the right node.
+                tool_call to the right node. A node already bound (Agent
+                Builder hands back a saved tool this run may hold) is
+                skipped rather than bound twice under one name.
                 """
                 from services.node_registry import get_node_class
 
+                bound = {identity["node_id"] for identity in tool_identities}
                 new_bindings: List[tuple[Any, Dict[str, Any]]] = []
                 for op in operations:
                     if op.get("type") != "add_node":
@@ -1323,9 +1326,13 @@ class AIService:
                     # excluding chat models. Without this the rebind
                     # silently drops twitterSearch / googleGmail /
                     # pythonExecutor etc. and the LLM tries to call
-                    # tools it never got bound to.
+                    # tools it never got bound to. A Skills node
+                    # (masterSkill) is tool-kind but feeds input-skill;
+                    # it is never an LLM tool.
                     _kind = getattr(cls, "component_kind", "")
                     if not (_kind == "tool" or (bool(getattr(cls, "usable_as_tool", False)) and _kind != "model")):
+                        continue
+                    if (getattr(cls, "ui_hints", None) or {}).get("isMasterSkillEditor"):
                         continue
                     tool_info = {
                         "node_id": op.get("minted_id") or op.get("client_ref") or f"new_{node_type}",
@@ -1333,6 +1340,8 @@ class AIService:
                         "parameters": op.get("parameters") or {},
                         "label": op.get("label") or node_type,
                     }
+                    if tool_info["node_id"] in bound:
+                        continue
                     try:
                         tool, tool_config = await self._build_tool_from_node(tool_info)
                     except Exception as exc:  # noqa: BLE001 — log + skip one tool
@@ -2025,6 +2034,7 @@ class AIService:
                     (``tool_configs`` vs ``tool_node_configs``)."""
                     from services.node_registry import get_node_class
 
+                    bound = {identity["node_id"] for identity in tool_identities}
                     new_bindings: List[tuple[Any, Dict[str, Any]]] = []
                     for op in operations:
                         if op.get("type") != "add_node":
@@ -2037,11 +2047,14 @@ class AIService:
                             continue
                         # Match the catalogue filter — pure ToolNode OR
                         # dual-purpose ActionNode (usable_as_tool=True),
-                        # excluding chat models. Without this the rebind
-                        # silently drops twitterSearch / googleGmail /
-                        # pythonExecutor etc.
+                        # excluding chat models and the Skills node
+                        # (masterSkill feeds input-skill, never an LLM
+                        # tool). Without this the rebind silently drops
+                        # twitterSearch / googleGmail / pythonExecutor etc.
                         _kind = getattr(cls, "component_kind", "")
                         if not (_kind == "tool" or (bool(getattr(cls, "usable_as_tool", False)) and _kind != "model")):
+                            continue
+                        if (getattr(cls, "ui_hints", None) or {}).get("isMasterSkillEditor"):
                             continue
                         tool_info = {
                             "node_id": op.get("minted_id") or op.get("client_ref") or f"new_{node_type}",
@@ -2049,6 +2062,8 @@ class AIService:
                             "parameters": op.get("parameters") or {},
                             "label": op.get("label") or node_type,
                         }
+                        if tool_info["node_id"] in bound:
+                            continue
                         try:
                             tool, tool_config = await self._build_tool_from_node(tool_info)
                         except Exception as exc:  # noqa: BLE001

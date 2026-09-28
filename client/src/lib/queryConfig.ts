@@ -72,10 +72,20 @@ const compactionStats = createQueryKeys('compactionStats', {
 });
 
 /**
+ * One chat session's conversation, across restarts (session id = the
+ * workflow id). Home's employee thread reads it; WebSocketContext
+ * invalidates it on `chat.updated`, on a runtime reset and whenever the
+ * socket reopens.
+ */
+const chatThread = createQueryKeys('chatThread', {
+  bySession: (sessionId: string) => [sessionId],
+});
+
+/**
  * Merged factory. Consumers call e.g.
  *   queryKeys.credentialValues.byProvider(id).queryKey
  * for a specific key, and
  *   queryKeys.credentialValues._def
  * for partial-match invalidation across the namespace.
  */
-export const queryKeys = mergeQueryKeys(credentialValues, compactionStats);
+export const queryKeys = mergeQueryKeys(credentialValues, compactionStats, chatThread);

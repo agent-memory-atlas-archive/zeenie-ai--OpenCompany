@@ -1368,21 +1368,31 @@ class Database:
         self, session_id: str, limit: Optional[int] = None,
         execution_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """Get chat messages for a session, optionally limited to last N."""
+        """Chat messages for a session, oldest first: the newest ``limit``
+        when given, of one generation when ``execution_id`` is. Each is
+        ``{id, role, message, timestamp, execution_id}``; the timestamp
+        carries its UTC offset (SQLite returns the stored UTC time naive)."""
         try:
             async with self.get_session() as session:
-                stmt = select(ChatMessage).where(ChatMessage.session_id == session_id).order_by(ChatMessage.created_at.asc())
+                stmt = select(ChatMessage).where(ChatMessage.session_id == session_id)
                 if execution_id is not None:
                     stmt = stmt.where(ChatMessage.execution_id == execution_id)
+                stmt = stmt.order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
+                if limit and limit > 0:
+                    stmt = stmt.limit(limit)
 
                 result = await session.execute(stmt)
-                messages = result.scalars().all()
+                messages = list(reversed(result.scalars().all()))
 
-                # Apply limit if specified
-                if limit and limit > 0:
-                    messages = messages[-limit:]
+                def utc(moment: Optional[datetime]) -> Optional[str]:
+                    if moment is None:
+                        return None
+                    return (moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)).isoformat()
 
-                return [{"role": m.role, "message": m.message, "timestamp": m.created_at.isoformat()} for m in messages]
+                return [
+                    {"id": m.id, "role": m.role, "message": m.message, "timestamp": utc(m.created_at), "execution_id": m.execution_id}
+                    for m in messages
+                ]
 
         except Exception as e:
             logger.error("Failed to get chat messages", session_id=session_id, error=str(e))

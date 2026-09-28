@@ -5,8 +5,8 @@ Normal mode lists every workflow as an employee. A hired one has a row in
 editor does not, so its summary is read off the graph: which nodes are
 agents (whose activity the card follows live), which are triggers (what
 starts it), which apps its nodes belong to, whether it waits for the
-owner's approval before sending, and which canvas board the Workspace
-shows.
+owner's approval before sending, which canvas board the Workspace shows,
+and, from its edges, whether the owner can talk to it (talk.py).
 """
 
 from __future__ import annotations
@@ -17,10 +17,12 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple
 from constants import WORKFLOW_TRIGGER_TYPES
 from services.workspace_capabilities import is_registered_agent
 from services.employees.apps import AppSpec, app_for_node_type
+from services.employees.talk import TalkState, talk_state
 from services.node_registry import get_node_class
 
 TODO_NODE_TYPE = "writeTodos"
 CANVAS_NODE_TYPE = "canvas"
+MEMORY_NODE_TYPE = "simpleMemory"
 APPROVAL_GATE_TYPE = "approvalGate"
 SCHEDULE_TRIGGER_TYPE = "cronScheduler"
 CHAT_TRIGGER_TYPE = "chatTrigger"
@@ -40,6 +42,8 @@ class GraphIndex:
     gate_ids: Tuple[str, ...] = ()
     #: Apps the graph's nodes belong to, in first-seen order.
     app_ids: Tuple[str, ...] = ()
+    #: Whether the owner can talk to it, and through which agent.
+    talk: TalkState = field(default_factory=lambda: TalkState("unsupported"))
 
     @property
     def trigger_types(self) -> Tuple[str, ...]:
@@ -112,6 +116,7 @@ def index_graph(graph: Optional[Mapping[str, Any]]) -> GraphIndex:
         browser_ids=tuple(browsers),
         gate_ids=tuple(gates),
         app_ids=tuple(app_ids),
+        talk=talk_state(graph),
     )
 
 
@@ -120,6 +125,7 @@ __all__ = [
     "CANVAS_NODE_TYPE",
     "CHAT_TRIGGER_TYPE",
     "GraphIndex",
+    "MEMORY_NODE_TYPE",
     "SCHEDULE_TRIGGER_TYPE",
     "TODO_NODE_TYPE",
     "index_graph",

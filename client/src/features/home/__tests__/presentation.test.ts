@@ -1,11 +1,20 @@
 /**
- * The presentation table: server state in, pill and primary button out.
- * It only picks labels and colours; every rule it reads is the server's.
+ * The presentation table: server state in, pill and primary button out,
+ * and what the message box does. It only picks labels and colours; every
+ * rule it reads is the server's.
  */
 
 import { describe, expect, it } from 'vitest';
 import { normalizeWorkflowControlStatus } from '@/contexts/WebSocketContext';
-import { busyLabelFor, initialOf, presentEmployee, primaryActionLabel } from '../data/presentation';
+import {
+  busyLabelFor,
+  initialOf,
+  presentEmployee,
+  primaryActionLabel,
+  restartDraftsWarning,
+  talkMode,
+  talkNoticeText,
+} from '../data/presentation';
 import { parseEmployee, type EmployeeSummary } from '../data/schemas';
 
 function employee(patch: Record<string, unknown>, control: Record<string, unknown> = {}): EmployeeSummary {
@@ -70,6 +79,35 @@ describe('presentEmployee', () => {
   it('never offers a button the control plane refuses', () => {
     const view = presentEmployee(employee({ status: 'working' }, { state: 'running', can_pause: false }));
     expect(view.primary.kind).toBe('open_workflow');
+    expect(primaryActionLabel(view.primary)).toBe('Open in Dev mode');
+  });
+});
+
+describe('the message box', () => {
+  it.each([
+    ['running', 'send'],
+    ['starting', 'send'],
+    ['resuming', 'send'],
+    ['paused', 'queue'],
+    ['pausing', 'queue'],
+    ['never_started', 'start'],
+    ['ready', 'start'],
+    ['resetting', 'start'],
+    ['failed', 'start'],
+  ])('while %s a message is %s', (state, mode) => {
+    expect(talkMode(normalizeWorkflowControlStatus({ state }, 'w'))).toBe(mode);
+  });
+
+  it('explains why a message waits or cannot go', () => {
+    expect(talkNoticeText('send', 'Maya')).toBeNull();
+    expect(talkNoticeText('queue', 'Maya')).toBe('Maya is paused. They’ll read your message when you resume them.');
+    expect(talkNoticeText('queue', 'Maya', true)).toBe('Your message is waiting. Maya will read it when you resume them.');
+    expect(talkNoticeText('start', 'Maya')).toBe('Maya isn’t running, so they can’t read messages right now.');
+  });
+
+  it('warns that a restart throws the waiting drafts away', () => {
+    expect(restartDraftsWarning('Maya', 1)).toBe('Maya has 1 draft waiting for you. Restarting throws it away, so check it first.');
+    expect(restartDraftsWarning('Maya', 3)).toBe('Maya has 3 drafts waiting for you. Restarting throws them away, so check them first.');
   });
 });
 
@@ -80,6 +118,29 @@ describe('parseEmployee', () => {
     expect(parsed.status).toBe('ready');
     expect(parsed.done_today).toBe(0);
     expect(parsed.apps).toEqual([]);
+  });
+
+  it('reads talk, ask-first and waiting changes, and repairs them on their own', () => {
+    const parsed = parseEmployee({
+      workflow_id: 'w',
+      name: 'X',
+      talk: { state: 'on', agent_node_id: 'w:talk' },
+      asks_first: true,
+      pending_changes: true,
+    })!;
+    expect(parsed.talk).toEqual({ state: 'on', agent_node_id: 'w:talk' });
+    expect(parsed.asks_first).toBe(true);
+    expect(parsed.pending_changes).toBe(true);
+
+    const odd = parseEmployee({ workflow_id: 'w', name: 'X', talk: { state: 'chatty', agent_node_id: 7 }, pending_changes: 'yes' })!;
+    expect(odd.talk).toEqual({ state: 'unsupported', agent_node_id: null });
+    expect(odd.pending_changes).toBe(false);
+    // An older server sends none of them.
+    expect(parseEmployee({ workflow_id: 'w', name: 'X' })).toMatchObject({
+      talk: { state: 'unsupported', agent_node_id: null },
+      asks_first: false,
+      pending_changes: false,
+    });
   });
 
   it('takes the first letter of a name for the avatar', () => {

@@ -19,6 +19,10 @@ export type EmployeeStatus = (typeof EMPLOYEE_STATUSES)[number];
 
 export const TASK_LABELS = ['Now', 'Next', 'Paused', 'Waiting'] as const;
 
+/** Whether the owner can message the employee on its page: `on` (a talk
+ *  line that replies), `off` (one click adds it) or `unsupported`. */
+export const TALK_STATES = ['on', 'off', 'unsupported'] as const;
+
 export const appRefSchema = z.object({
   app_id: z.string(),
   provider_id: z.string(),
@@ -63,6 +67,14 @@ export const employeeSummarySchema = z.object({
     .catch(null),
   revision: z.number().catch(0),
   hired_at: z.string().nullable().catch(null),
+  /** The talk line; `agent_node_id` is the agent that answers the owner. */
+  talk: z
+    .object({ state: z.enum(TALK_STATES).catch('unsupported'), agent_node_id: z.string().nullable().catch(null) })
+    .catch({ state: 'unsupported', agent_node_id: null }),
+  /** Replies wait for the owner's OK, and nothing that sends or spends runs unasked. */
+  asks_first: z.boolean().catch(false),
+  /** Saved changes (a tool added in Talk, an edit in Dev mode) wait for a restart. */
+  pending_changes: z.boolean().catch(false),
 });
 
 export type EmployeeSummary = Omit<z.infer<typeof employeeSummarySchema>, 'control'> & {

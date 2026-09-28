@@ -1,7 +1,7 @@
 """The graph behind a hired employee: the right trigger, tools that respect
 "ask me first", replies that go to whoever wrote in (behind the gate when
-asking first), reports to the owner, and a graph the real validator
-accepts."""
+asking first), reports to the owner, Talk (the owner's own line to them),
+warnings an owner can act on, and a graph the real validator accepts."""
 
 from __future__ import annotations
 
@@ -139,7 +139,9 @@ async def test_a_scheduled_briefer_reports_through_the_app_it_named():
     assert [e["data"]["condition"] for e in edges_between(built, "agent", "notify")] == [SEND_CONDITION]
     # Asking first: the Stripe tool (it can move money) stays off.
     assert "stripeAction" not in {n["type"] for n in built.nodes}
-    assert built.trigger == {"kind": "schedule", "every": "day", "at": "08:15"}
+    # Recorded as it runs, and the owner is told it moved.
+    assert built.trigger == {"kind": "schedule", "every": "day", "at": "08:00"}
+    assert "they'll work every day at 08:00 (you asked for every day at 08:15)" in " ".join(built.warnings)
     await assert_valid(built)
 
 
@@ -165,15 +167,27 @@ async def test_the_browser_stays_read_only_while_asking_first():
     assert "can only read pages" not in built.parameters[built.node_roles["agent"]]["system_message"]
 
 
-async def test_no_apps_means_chat():
+async def test_no_apps_means_they_answer_in_talk():
     request = hire(apps=[], steps=[{"title": "Help me write", "role": "agent"}], trigger=None)
     built = build_employee_graph(inputs(request))
     trigger = node(built, "trigger")
     assert trigger["type"] == "chatTrigger"
     assert built.parameters[trigger["id"]] == {"session_id": "7"}
-    assert built.delivery == "chat"
+    assert built.delivery == "talk"
     assert not ({"reply", "notify", "gate"} & set(built.node_roles))
     assert "context" in built.node_roles
+    # Their own Chat trigger and agent are the talk line: one chat trigger,
+    # and the agent answers through Reply in Chat.
+    roles = built.node_roles
+    assert [n["type"] for n in built.nodes].count("chatTrigger") == 1
+    assert (roles["talk_trigger"], roles["talk_agent"], roles["talk_context"]) == (roles["trigger"], roles["agent"], roles["context"])
+    assert node(built, "talk_reply")["data"]["label"] == "Reply in Chat"
+    assert built.parameters[roles["talk_reply"]] == {"message": "{{maya.response}}"}
+    assert [e["data"]["condition"] for e in edges_between(built, "agent", "talk_reply")] == [SEND_CONDITION]
+    [edge] = edges_between(built, "builder", "agent")
+    assert node(built, "builder")["type"] == "agentBuilder" and edge["targetHandle"] == "input-tools"
+    system = built.parameters[roles["agent"]]["system_message"]
+    assert "talks to you in Talk" in system and "agent_builder" in system
     await assert_valid(built)
 
 
@@ -204,7 +218,82 @@ def test_a_missing_owner_address_drops_the_report_not_the_employee():
     request = hire(apps=["Gmail"], steps=[{"title": "Summarize", "role": "agent"}], trigger={"kind": "schedule", "every": "day"}, sends_via="Gmail")
     built = build_employee_graph(inputs(request, "gmail", connected={"gmail"}, owner_values={}))
     assert "notify" not in built.node_roles
-    assert built.warnings
+    # Plain words: what to do and where, never a raw placeholder.
+    assert built.warnings == [
+        "Reports can't go out through Gmail until you connect Gmail in Settings > Connectors. Until then you'll find them in Talk."
+    ]
+
+
+def test_an_app_that_cannot_start_the_work_says_what_to_connect():
+    request = hire(apps=["Email"], steps=[{"title": "Read new email", "role": "trigger", "app": "Email"}])
+    built = build_employee_graph(inputs(request, "email", owner_values={}))
+    assert node(built, "trigger")["type"] == "chatTrigger"
+    assert any(
+        warning == "Email can't start their work until you connect Email in Settings > Connectors. Until then they work when you message them."
+        for warning in built.warnings
+    )
+    assert not any("${" in warning for warning in built.warnings)
+
+
+def test_a_schedule_is_recorded_as_it_runs_in_the_owners_time():
+    # Sydney is not a zone the scheduler lists: it runs in UTC at the
+    # nearest set time, which is Tuesday morning in Sydney.
+    request = hire(apps=[], steps=[{"title": "Plan the week", "role": "agent"}], trigger={"kind": "schedule", "every": "week", "day": "monday", "at": "09:00"})
+    built = build_employee_graph(inputs(request, timezone="Australia/Sydney"))
+    assert built.parameters[built.node_roles["trigger"]] == {"frequency": "weeks", "weekday": "1", "weekly_time": "22:00", "timezone": "UTC"}
+    assert built.trigger == {"kind": "schedule", "every": "week", "day": "tuesday", "at": "08:00"}
+    assert "they'll work every Tuesday at 08:00 (you asked for every Monday at 09:00)" in " ".join(built.warnings)
+    assert "(every Tuesday at 08:00)" in built.parameters[built.node_roles["agent"]]["prompt"]
+
+    # A listed zone at a time the scheduler offers runs as asked, silently.
+    request = hire(apps=[], steps=[{"title": "Brief me", "role": "agent"}], trigger={"kind": "schedule", "every": "month", "day": "L", "at": "09:00"})
+    built = build_employee_graph(inputs(request))
+    assert built.trigger == {"kind": "schedule", "every": "month", "day": "L", "at": "09:00"}
+    assert not any("Schedules" in warning for warning in built.warnings)
+
+
+# ----- Talk -----
+
+
+async def test_an_app_event_hire_gets_a_talk_line_beside_its_work():
+    built = build_employee_graph(inputs(hire(), "whatsapp", connected={"whatsapp"}))
+    roles = built.node_roles
+    assert (node(built, "talk_trigger")["type"], node(built, "talk_trigger")["data"]["label"]) == ("chatTrigger", "Talk")
+    assert built.parameters[roles["talk_trigger"]] == {"session_id": "7"}
+    talk = built.parameters[roles["talk_agent"]]
+    assert node(built, "talk_agent")["data"]["label"] == "Talk with Maya"
+    assert (talk["prompt"], talk["provider"], talk["model"]) == ("{{talk.message}}", "openai", "gpt-x")
+    assert "talks to you in Talk" in talk["system_message"] and "agent_builder" in talk["system_message"]
+    assert "agent_builder" not in built.parameters[roles["agent"]]["system_message"]
+    # Its own Context; the worker's tools are shared, the Agent Builder is
+    # the talk agent's alone (strangers write to the worker).
+    assert node(built, "talk_context")["data"]["agentNodeId"] == roles["talk_agent"]
+    worker_tools = {e["source"] for e in built.edges if e["target"] == roles["agent"] and e["targetHandle"] == "input-tools"}
+    talk_tools = {e["source"] for e in built.edges if e["target"] == roles["talk_agent"] and e["targetHandle"] == "input-tools"}
+    assert talk_tools == worker_tools | {roles["builder"]}
+    assert roles["builder"] not in worker_tools
+    assert built.parameters[roles["talk_reply"]] == {"message": "{{talkwithmaya.response}}"}
+    assert "report_post" not in roles
+    await assert_valid(built)
+
+
+async def test_a_schedule_hire_posts_its_reports_to_talk():
+    request = hire(apps=["Telegram"], steps=[{"title": "Brief me", "role": "agent"}], trigger={"kind": "schedule", "every": "day", "at": "09:00"}, sends_via="Telegram")
+    built = build_employee_graph(inputs(request, "telegram", connected={"telegram"}))
+    post = node(built, "report_post")
+    assert (post["type"], post["data"]["label"]) == ("chatReply", "Post to Talk")
+    assert built.parameters[post["id"]] == {"message": "{{maya.response}}"}
+    assert [e["data"]["condition"] for e in edges_between(built, "agent", "report_post")] == [SEND_CONDITION]
+    # The worker's Context and the talk agent's are two.
+    assert node(built, "talk_context")["data"]["label"] == "Context 2"
+    await assert_valid(built)
+
+
+@pytest.mark.parametrize("missing", ["chatReply", "agentBuilder"])
+def test_the_talk_line_needs_the_allowlist(missing):
+    with pytest.raises(BuildError) as raised:
+        build_employee_graph(inputs(hire(), "whatsapp", connected={"whatsapp"}, allowed=lambda node_type: node_type != missing))
+    assert raised.value.code == "not_allowed"
 
 
 def test_schedule_mapping():

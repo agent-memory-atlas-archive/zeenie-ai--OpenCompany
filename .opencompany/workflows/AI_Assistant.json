@@ -225,6 +225,17 @@
       },
       "width": 64,
       "height": 86
+    },
+    {
+      "id": "1:chatReply:1",
+      "position": {
+        "x": 1580,
+        "y": 360
+      },
+      "type": "chatReply",
+      "data": {
+        "label": "Reply in Chat"
+      }
     }
   ],
   "edges": [
@@ -369,6 +380,20 @@
       "targetHandle": "input-context",
       "data": {
         "systemManaged": true
+      }
+    },
+    {
+      "id": "e-1:aiAgent:1-output-main-1:chatReply:1-input-main",
+      "source": "1:aiAgent:1",
+      "sourceHandle": "output-main",
+      "target": "1:chatReply:1",
+      "targetHandle": "input-main",
+      "data": {
+        "condition": {
+          "field": "result.response",
+          "operator": "neq",
+          "value": "NO_REPLY"
+        }
       }
     }
   ],
@@ -613,6 +638,9 @@
       "return_images": false,
       "return_related_questions": false,
       "label": "Perplexity Search"
+    },
+    "1:chatReply:1": {
+      "message": "{{aiagent.response}}"
     }
   },
   "requirements": {
@@ -692,6 +720,10 @@
       {
         "type": "context",
         "version": 2
+      },
+      {
+        "type": "chatReply",
+        "version": 1
       }
     ]
   }

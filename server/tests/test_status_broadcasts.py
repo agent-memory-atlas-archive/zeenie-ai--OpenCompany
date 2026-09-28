@@ -104,11 +104,13 @@ _LEGACY_RAW_DICT_BROADCASTS: FrozenSet[str] = frozenset(
 # Wave 12 B8: ``services/handlers/tools.py`` retired — 3 task_completed
 # callsites moved to ``nodes/agent/_events.py``.
 # Wave 12 B10: ``nodes/tool/agent_builder/__init__.py`` retired —
-# workflow_ops_apply dispatch moved to
-# ``nodes/tool/agent_builder/_events.py``.
+# workflow_ops_apply dispatch moved out of the plugin; server-side graph
+# changes now announce themselves through the core typed factory
+# ``services/workflow_ops.py:broadcast_workflow_ops`` (called by
+# ``services/workflow_storage/mutate.py:apply_graph_additions``).
 #
-# Allowlist now empty: every send_custom_event callsite lives in a
-# plugin folder's _events.py wrapper.
+# Allowlist now empty: every send_custom_event callsite goes through a
+# typed wrapper.
 _LEGACY_RAW_DICT_CALLSITES: FrozenSet[str] = frozenset()
 
 

@@ -164,6 +164,9 @@ async def _dispatch_tool(tool_name: str, tool_args: Dict[str, Any], config: Dict
         "edges": config.get("edges", []),
         "workflow_id": config.get("workflow_id"),
         "parent_node_id": config.get("parent_node_id"),
+        # Whether a canvas change is bound into this run (the agent's
+        # auto-rebind setting, set by ai.py); agentBuilder tells the model.
+        "auto_rebind_tools": config.get("auto_rebind_tools", True),
         # Provider/runtime call identity is a trusted idempotency key for
         # stateful tools. It is carried on NodeContext, never accepted from
         # the model's JSON arguments.

@@ -8,23 +8,30 @@
  *
  * Every request carries a fresh `draft_token` (never `request_id`, which is
  * the WebSocket correlation id). A reply whose token is not the current one
- * is dropped, so a slow reply never lands after a newer request or after
- * Discard. Discard also asks the server to cancel the call; the server
- * cancels an older call on its own when a newer token from the same owner
- * arrives.
+ * is dropped, so a slow reply never lands after a newer request, Cancel or
+ * Discard. Cancel and Discard also ask the server to stop the call; the
+ * server cancels an older call on its own when a newer token from the same
+ * owner arrives. Cancel hands the owner's words back to the composer.
  *
  * The server builds the model's messages (the catalogue prompt, the owner's
  * context, the "The job:" / "Change the setup:" prefixes); the client sends
  * the owner's words and the earlier replies, then reads the reply it gets
  * back (parse) and makes it safe to render (normalize) before showing it.
+ * The screen's trigger is then checked against the apps the server
+ * resolved for that reply: one naming an app that cannot start the work
+ * falls back to the owner messaging them, so the screen never shows a
+ * trigger Hire could not build.
  */
 
 import { useMemo } from 'react';
+import { z } from 'zod';
 import { create } from 'zustand';
 import { useWebSocketActions } from '@/contexts/WebSocketContext';
-import { appRefSchema, type AppRef } from '../data/schemas';
+import { appRefSchema } from '../data/schemas';
 import { SPIKE, spikeOrb } from '../orb/orb';
-import { setPath, type UiState } from './expressions';
+import { STATE_PATHS } from './catalog';
+import { getPath, isForbiddenKey, setPath, type UiState } from './expressions';
+import { snapTrigger } from './hirePayload';
 import { normalizeSpec, type NormalizedSpec } from './normalize';
 import { parseReply } from './parse';
 
@@ -58,6 +65,11 @@ export interface DraftTurn {
   reply: string;
 }
 
+interface PendingRequest {
+  text: string;
+  refine: boolean;
+}
+
 export interface DraftFailure {
   code: SetupErrorCode;
   /** What Retry sends again, and whether it was a change request. */
@@ -70,6 +82,11 @@ export interface DraftSource {
   model: string | null;
 }
 
+/** An app a reply names, as the server resolved it, and whether it can
+ *  start the work (a new message or email in it). */
+const draftAppSchema = appRefSchema.extend({ can_trigger: z.boolean().catch(false) });
+export type DraftApp = z.infer<typeof draftAppSchema>;
+
 export interface DraftState {
   status: DraftStatus;
   /** The composer is editing the current draft ("Editing the draft"). */
@@ -79,8 +96,9 @@ export interface DraftState {
   /** The job as the owner first described it; the draft header shows it. */
   job: string;
   turns: DraftTurn[];
-  /** Token of the request in flight, if any. */
+  /** Token of the request in flight, if any, and what it asked. */
   token: string | null;
+  request: PendingRequest | null;
   failure: DraftFailure | null;
   source: DraftSource | null;
   /** The latest reply, read and made safe to render. */
@@ -90,7 +108,7 @@ export interface DraftState {
   /** What the owner has set on the setup screen (toggles, choices, inputs). */
   uiState: UiState;
   /** Apps the reply names, as the server resolved them: lower-cased name -> ref. */
-  apps: Record<string, AppRef>;
+  apps: Record<string, DraftApp>;
   /** Bumped on every accepted reply, so the renderer restarts its reveal. */
   version: number;
   /** A hire request is in flight. */
@@ -107,6 +125,7 @@ const INITIAL: DraftState = {
   job: '',
   turns: [],
   token: null,
+  request: null,
   failure: null,
   source: null,
   spec: null,
@@ -153,11 +172,6 @@ export interface SetupResponse {
   apps?: unknown;
 }
 
-interface PendingRequest {
-  text: string;
-  refine: boolean;
-}
-
 function errorCode(value: unknown): SetupErrorCode {
   return typeof value === 'string' && SERVER_CODES.has(value) ? (value as SetupErrorCode) : 'provider_error';
 }
@@ -166,14 +180,36 @@ function isTimeout(error: unknown): boolean {
   return error instanceof Error && /timeout/i.test(error.message);
 }
 
-function parseApps(raw: unknown): Record<string, AppRef> {
-  const out: Record<string, AppRef> = {};
+function parseApps(raw: unknown): Record<string, DraftApp> {
+  const out: Record<string, DraftApp> = {};
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
   for (const [name, value] of Object.entries(raw)) {
-    const parsed = appRefSchema.safeParse(value);
-    if (parsed.success) out[name.trim().toLowerCase()] = parsed.data;
+    const key = name.trim().toLowerCase();
+    const parsed = draftAppSchema.safeParse(value);
+    if (parsed.success && !isForbiddenKey(key)) out[key] = parsed.data;
   }
   return out;
+}
+
+/** The apps that can start the work, by every name the reply used for them
+ *  (lower-cased) and by their own: name -> the app's own name. */
+export function triggerAppNames(apps: Record<string, DraftApp>): Record<string, string> {
+  // No prototype: a reply's name for an app is looked up here as a key.
+  const names: Record<string, string> = Object.create(null);
+  for (const [key, app] of Object.entries(apps)) {
+    if (!app.supported || !app.can_trigger) continue;
+    names[key] = app.name;
+    names[app.name.toLowerCase()] = app.name;
+  }
+  return names;
+}
+
+/** The screen's trigger, unless it names an app that cannot start the
+ *  work: then the owner messaging them, which is what Hire would build. */
+function fitTrigger(state: UiState, apps: Record<string, DraftApp>): UiState {
+  const trigger = snapTrigger(getPath(state, STATE_PATHS.trigger));
+  if (trigger.kind !== 'app_event' || (trigger.app && triggerAppNames(apps)[trigger.app.toLowerCase()])) return state;
+  return setPath(state, STATE_PATHS.trigger, { kind: 'manual' });
 }
 
 function cancelOnServer(send: SendRequest, token: string | null): void {
@@ -190,7 +226,7 @@ export function failRequest(token: string, code: SetupErrorCode, request: Pendin
   if (useDraftStore.getState().token !== token) return false;
   // Cancelled by a newer request or by Discard; whoever did that owns the state.
   if (code === 'cancelled') return false;
-  useDraftStore.setState({ status: 'failed', token: null, failure: { code, ...request } });
+  useDraftStore.setState({ status: 'failed', token: null, request: null, failure: { code, ...request } });
   spikeOrb(SPIKE.draftFailed);
   return true;
 }
@@ -205,17 +241,19 @@ export function acceptReply(token: string, response: SetupResponse, request: Pen
   const spec = parsed.failed ? null : normalizeSpec(parsed.spec);
   if (!spec) return failRequest(token, 'unparseable', request);
   const turn: DraftTurn = { change: request.refine ? request.text : null, reply };
+  const apps = parseApps(response.apps);
   useDraftStore.setState({
     status: 'ready',
     refining: false,
     turns: request.refine ? [...state.turns, turn] : [turn],
     token: null,
+    request: null,
     failure: null,
     source: { provider: response.provider ?? null, model: response.model ?? null },
     spec,
     intro: parsed.text.trim(),
-    uiState: spec.state,
-    apps: parseApps(response.apps),
+    uiState: fitTrigger(spec.state, apps),
+    apps,
     version: state.version + 1,
   });
   spikeOrb(SPIKE.draftReady);
@@ -238,8 +276,8 @@ export async function submitDraft(send: SendRequest, raw: string, options: { ref
 
   useDraftStore.setState(
     refine
-      ? { status: 'working', refining: false, input: '', token, failure: null }
-      : { ...INITIAL, status: 'working', job, token, version: state.version },
+      ? { status: 'working', refining: false, input: '', token, request, failure: null }
+      : { ...INITIAL, status: 'working', job, token, request, version: state.version },
   );
 
   const payload: Record<string, unknown> = refine
@@ -261,6 +299,19 @@ export function retryDraft(send: SendRequest): Promise<boolean> {
   if (!failure) return Promise.resolve(false);
   useDraftStore.setState({ status: failure.refine && turns.length > 0 ? 'ready' : 'idle', failure: null });
   return submitDraft(send, failure.text, { refine: failure.refine });
+}
+
+/** Stop the setup being written and hand the owner's words back to the
+ *  composer: a new job, or a change with the last version still showing. */
+export function cancelDraft(send: SendRequest): void {
+  const { token, request, turns, version } = useDraftStore.getState();
+  if (!token || !request) return;
+  if (request.refine && turns.length > 0) {
+    useDraftStore.setState({ status: 'ready', token: null, request: null, input: request.text, refining: true });
+  } else {
+    useDraftStore.setState({ ...INITIAL, input: request.text, version });
+  }
+  cancelOnServer(send, token);
 }
 
 /** Throw the draft away, cancelling a request in flight. The composer
@@ -299,8 +350,11 @@ export function beginHire(fingerprint: string): string | null {
   return key;
 }
 
-export function endHire(): void {
-  useDraftStore.setState({ hiring: false });
+/** Free the hire slot. After a hire that made someone its key goes, so the
+ *  same setup hired again is a new employee; after a failure it stays, so a
+ *  retry finds whoever the lost attempt made. */
+export function endHire(hired = false): void {
+  useDraftStore.setState(hired ? { hiring: false, hireKey: null } : { hiring: false });
 }
 
 /** Clear the draft after a hire (the composer's text stays). */
@@ -322,6 +376,7 @@ export function useDraftActions() {
     return {
       submit: (text: string, options?: { refine?: boolean }) => submitDraft(send, text, options),
       retry: () => retryDraft(send),
+      cancel: () => cancelDraft(send),
       discard: () => discardDraft(send),
       setRefining,
       setInput: setComposerInput,
