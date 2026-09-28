@@ -2,7 +2,7 @@
 
 Checks toolchain (node, bun, python, uv), then runs the 6-step
 build: ``.env`` bootstrap -> ``bun install`` -> client build ->
-JS executor sidecar bundle (bun build) -> ``uv sync`` -> compile Python bytecode
+JS executor sidecar bundle (bun build) -> ``uv sync --extra docs`` -> compile Python bytecode
 -> pooch-fetch Temporal binary.
 
 Layers ``.env.dev`` (when present in the checkout) BEFORE running
@@ -156,8 +156,8 @@ def build_command() -> None:
     # fresh checkout.
     #
     # Safe for global installs: ``.env.dev`` is committed to git for
-    # repo-clone contributors but is NOT in the npm ``files`` list, so
-    # ``npm install -g @zeenie-ai/opencompany`` doesn't ship it. Without
+    # repo-clone contributors but is NOT in the root package.json ``files``
+    # list, so ``bun add -g @zeenie-ai/opencompany`` doesn't ship it. Without
     # ``.env.dev`` on disk, :func:`load_dev_overrides` is a no-op and
     # the build falls through to ``.env.template`` defaults
     # (``DATA_DIR=~/.opencompany``) — identical to today's behaviour and

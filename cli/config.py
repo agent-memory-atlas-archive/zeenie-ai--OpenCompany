@@ -5,8 +5,10 @@ Stdlib-only env-var loader. Three env files, lowest precedence first:
   1. ``.env.template`` — canonical production defaults. Ships with every
      install. ``DATA_DIR=~/.opencompany`` (user home) is the daemon
      behaviour: ``company start`` / ``company daemon`` use these.
-  2. ``.env`` — user overrides (created by ``scripts/postinstall.js`` on
-     ``npm install -g @zeenie-ai/opencompany``). Gitignored.
+  2. ``.env`` — user overrides (created from the template by
+     ``scripts/install.js``, which ``company provision`` runs after
+     ``bun add -g @zeenie-ai/opencompany``, or by ``company build`` in a
+     checkout). Gitignored.
   3. ``.env.dev`` — dev-mode overrides. Loaded ONLY by ``company dev``
      via :func:`load_dev_overrides`. Pins ``DATA_DIR=.opencompany`` so
      per-checkout dev state lives at ``<repo>/.opencompany/`` instead of
@@ -55,7 +57,7 @@ def _require(env: dict[str, str], key: str) -> str:
     if raw is None:
         raise KeyError(
             f"{key} missing from .env / .env.template -- "
-            "reinstall (``npm install -g @zeenie-ai/opencompany``) or restore the template."
+            "reinstall (``bun add -g @zeenie-ai/opencompany``) or restore the template."
         )
     return raw
 
@@ -92,8 +94,8 @@ class Config:
         # ``temporal_ui_port`` are bound by the same ``temporal server
         # start-dev`` process, so killing one kills both — listing both
         # only matters when cleaning up stale orphans on either port.
-        # Plugin-owned daemons (WhatsApp's edgymeow, the Node.js executor
-        # sidecar) are NOT listed: the backend supervises them (tree-kill
+        # Plugin-owned daemons (WhatsApp's edgymeow, the JS executor
+        # sidecar on bun) are NOT listed: the backend supervises them (tree-kill
         # on shutdown), and the CLI carries no plugin knowledge. A
         # crashed-backend orphan surfaces as a bind error on the plugin's
         # next start, which the plugin reports.
@@ -144,7 +146,7 @@ def load_config(root: Path | None = None) -> Config:
     if not template.exists():
         raise FileNotFoundError(
             f".env.template not found at {template}. "
-            "Reinstall (``npm install -g @zeenie-ai/opencompany``) or restore the template "
+            "Reinstall (``bun add -g @zeenie-ai/opencompany``) or restore the template "
             "from the source tree."
         )
 

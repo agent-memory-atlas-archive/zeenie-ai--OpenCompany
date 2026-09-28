@@ -3,7 +3,7 @@
 Every verb is registered here as a thin stub that lazy-imports its
 implementation on dispatch. Running ``company clean`` (the recovery
 verb) only triggers the import of ``cli.commands.clean`` -- not
-``dev`` / ``start`` / temporal specs / daemon verbs / docs / version.
+``dev`` / ``start`` / daemon verbs / docs / version.
 
 Pattern lifted from gemini-cli's ``gemini.tsx`` + vercel's ``vc.js``
 (fast-path ``--version`` and ``--help`` before any heavy import) and
@@ -44,7 +44,7 @@ def _root() -> None:
 
 @app.command(
     "start",
-    help="Start all services in production mode (static client + uvicorn + temporal).",
+    help="Start in production mode: uvicorn serves API + WebSocket + built SPA on one port (the backend starts Temporal itself when enabled).",
 )
 def _start() -> None:
     from cli.commands.start import start_command
@@ -54,7 +54,7 @@ def _start() -> None:
 
 @app.command(
     "dev",
-    help="Start all services in dev mode (Vite HMR + uvicorn + temporal).",
+    help="Start in dev mode: Vite HMR + uvicorn (the backend starts Temporal itself when enabled).",
 )
 def _dev(
     daemon: bool = typer.Option(
@@ -192,7 +192,7 @@ def _deploy_up(
     owner_password: str | None = typer.Option(
         None, "--owner-password", help="Login password (>=8 chars). Generated + printed once if omitted."
     ),
-    source: str = typer.Option("local", "--source", help="Install source: local (npm pack) or release (npm registry)."),
+    source: str = typer.Option("local", "--source", help="Install source: local (bun pm pack of this checkout) or release (npm registry)."),
     version: str = typer.Option("latest", "--version", help="opencompany version when --source release."),
     machine_type: str = typer.Option("e2-standard-2", "--machine-type", help="VM size."),
     port: int | None = typer.Option(None, "--port", help="Public port the app binds + the firewall opens (default: PYTHON_BACKEND_PORT from .env.template)."),
