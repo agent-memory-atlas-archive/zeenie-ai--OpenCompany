@@ -1,11 +1,17 @@
-"""Memory compaction service using native provider APIs.
+"""Memory compaction service: token tracking plus client-side summarization.
 
-Anthropic: tool_runner with compaction_control parameter
-OpenAI: context_management with compact_threshold
-Others: Client-side summarization fallback
+Every provider compacts the same way: :meth:`CompactionService.compact_context`
+sends the text to summarize through ``run_native_llm_step`` (ChatUnifier).
+``anthropic_config`` / ``anthropic_api_config`` / ``openai_config`` build
+provider-managed compaction settings, but no execution path passes them to
+an SDK; ``anthropic_config`` is used only to compute a numeric threshold.
 
-Threshold strategy: per-session custom_threshold > model-aware threshold > global default.
-Model-aware threshold = 50% of model's context window (e.g., 100K for a 200K model).
+Threshold strategy: per-session custom_threshold > model-aware threshold.
+Model-aware threshold = compaction ratio x the model's context window, never
+below 10,000 tokens. The ratio is the per-user ``compaction_ratio`` when it is
+set and between 0.1 and 0.9, else ``COMPACTION_RATIO`` (default 0.8);
+``agent.compaction.ratio`` in ``llm_defaults.json`` is read only if Settings
+cannot load. See :meth:`CompactionService._get_compaction_ratio`.
 """
 
 from dataclasses import asdict
@@ -22,9 +28,11 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
-# Compaction ratio is sourced from server/config/llm_defaults.json
-# (``agent.compaction.ratio``). Per-user override in ``user_settings`` still
-# wins via :meth:`CompactionService._get_compaction_ratio`.
+# The global compaction ratio comes from ``ModelRegistryService.get_agent_defaults``:
+# env ``COMPACTION_RATIO`` (core.config.Settings, default 0.8) wins, and
+# ``agent.compaction.ratio`` in server/config/llm_defaults.json is used only
+# when Settings cannot load. A per-user override in ``user_settings`` wins
+# over both via :meth:`CompactionService._get_compaction_ratio`.
 
 
 def _extract_text_from_response(content) -> str:

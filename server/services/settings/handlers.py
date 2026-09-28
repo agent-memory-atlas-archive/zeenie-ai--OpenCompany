@@ -236,7 +236,8 @@ async def handle_save_global_model(data: Dict[str, Any], websocket: WebSocket) -
 async def handle_get_compaction_stats(data: Dict[str, Any], websocket: WebSocket) -> Dict[str, Any]:
     """Get compaction statistics for a session.
 
-    Optional model/provider params enable model-aware threshold (50% of context window).
+    Optional model/provider params enable the model-aware threshold (the
+    compaction ratio times the model's context window).
     """
     from services.compaction import get_compaction_service
 

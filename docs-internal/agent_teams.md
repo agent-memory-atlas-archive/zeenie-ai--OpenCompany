@@ -33,6 +33,8 @@ leads cannot receive team tasks.
    selected teammate after persistence but are hidden from the lead's LLM.
 5. Temporal and legacy execution share the durable task lifecycle and use the
    same precreated task ID; neither path creates a second tracking record.
+   The legacy path does not currently start the teammate; see
+   "Known limitations" below.
 
 ## Topology
 
@@ -53,20 +55,33 @@ delegation depth beyond two child layers.
 
 ```text
 blocked -> queued -> running -> submitted -> accepted
-                    |              |
-                    +-> failed     +-> retry/reassign -> queued
-                    +-> cancelled
+                        |
+                        +-> failed
 ```
+
+Lead-driven transitions (`AgentTeamService.mutate_durable_task`):
+
+| Operation | Allowed from | Result |
+|---|---|---|
+| `modify_task` | `blocked`, `queued` | edits title, mission, context or acceptance criteria |
+| `cancel_task` | `blocked`, `queued`, `running` | `cancelled` |
+| `accept_task` | `submitted` | `accepted` |
+| `retry_task` / `reassign_task` | `failed`, `submitted`, `cancelled` | `queued`, as a new attempt |
 
 - `submitted` means the worker finished and the lead must review the result.
 - `accepted` is the completed/Done state shown by Team Monitor.
-- `failed` is unresolved until retried, reassigned, or intentionally cancelled.
+- `failed` is unresolved until retried or reassigned; a failed task cannot be
+  cancelled.
+- `cancelled` is not final: a cancelled task can be retried or reassigned.
 - `finish_team` succeeds only when every task is accepted or cancelled.
 
-Mutations are optimistic and execution-scoped. Callers pass `task_id` and
-`expected_revision`; the service verifies team ownership and current state.
-When exactly one task is submitted, `accept_task` may safely infer its ID and
-current revision. It never guesses among multiple submissions.
+Mutations are optimistic and execution-scoped. Callers pass `task_id` and,
+optionally, `expected_revision`; the service verifies team ownership and
+current state. When `expected_revision` is omitted, Task Manager reads the
+task's current revision first, so the check then only covers the moment
+between that read and the write. When exactly one task is submitted,
+`accept_task` may safely infer its ID and current revision. It never guesses
+among multiple submissions.
 
 ## Parallel scheduling
 
@@ -117,13 +132,25 @@ execution tasks. Its Done count includes accepted tasks, not submitted work.
 | `assign_task` | Persist and dispatch work to a connected teammate |
 | `list_tasks` / `get_task` | Inspect state, result, attempts, and revision |
 | `modify_task` | Edit blocked or queued work |
-| `cancel_task` | Stop queued or running work |
-| `retry_task` | Queue a new attempt |
+| `cancel_task` | Stop blocked, queued or running work |
+| `retry_task` | Queue a new attempt of failed, submitted or cancelled work on the same teammate |
 | `reassign_task` | Queue a new attempt on another connected teammate |
 | `accept_task` | Approve submitted work |
+| `inspect_task_trace` | Read or search the sanitized Temporal events of a task attempt (`detail`: `summary`, `failures`, `timeline` or `search`) |
 | `finish_team` | Complete a fully resolved team execution |
 
 `mark_done` is a deprecated alias for `accept_task` and never deletes history.
+
+## Known limitations
+
+- **Off Temporal, Task Manager does not start teammates.** `assign_task`,
+  `retry_task` and `reassign_task` persist the task as `queued` and return a
+  `delegation_request`, which only `AgentWorkflow` consumes. The in-process
+  branch in `_execute_task_manager` needs `ai_service` and `database` in its
+  config, and the plugin tool path in `services/handlers/tools.py` does not
+  pass them. So when the lead runs in-process (`AIService.execute_agent` /
+  `execute_chat_agent`) rather than as an `AgentWorkflow`, the task stays
+  queued and no teammate runs it.
 
 ## Key files
 

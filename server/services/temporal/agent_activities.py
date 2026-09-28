@@ -1175,8 +1175,9 @@ async def prepare_agent_payload(context: Dict[str, Any]) -> Dict[str, Any]:
         )
 
     # ---- Compaction threshold ------------------------------------------
-    # Model-aware threshold (50% of context window per agent.compaction.ratio
-    # in llm_defaults.json). Reuse the existing CompactionService helper.
+    # Model-aware threshold (the compaction ratio times the model's context
+    # window; see services/compaction.py for where the ratio comes from).
+    # Reuse the existing CompactionService helper.
     # ``anthropic_config`` is async (awaits _get_compaction_ratio) — must
     # be awaited. ``get_compaction_service`` returns Optional[...] so the
     # service may not be initialized yet (e.g. worker bootstrap order).

@@ -71,8 +71,9 @@ delivery and a repeated summarizer request can be billed twice.
 `anthropic_config()`, `anthropic_api_config()`, and `openai_config()` remain
 configuration helpers on `CompactionService`. The current chat and agent
 execution paths do not pass those provider-managed compaction controls to the
-SDK. `AgentWorkflow` currently calls `anthropic_config()` only as a
-provider-agnostic way to calculate its numeric threshold.
+SDK. On the Temporal path, `prepare_agent_payload` (the `agent.prepare_payload`
+activity) calls `anthropic_config()` only as a provider-agnostic way to
+calculate the numeric threshold `AgentWorkflow` compacts at.
 
 ## Database Schema
 
@@ -291,22 +292,28 @@ paths are unified; do not promise that they disable or override every run.
 
 ### get_compaction_stats
 
-Get token usage statistics for a session:
+Get token usage statistics for a session. `model` and `provider` are optional;
+with both, `threshold` is the model-aware value and `context_length` is the
+model's context window (otherwise `context_length` is 0). A per-session
+`custom_threshold` always wins.
 
 ```javascript
 // Client request
 ws.send(JSON.stringify({
     type: "get_compaction_stats",
-    session_id: "user-session-123"
+    session_id: "user-session-123",
+    model: "claude-haiku-4-5",     // optional; 200K context window
+    provider: "anthropic"          // optional
 }));
 
-// Server response
+// Server response (CompactionService.stats; the ws_handler decorator adds "success")
 {
     "type": "get_compaction_stats",
     "success": true,
     "session_id": "user-session-123",
     "total": 45000,
-    "threshold": 100000,
+    "threshold": 160000,           // 0.8 (default ratio) x 200000
+    "context_length": 200000,
     "count": 0
 }
 ```
@@ -442,7 +449,7 @@ if session_id and ai_response:
 | `server/core/database.py` | CRUD methods for metrics and events |
 | `server/core/config.py` | Environment variable configuration |
 | `server/core/container.py` | Dependency injection setup |
-| `server/services/settings/handlers.py` | WebSocket handlers `get_compaction_stats` (`handle_get_compaction_stats`) and `configure_compaction` (`handle_configure_compaction`); registered into `MESSAGE_HANDLERS` by `routers/websocket.py` |
+| `server/services/settings/handlers.py` | WebSocket handlers `get_compaction_stats` (`handle_get_compaction_stats`) and `configure_compaction` (`handle_configure_compaction`); listed in its `WS_HANDLERS` dict, which `server/services/settings/__init__.py` registers through `services.ws_handler_registry.register_ws_handlers` on import (not the core `MESSAGE_HANDLERS` dict) |
 | `server/main.py` | Service initialization on startup |
 
 ## Design Decisions

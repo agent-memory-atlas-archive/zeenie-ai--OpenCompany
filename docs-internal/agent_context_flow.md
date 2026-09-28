@@ -102,8 +102,17 @@ build** and is intentional:
 
 The carried transcript caps at ~1 MB serialized
 (`_CAN_TRANSCRIPT_MAX_BYTES`) because Temporal's payload error limit is
-2 MiB for the whole continue-as-new argument; over-cap degrades to the
-opening prompt with a warning — never a failure.
+2 MiB for the whole continue-as-new argument. Over the cap, the transcript is
+dropped with a warning and the resumed run seeds like a fresh firing: from
+the stored conversation when a Context node is connected (with the firing's
+prompt appended again), else from the opening prompt.
+
+A continue-as-new starts `run()` from the top, so `agent.prepare_payload`
+runs again. The resumed run picks up the node's current configuration (tools,
+system message, model) and reloads the stored conversation with the load
+checks below, even when the carried transcript is what seeds it. If that
+stored row is over the 1 MB seed cap, the resumed run fails with
+`ConversationTooLarge`.
 
 ## Transcript size: capped results, cleared old results
 
@@ -184,7 +193,10 @@ only grow until the provider rejected it.
   Running on silently instead would burn tokens on an amnesiac prompt — the
   exact failure mode this design replaced. With the cap and the byte budget
   above, new transcripts stay far below the limit; a row saved before them
-  needs one clear.
+  needs one clear. Both error types and the 1 MB cap exist only on the
+  Temporal path. The in-process `_prepare_context` (`services/ai.py`) and
+  `SpecializedAgentContextBridge.resolve` also refuse to run after a failed
+  load, but raise a plain `ValueError`, and they load a row of any size.
 - **Save failures warn and continue.** The save happens *after* the
   provider was called and billed, so raising there would fail a completed
   turn over a bookkeeping write. `_save_conversation`
@@ -216,9 +228,9 @@ time, and a same-generation panel Clear terminates them explicitly
 `nodes/context/` owns the opt-in descriptor (`_descriptor.py`), two WS
 handlers (`get_agent_context` returns the **live generation only** —
 `{conversations, generation, agent_node_id, updated_at, message_count,
-messages}`, with an `agent_node_id` selector for nodes shared by several
-agents; `clear_agent_context` deletes rows and fences warm claude
-processes), and one CloudEvents broadcast (`context.updated`, fired from the
+messages}`, where `messages` is the requested `agent_node_id`'s transcript,
+else the newest row's; `clear_agent_context` deletes rows and fences warm
+claude processes), and one CloudEvents broadcast (`context.updated`, fired from the
 registered save listener; payload is identity + count only — the panel
 refetches through the authorized handler). The node declares **no
 parameters**; the connection is the whole configuration.
@@ -228,7 +240,18 @@ creates, reconnects or deletes one; rewriting a legacy
 `simpleMemory -> input-memory` edge is the one exception. Save never restores
 a deleted Context, and `workflow_validator` accepts an agent without one: it
 checks only the Context edges that exist (`INVALID_CONTEXT_EDGE`,
-`MULTIPLE_CONTEXTS`, `SHARED_CONTEXT`). Deleting the node is the opt-out.
+`MULTIPLE_CONTEXTS`, `SHARED_CONTEXT`), and `handle_save_workflow` refuses a
+graph with any of them (`invalid_context_topology`). A Context node therefore
+serves exactly one agent. A leftover `simpleMemory -> input-memory` edge only
+produces a `LEGACY_MEMORY_EDGE` warning. Deleting the node is the opt-out.
+
+**Known gap: the panel is not narrowed to its own agent.** `get_agent_context`
+lists every stored conversation in the workflow's live generation, not only
+the one for the agent wired to this Context node. In a workflow with two
+agents, each on its own Context node, each panel lists both agents in its
+selector and opens on the newest row, which can be the other agent's; the
+badge shows whose conversation it is. Clearing from the panel clears the
+agent currently shown.
 
 The panel ([`ContextPanel.tsx`](../client/src/components/parameterPanel/ContextPanel.tsx))
 renders role-tinted message cards with per-message `ts` timestamps, routes
@@ -260,10 +283,10 @@ workflow, not only the removed Context's agent.
 | 1 | The store observes; it never steers. Requests are always built from `messages`; `conversation_key` only says where to save. | The original `context_ref` regression made attaching a Context node change what the agent sent. |
 | 2 | One key per agent per generation: `(workflow_id, generation, agent_node_id)`. Every firing — chat or task review — continues that one conversation. | Per-firing/per-session keys are how the lead came back amnesiac (`messages=2`). |
 | 3 | Seeding precedence: carried transcript > stored conversation > bare build. | Rollover mid-run truth beats the store; the store beats cold start. |
-| 4 | Load failures are LOUD (`ConversationLoadFailed` / `ConversationTooLarge`); save failures are best-effort. | Never burn tokens on an amnesiac prompt; never fail a billed turn over bookkeeping. |
+| 4 | Load failures are LOUD (`ConversationLoadFailed` / `ConversationTooLarge` on Temporal; a `ValueError` on the in-process and specialized paths, which have no size cap); save failures are best-effort. | Never burn tokens on an amnesiac prompt; never fail a billed turn over bookkeeping. |
 | 5 | Save the exact sent list, after the provider call. Nothing writes to the store before a request exists. | The journal's `prepare_context` wrote fabricated requests assembled from configuration. |
 | 6 | Reset = new generation = new key, AND the Context node's reset hook clears the workflow's stored rows. | The panel shows the newest stored generation, so surviving rows make Reset look like a no-op. |
-| 7 | `input-memory` is retired; the conversation store is the continuity carrier. Do not resurrect markdown seeding. | `normalize_workflow_graph` migrates it away and the validator rejects it; two carriers would drift. |
+| 7 | `input-memory` is retired; the conversation store is the continuity carrier. Do not resurrect markdown seeding. | `normalize_workflow_graph` migrates it away and the validator warns on any left (`LEGACY_MEMORY_EDGE`); two carriers would drift. |
 | 8 | Specialized bridges record the ORIGINAL prompt, never the augmented one. | Recording the rendered transcript nests the conversation inside itself and grows without bound. |
 | 9 | The store never imports `nodes/`; the plugin registers its broadcaster via `register_conversation_listener`, and a listener failure can never fail a save. | Same layering rule as every plugin registry; a UI notification must not break execution. |
 | 10 | External tool results are capped before they enter the transcript; the latest turn is never cleared or summarized; the pressure rules are chosen by the recorded `context_pressure_version`. | Uncapped results bricked every later firing (`errors.md` #28); an unread turn summarized away loses what the model asked for; a replay must schedule the commands it recorded. |

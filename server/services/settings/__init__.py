@@ -1,8 +1,9 @@
 """Settings domain — Wave 13.3 extraction from ``routers/websocket.py``.
 
-Side-effect import registers the 8 settings handlers (user_settings +
-provider_defaults + validated_ai_providers + global_model + compaction
-stats/config) into ``ws_handler_registry``.
+Side-effect import registers the settings handlers listed in
+``handlers.WS_HANDLERS`` (user_settings + provider_defaults +
+validated_ai_providers + global_model + compaction stats/config +
+provider usage summary) into ``ws_handler_registry``.
 """
 
 from __future__ import annotations

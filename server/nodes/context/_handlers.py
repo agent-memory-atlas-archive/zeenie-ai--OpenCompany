@@ -116,10 +116,11 @@ async def handle_get_agent_context(
     The panel shows the agent's CURRENT context only: rows from the newest
     stored generation. Prior generations stay in the store as inert history
     (cleared with the workflow) but are deliberately not browsable here.
-    ``conversations`` lists the live generation's agents so the panel can
-    offer a selector when several agents share the Context node;
-    ``messages`` is the transcript of the requested ``agent_node_id``, else
-    the newest row.
+    ``conversations`` lists every stored conversation in the live
+    generation, not only the one for the agent wired to this Context node
+    (save rejects a Context shared by several agents), and the panel offers
+    them in a selector; ``messages`` is the transcript of the requested
+    ``agent_node_id``, else the newest row.
     """
 
     workflow_id = str(data.get("workflow_id") or "")

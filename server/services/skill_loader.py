@@ -144,12 +144,14 @@ class SkillLoader:
     def _parse_skill_metadata(self, skill_md_path: Path) -> Optional[SkillMetadata]:
         """Parse SKILL.md frontmatter to extract metadata.
 
-        Icon and color are NOT read from the SKILL.md frontmatter —
-        they are resolved from the target node's visuals.json entry
-        via the central :mod:`nodes._visuals` handler. The first
-        entry in ``allowed-tools`` that resolves to a known node
-        becomes the visual source. This guarantees skills mirror
-        their teaching node's icon / color without per-file drift.
+        Icon and color are resolved from the target node through
+        :mod:`nodes._visuals` (see the chain in the body below); the
+        first entry in ``allowed-tools`` that resolves to a known node
+        becomes the visual source, and its values override any
+        frontmatter ``metadata.icon`` / ``metadata.color``. Only skills
+        with no node target keep their inline metadata. Unlike
+        ``BaseNode._metadata_dict``, this chain does not consult
+        ``meta.json`` icon references (``get_plugin_icon_ref``).
         """
         content = skill_md_path.read_text(encoding="utf-8")
 
