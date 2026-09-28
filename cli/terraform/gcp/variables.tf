@@ -33,7 +33,7 @@ variable "allow_cidr" {
 
 variable "source_mode" {
   type        = string
-  description = "Install source: 'local' (npm pack tarball via bucket) or 'release' (npm registry)."
+  description = "Install source: 'local' (bun pm pack tarball via bucket) or 'release' (npm registry)."
 }
 
 variable "opencompany_version" {
@@ -49,7 +49,7 @@ variable "resource_name" {
 variable "pack_tarball" {
   type        = string
   default     = ""
-  description = "Absolute path to the npm pack tarball (source_mode = 'local')."
+  description = "Absolute path to the bun pm pack tarball (source_mode = 'local')."
 }
 
 variable "app_env" {

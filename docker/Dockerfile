@@ -10,8 +10,9 @@
 #
 # The default image carries no optional tools. EXTRAS adds them, space
 # separated:
-#   browser  Chromium, fonts and Xvfb for the browser node, and uv, which
-#            installs the Browser node's browser-use CLI
+#   browser  Chromium and fonts for the Browser node, uv, which installs the
+#            node's browser-use CLI, and Xvfb (installed, never started: the
+#            node runs headless)
 #   git      git, for the Claude Code and Codex agent nodes (they work in git
 #            worktrees)
 #
@@ -72,16 +73,17 @@ COPY --from=bun /usr/local/bin/bun /usr/local/bin/bun
 COPY --from=build /extras/bin/ /usr/local/bin/
 
 # The image has no Node. npm CLIs whose bin scripts start
-# `#!/usr/bin/env node` (agent-browser, vercel, cf) run on bun under that
-# name, as in the official oven/bun images.
+# `#!/usr/bin/env node` (vercel, cf) run on bun under that name, as in the
+# official oven/bun images.
 RUN ln -s /usr/local/bin/bun /usr/local/bin/node
 
 # browser: Debian's /usr/bin/chromium launcher takes extra flags only from
 # /etc/chromium.d/ (it resets CHROMIUM_FLAGS from the environment) and
 # already adds --disable-dev-shm-usage when /dev/shm is small; the drop-in
 # adds --no-sandbox, without which Chrome refuses to run as root. The
-# browser node runs headed by default and agent-browser starts a private Xvfb
-# display when DISPLAY is unset.
+# Browser node runs Chromium headless (BROWSER_HEADLESS below) and starts no
+# display; BROWSER_HEADLESS=false refuses to launch without DISPLAY or
+# WAYLAND_DISPLAY, and nothing in the image starts Xvfb.
 RUN set -eu; \
     pkgs=""; \
     for extra in $EXTRAS; do \

@@ -17,8 +17,9 @@ One command provisions a login-gated OpenCompany VM on a cloud provider. Two sta
    ADC verification + API enablement.
 2. **Terraform** (`cli/terraform/gcp/`) owns all resources — new VMs use the
    `opencompany` resource id,
-   firewall, artifact bucket (local `npm pack` source), service account, and a cloud-init startup
-   script that installs Node 22 + uv + the package and runs `company serve` under systemd.
+   firewall, artifact bucket (local `bun pm pack` source), service account, and a cloud-init startup
+   script (`startup.sh.tftpl`) that installs bun + uv (no Node, no npm), `bun add -g`s the package,
+   provisions its Python side with `company provision`, and runs `company serve` under systemd.
 
 Login gate = built-in auth (`VITE_AUTH_ENABLED=true`, `AUTH_MODE=single`) with the owner
 credential generated at deploy time and seeded on first boot. `build_app_env`
@@ -35,7 +36,7 @@ company deploy destroy                                           # terraform des
 
 | Path | Responsibility |
 |------|----------------|
-| `cli/commands/serve.py` | Single-port runtime: uvicorn fronts API + WS + built SPA. `serve` supervises exactly one process — the Node.js code-exec sidecar, WhatsApp and the Temporal dev server are backend-owned and spawn on demand |
+| `cli/commands/serve.py` | Single-port runtime: uvicorn fronts API + WS + built SPA. `serve` supervises exactly one process — the JS code-exec sidecar (on bun), WhatsApp and the Temporal dev server are backend-owned and spawn on demand |
 | `cli/commands/deploy/` | Verbs (`up.py` / `status.py` / `destroy.py`), `_secrets.py`, `_state.py`, `_terraform.py` (Terraform driver), `providers/` (`gcp.py` / `aws.py` provider CLI adapters) |
 | `cli/terraform/gcp/` | HCL module (`main.tf` / `variables.tf` / `outputs.tf`) + `startup.sh.tftpl` cloud-init template |
 
@@ -328,7 +329,7 @@ docker-compose -f docker-compose.prod.yml down -v
 ## Local Development Build (current, non-Docker)
 
 ```bash
-# Full production build (company build: bun install, client, sidecar, uv sync, bytecode, Temporal binary)
+# Full production build (company build: bun install, client, sidecar, uv sync --extra docs, bytecode, Temporal binary)
 bun run build
 
 # Serve the built SPA + API on one port, exactly as a deployed VM does

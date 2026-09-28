@@ -16,7 +16,7 @@ provider "google" {
 locals {
   # ``resource_name`` is persisted by the CLI. Existing deployments retain
   # ``machinaos`` to avoid replacing live resources; new deployments use
-  # ``company``.
+  # ``opencompany`` (``NAME`` in cli/commands/deploy/_state.py).
   use_local   = var.source_mode == "local"
   res_name    = var.resource_name
   bucket_name = "${var.project}-${var.resource_name}"
@@ -61,8 +61,9 @@ resource "google_compute_firewall" "app" {
   network = "default"
 
   allow {
-    # CF-proxied front door (80 http-redirected, 443 TLS via nginx) + SSH +
-    # the app port for direct-IP access.
+    # 80/443 for a reverse proxy the operator adds in front (startup.sh.tftpl
+    # installs none; the app serves plain HTTP on var.port) + SSH + the app
+    # port for direct-IP access.
     protocol = "tcp"
     ports    = ["80", "443", tostring(var.port), "22"]
   }
@@ -83,7 +84,7 @@ resource "google_compute_instance" "vm" {
     initialize_params {
       # Ubuntu 24.04 ships Python 3.12 natively — required by the package's
       # install (server needs >=3.11,<3.13; the CLI needs >=3.12). 22.04
-      # ships 3.10 and the npm postinstall hard-fails on it.
+      # ships 3.10 and `company provision` (scripts/install.js) hard-fails on it.
       image = "ubuntu-os-cloud/ubuntu-2404-lts-amd64"
       size  = 40
       type  = "pd-balanced"
