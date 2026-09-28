@@ -90,11 +90,23 @@ jobs:
           APP_PORT=$(grep -E '^PYTHON_BACKEND_PORT=' .env.template | cut -d= -f2)
           bun run start &
           PID=$!
-          for i in {1..15}; do
-            curl -sf "http://localhost:${APP_PORT}/health" > /dev/null 2>&1 && break
+          # Pass only if /health answers. A cold macOS runner can need well
+          # over 30 s, so wait up to 90 s, and stop early if start exited.
+          healthy=0
+          deadline=$((SECONDS + 90))
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            if curl -sf -m 5 "http://localhost:${APP_PORT}/health" > /dev/null 2>&1; then
+              healthy=1
+              break
+            fi
+            kill -0 "$PID" 2>/dev/null || break
             sleep 2
           done
-          kill -0 $PID 2>/dev/null && bun run stop || (echo FAILED; exit 1)
+          bun run stop || true
+          if [ "$healthy" -ne 1 ]; then
+            echo "FAILED: /health never answered on port ${APP_PORT}"
+            exit 1
+          fi
 
       - name: Test start (Windows)
         if: runner.os == 'Windows'

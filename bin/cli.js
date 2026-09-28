@@ -1,7 +1,8 @@
 #!/usr/bin/env bun
 // The `company` launcher. Installed by `bun add -g @zeenie-ai/opencompany`
-// and run by bun (the shebang); the code itself is plain JavaScript so a
-// legacy npm-installed copy still runs under node.
+// and run by bun (the shebang). The code itself is plain JavaScript, so it
+// also parses under node, but the paths that need bun say so instead of
+// falling back to npm.
 
 import { spawn, spawnSync, execSync } from 'child_process';
 import { basename, dirname, resolve } from 'path';
@@ -58,8 +59,8 @@ Documentation: https://docs.opencompany.sh/
 }
 
 // bun is the package manager, script runner and JS runtime everywhere.
-// A legacy npm-installed copy may run this file under node without bun
-// on PATH, so every bun use below keeps an npm fallback for that case.
+// There is no npm fallback: without bun on PATH, the paths below that need
+// it stop with a pointer to https://bun.sh.
 function hasBun() {
   return getVersion('bun --version') !== null;
 }
@@ -126,12 +127,13 @@ function checkDeps() {
 
 function doctor() {
   console.log('\nOpenCompany Doctor\n');
-  try {
-    const runner = hasBun() ? 'bun x' : 'npx';
-    execSync(`${runner} envinfo --system --binaries --npmPackages edgymeow,agent-browser,cross-env`, {
-      cwd: ROOT, stdio: 'inherit', shell: true,
-    });
-  } catch { /* envinfo not available, continue with manual checks */ }
+  if (hasBun()) {
+    try {
+      execSync('bun x envinfo --system --binaries', { cwd: ROOT, stdio: 'inherit', shell: true });
+    } catch { /* envinfo not available, continue with manual checks */ }
+  } else {
+    console.log('  bun: Not Found (required: https://bun.sh)\n');
+  }
 
   console.log('  Additional checks:');
   const checks = [
@@ -148,9 +150,10 @@ function doctor() {
   console.log('');
 }
 
-// Resolve <ROOT>/.cli-venv Python if provisioning has run. Returns null on
-// source checkouts (no venv -> fall back to ``bun run``) and on a fresh
-// global install before its first run.
+// Resolve <ROOT>/.cli-venv Python if provisioning has run. Returns null on a
+// fresh global install before its first run, and on a source checkout whose
+// `bun install` skipped the postinstall hook (which runs scripts/install.js,
+// the step that creates the venv); `run()` then falls back to `bun run`.
 function venvPython() {
   const py = process.platform === 'win32'
     ? resolve(ROOT, '.cli-venv', 'Scripts', 'python.exe')
@@ -222,9 +225,9 @@ function run(script, extraArgs = []) {
   // ``-m cli <cmd>``. Skips the script-runner hop that previously re-
   // resolved the system ``python`` (which on PEP 668 systems lacks
   // the CLI runtime deps -- typer/rich/anyio/psutil). The script-runner
-  // path stays as the source-checkout fallback: ``bun run <script>``
-  // when bun is on PATH (source checkouts are bun-only), else ``npm run``
-  // for a legacy npm-installed copy.
+  // path stays as the fallback when no venv exists (see venvPython):
+  // ``bun run <script>``. It needs bun on PATH; without it the command
+  // stops with a pointer to bun rather than trying npm.
   ensureProvisioned();
   const venvPy = venvPython();
   if (venvPy) {
@@ -237,11 +240,13 @@ function run(script, extraArgs = []) {
     return;
   }
 
+  if (!hasBun()) {
+    console.error('OpenCompany requires bun to run this command. Install it: https://bun.sh');
+    process.exit(1);
+  }
   const runnerArgs = ['run', script];
   if (extraArgs.length) runnerArgs.push('--', ...extraArgs);
-  const runner = hasBun()
-    ? (process.platform === 'win32' ? 'bun.exe' : 'bun')
-    : (process.platform === 'win32' ? 'npm.cmd' : 'npm');
+  const runner = process.platform === 'win32' ? 'bun.exe' : 'bun';
   const child = spawn(runner, runnerArgs, {
     cwd: ROOT,
     stdio: 'inherit',

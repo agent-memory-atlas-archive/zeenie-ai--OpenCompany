@@ -646,6 +646,17 @@ def test_launcher_and_install_scripts_run_under_bun(root: Path):
         assert first == "#!/usr/bin/env bun", f"{rel}: {first!r}"
 
 
+def test_launcher_never_falls_back_to_npm(root: Path):
+    """bun is required everywhere, so the launcher stops with a pointer to
+    bun when it is missing instead of spawning npm or npx. ``doctor`` no
+    longer lists packages that are not root dependencies (edgymeow lives in
+    the shared packages tree; agent-browser is retired)."""
+    launcher = (root / "bin" / "cli.js").read_text(encoding="utf-8")
+    for needle in ("npm.cmd", "'npm'", "npx", "--npmPackages"):
+        assert needle not in launcher, f"bin/cli.js still contains {needle!r}"
+    assert "https://bun.sh" in launcher
+
+
 def test_bunfig_pins_the_isolated_linker(root: Path):
     """``linker = "isolated"`` preserves pnpm's phantom-dependency guard
     (symlinked layout); the tsgo typeRoots / vite-env.d.ts workarounds
