@@ -1,16 +1,21 @@
 """OpenCompany MCP server (VSCode pattern, no custom IPC).
 
-Hosts a `FastMCP` ASGI sub-app at ``/mcp/ide`` that spawned CLI sessions
-auto-discover via the lockfile written by ``lockfile.py``. Each session
+Hosts a `FastMCP` ASGI sub-app at ``/mcp/ide``. Claude reaches it through
+the ``--mcp-config`` entry the provider puts on its argv (URL + bearer);
+the IDE lockfile written by ``lockfile.py`` is used only by the generic
+``AICliSession`` path. Each session
 gets a per-batch bearer token; the middleware validates it and binds the
 matching ``BatchContext`` into a contextvar so tool implementations can
 scope to the calling session's workspace_dir / connected_skill_names /
 allowed_credentials without explicit plumbing.
 
-Tools (5 in v1, mirroring Claude Code's progressive-disclosure pattern):
-  - ``getWorkspaceFiles`` — glob/read inside the session's worktree
+Infrastructure tools (registered in :func:`_build_tools`, mirroring
+Claude Code's progressive-disclosure pattern):
+  - ``getWorkspaceFiles`` — glob/read inside the batch's workspace_dir
   - ``listSkills`` — metadata for skills connected to the parent agent
-  - ``getSkill`` — full skill markdown + scripts + references
+  - ``getSkill`` — load a connected skill (instructions + resource manifest)
+  - ``readSkillResource`` / ``searchSkillResource`` — page through or
+    search a loaded skill's declared resources
   - ``getCredential`` — gated by per-batch allowlist
   - ``broadcastLog`` — write to OpenCompany Terminal tab
 
@@ -65,9 +70,10 @@ class BatchContext:
     allowed_credentials: Set[str] = field(default_factory=set)
     # Connected ``input-tools`` nodes (entries from
     # ``services.plugin.edge_walker.collect_agent_connections``). Each
-    # dict: ``{node_id, node_type, label, parameters, ...}``. Drives the
-    # ``listOpenCompanyTools`` / ``callOpenCompanyTool`` MCP tools so the
-    # CLI agent sees the same tool surface the AI Agent does.
+    # dict: ``{node_id, node_type, label, parameters, ...}``. Each entry
+    # is exposed as its own ``mcp__opencompany__<name>`` tool (see
+    # ``workflow_tools``) so the CLI agent sees the same tool surface the
+    # AI Agent does.
     connected_tools: List[Dict[str, Any]] = field(default_factory=list)
     # Optional broadcaster for `broadcastLog`. Lazily resolved from the
     # global container if None.
@@ -307,8 +313,8 @@ class _BearerAuthMiddleware(BaseHTTPMiddleware):
             ua = request.headers.get("user-agent", "")
             logger.warning(
                 "[CC-Agent MCP auth] %s %s -> 401 (no Bearer token; "
-                "auth_header=%r ua=%r) — claude CLI either didn't read the "
-                "lockfile or is hitting the wrong URL.",
+                "auth_header=%r ua=%r) — the CLI sent no bearer from its "
+                "--mcp-config entry, or is hitting the wrong URL.",
                 method,
                 path,
                 auth,
@@ -354,7 +360,7 @@ class _BearerAuthMiddleware(BaseHTTPMiddleware):
 
 
 def _build_tools(mcp: Any) -> None:  # FastMCP type
-    """Register the 5 v1 tools on a `FastMCP` instance."""
+    """Register the infrastructure tools on a `FastMCP` instance."""
 
     @mcp.tool(
         name="getWorkspaceFiles",

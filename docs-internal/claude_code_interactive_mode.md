@@ -20,13 +20,14 @@ and parsed NDJSON events on stdout. Two reasons to leave `-p`:
 1. **Anthropic billing change (2026-06-15).** Per
    [`code.claude.com/docs/en/headless`](https://code.claude.com/docs/en/headless),
    subscription plans bill `claude -p` and Agent-SDK usage from a
-   separate "monthly Agent SDK credit." The interactive entrypoint
-   (`claude-vscode`, not `sdk-cli`) stays on the subscription's
-   interactive bucket. Dropping `-p` puts us in the user's interactive
-   bucket when they supply their own API key.
+   separate "monthly Agent SDK credit." The expectation was that the
+   interactive entrypoint (`claude-vscode`, not `sdk-cli`) stays on the
+   subscription's interactive bucket once `-p` is dropped. **This is
+   unverified:** nothing in OpenCompany checks which entrypoint or
+   billing bucket the CLI reports for these spawns.
 2. **Match how Anthropic itself drives `claude` programmatically.** The
-   VSCode extension at
-   `C:/Users/Tgroh/.vscode/extensions/anthropic.claude-code-2.1.140-win32-x64/extension.js:156`
+   VSCode extension (`$VSCODE_EXT_DIR/anthropic.claude-code-2.1.140-<platform>/extension.js`,
+   line 156)
    spawns claude with exactly four flags (`--output-format stream-json
    --input-format stream-json --verbose --ide`) and never emits `-p`.
    That's the wire we reuse.
@@ -103,7 +104,7 @@ Notable absences (intentional):
 |---|---|
 | `-p` / `--print` | Drops us into the SDK billing bucket; the whole point of the cutover. |
 | Positional prompt (`-- "<text>"`) | Prompt arrives via stdin in stream-json input mode; an argv positional would double-send the first turn. `interactive_argv`'s `include_prompt` parameter is kept for back-compat but ignored. |
-| `--continue` | The CLI reference says it skips sessions created non-interactively (`-p` / stream-json input), which is exactly what the pool spawns, so it never found the prior conversation. Memory-bound runs pass `--resume <last_session_id>` instead (the UUID persisted on the memory node by `_persist_memory`). |
+| `--continue` | Not set by the node's own continuity logic. The CLI reference says it skips sessions created non-interactively (`-p` / stream-json input), which is exactly what the pool spawns, so it never found the prior conversation. Memory-bound runs pass `--resume <last_session_id>` instead (the UUID persisted on the memory node by `_persist_memory`). It is still emitted when a task in the node's `tasks` list sets `continue_session: true`, because `ClaudeTaskSpec` keeps the field. |
 | `--include-partial-messages`, `--include-hook-events`, `--max-turns`, `--max-budget-usd`, `--fallback-model` | All `-p`-only. `ClaudeTaskSpec` keeps the fields for back-compat; they're silently dropped here. External cost / turn caps are a Phase 2 follow-up. |
 
 Emitted for session identity:
@@ -115,63 +116,73 @@ Emitted for session identity:
 
 `--permission-mode dontAsk` is the documented mode for *"only
 pre-approved tools, no prompts"* per
-[`code.claude.com/docs/en/permission-modes`](https://code.claude.com/docs/en/permission-modes).
-It gates `--allowedTools` strictly — anything not in the allowlist
-returns a permission denial without surfacing a TUI prompt
-(non-interactive automation has no human at the keyboard to click
-"Allow"). The earlier `bypassPermissions` default *"skips the
+[`code.claude.com/docs/en/permission-modes`](https://code.claude.com/docs/en/permission-modes):
+a call that would otherwise prompt is denied instead (non-interactive
+automation has no human at the keyboard to click "Allow"). Only calls
+matching `--allowedTools` run, plus read-only Bash commands, which the
+same doc says run without a rule. `--allowedTools` pre-approves; it
+does not remove Claude's other built-ins from the model's context
+(`--tools` / `--disallowedTools` do that, and neither is emitted by
+default), so the model can still call `Read`, `Bash` and the rest and
+receive a denial. The earlier `bypassPermissions` default *"skips the
 permission layer entirely"* (same doc, §"Skip all checks"), which
 turned `--allowedTools` / `--disallowedTools` into documentation-only
 fields and let claude's built-in `Read` / `Edit` / `Bash` /
 `Glob` / `Grep` / `Write` / `Skill` / `WebSearch` / `WebFetch` fire
 regardless of wiring. `acceptEdits` was the prior config default but
 would prompt for any non-Edit tool — hanging the headless agent.
-`dontAsk` is the only mode that combines no-prompts with a strict
-allowlist gate.
+`dontAsk` is the mode that combines no prompts with denial of
+everything not pre-approved.
 
 ## Session pool — warm-process reuse
 
 [`ClaudeSessionPool`](../server/nodes/agent/claude_code_agent/_pool.py) is
 keyed by the RFC-0002 conversation key `context_bridge.pool_key`
 (`(workflow_id, agent_node_id, generation)`), falling back to the legacy
-`simpleMemory.node_id` only on `input-memory` graphs
-(`services/cli_agent/service.py:359-363`). Each entry is a
+`simpleMemory.node_id` only on `input-memory` graphs (`bound_key` in
+`AICliService.run_batch`). Each entry is a
 `PooledClaudeSession` carrying the live `asyncio.subprocess.Process`,
-the captured session UUID (filled in from the first event that has
-one), the MCP bearer token embedded in the spawn argv, a per-session
-`asyncio.Lock`, an `asyncio.Event` signalled by the stdout reader on
-`result`, and a per-turn event buffer.
+the session UUID (set at spawn from the `--session-id` the pool mints
+or the `--resume` UUID; filled in from the first event that has one
+only when neither flag was passed, i.e. a task forced `--continue`),
+the MCP bearer token embedded in the spawn argv, a `turn_lease` and a
+narrower `lock` (both `asyncio.Lock`), an `asyncio.Event` signalled by
+the stdout reader on `result`, and a per-turn event buffer.
 
 | Operation | Behaviour |
 |---|---|
-| `acquire(memory_node_id, ...)` | Live + healthy entry → return as-is (warm reuse). Live + dead entry → drop, capture its UUID, spawn fresh with `--resume <UUID>` so the same JSONL keeps growing. No entry → cold spawn. At cap → LRU evict (skipping in-flight). |
+| `acquire(memory_node_id, ...)` | For a Context key `(workflow_id, agent_node_id, generation)`, first terminates any entry for the same workflow and agent with a different generation (reason `generation_changed`), so a Reset's generation bump fences the old process. Then: live + healthy entry → wait for its `turn_lease`, re-check it is still the pooled entry, and warm-reuse it (`_prepare_warm_reuse` rebinds the MCP `BatchContext` and applies the skill diff). Live + dead entry → drop, capture its UUID, spawn fresh with `--resume <UUID>` so the same JSONL keeps growing. No entry → cold spawn. At cap → LRU evict (skipping entries whose `lock` or `turn_lease` is held). Returns with the `turn_lease` held. |
 | `send_turn(session, prompt, ...)` | Holds `session.lock`. Clears `result_event` + `events_this_turn`. Writes one stream-json line to `proc.stdin`, awaits `result_event` (timeout = 600s default). Returns a `SessionResult` built from the per-turn event buffer. Persists `result.session_id` onto `session.current_session_uuid`. |
-| `clear(session, ...)` | Kill the subprocess, drop the captured UUID. Next `acquire` spawns fresh with no continuity flag (claude assigns a new UUID). Emits `claude.session.cleared`. |
-| `release(session)` | Updates `last_used_at` so the reaper measures idle from now. |
+| `clear(session, ...)` | Kill the subprocess, drop the captured UUID. Next `acquire` spawns fresh with a newly minted `--session-id`. Emits `claude.session.cleared`. Has no production caller today. |
+| `release(session)` | Releases the `turn_lease` and updates `last_used_at` so the reaper measures idle from now. |
 | `terminate(memory_node_id)` | Force-drop a specific entry: close stdin → 2s grace → `proc.kill()` → cancel reader/drain tasks. |
+| `terminate_conversations(workflow_id, ...)` | Terminate the Context-keyed entries of a workflow (optionally one agent); the Context panel's Clear calls it (reason `conversation_cleared`). |
 | `shutdown_all()` | Stop the reaper + terminate every entry. Wire into FastAPI's lifespan `shutdown`. |
 
 Lifecycle policy:
 
 - **Idle TTL** 30 min (`_DEFAULT_IDLE_TTL`). Background reaper task
-  terminates pooled sessions whose `last_used_at` exceeds the cap AND
-  aren't currently locked.
+  terminates pooled sessions whose `last_used_at` exceeds the cap and
+  whose `lock` and `turn_lease` are both free.
 - **Max size** 16 (`_DEFAULT_MAX_SIZE`). LRU eviction at cap (skipping
   in-flight entries).
-- **Concurrency** — per-key `asyncio.Lock` serialises turns against
-  the same pooled subprocess so two `send_turn` calls can't interleave
-  their stream-json lines on stdin. `lock.locked()` doubles as the
-  reaper's in-flight detector.
+- **Concurrency** — the `turn_lease` is held from `acquire` through
+  the context rebind, `send_turn` and `release`, so a second batch
+  cannot rebind the MCP `BatchContext` after the first batch acquired
+  the session but before its turn ran. The narrower `lock` is held
+  inside `send_turn` so two calls can't interleave their stream-json
+  lines on stdin.
 
 ## Stream-json event dispatch
 
 `_handle_stream_event` has three concerns:
 
-1. **UUID capture.** Any event carrying `session_id` (or `sessionId`)
-   seeds `session.current_session_uuid` if it isn't already set —
-   `system/init` fires this for fresh spawns, `result` carries the
-   authoritative value at turn end. Crash-recovery respawns read this
-   field to emit `--resume <UUID>`.
+1. **UUID capture.** The UUID is normally known from spawn (the minted
+   `--session-id` or the `--resume` UUID). Any event carrying
+   `session_id` (or `sessionId`) seeds `session.current_session_uuid`
+   only if it is still empty (a `--continue` spawn), and `send_turn`
+   overwrites it with the `result` event's value at turn end.
+   Crash-recovery respawns read this field to emit `--resume <UUID>`.
 2. **Per-turn buffering.** Every event is appended to
    `events_this_turn`. When `provider.is_final_event(event)` returns
    True (i.e. `event.type == "result"`), `result_event` is set and
@@ -200,6 +211,13 @@ The pool's continuity model is two-layered:
   memory node after the previous successful run). If `acquire` finds the
   pooled subprocess has died, it splices `--resume <current_session_uuid>`
   into the spec so the new subprocess continues the same on-disk JSONL.
+- **Idle reap / LRU eviction / generation change.** `_terminate_locked`
+  pops the entry, and its UUID goes with it, so the next `acquire` is a
+  plain cold spawn with a new `--session-id`. Memory-bound runs still
+  resume through the memory node's `last_session_id`. Context-bound runs
+  store no session UUID anywhere, so they start a fresh Claude session
+  and keep only the text the context bridge renders into the prompt
+  (see "Known gaps").
 
 `ClaudeTaskSpec` carries `session_id`, `resume_session_id` and
 `continue_session`; precedence in argv is resume, then continue, then
@@ -254,10 +272,11 @@ reads `ctx.connected_tools` at call time — so even if claude's
 frozen `--allowedTools` argv still lists a tool that's since been
 disconnected, the handler returns
 `{"error": "...not connected to this batch", "status": 403}`.
-Combined with `--permission-mode dontAsk` (strict allowlist gate on
-the claude side) this gives a double-lock: the tool surface visible
-to claude is what the batch wired, no more no less, even across
-warm-reuse turns.
+On the claude side, `--permission-mode dontAsk` denies a call to any
+tool that is not pre-approved. The `--allowedTools` list is frozen in
+the spawn argv, though: a tool wired after the warm process started is
+exposed over MCP by the rebind but is not pre-approved, so claude
+denies it until the process is respawned (see "Known gaps").
 
 ## CloudEvents broadcasts
 
@@ -271,7 +290,7 @@ methods on
 |---|---|
 | `com.opencompany.claude.session.spawned` | Cold spawn (new subprocess) |
 | `com.opencompany.claude.session.cleared` | Explicit `pool.clear` → new UUID on next acquire |
-| `com.opencompany.claude.session.terminated` | Pool terminate (reason: `idle` / `crashed` / `evicted` / `shutdown` / `explicit`) |
+| `com.opencompany.claude.session.terminated` | Pool terminate (reason: `idle` / `evicted` / `crashed` / `generation_changed` / `conversation_cleared` / `acquire_failed` / `shutdown` / `explicit`) |
 | `com.opencompany.claude.session.usage` | Each `result` event (per-turn cost + tokens + duration + num_turns) |
 
 The usage event is the source of truth for the simpleMemory usage panel
@@ -282,19 +301,22 @@ store that renders the panel.
 
 ## Tools and skills
 
-**Tools (MCP) — strict allowlist, no claude built-ins.** Spawn argv
+**Tools (MCP) — pre-approved allowlist, no claude built-ins
+pre-approved.** Spawn argv
 carries `--mcp-config <json>` (HTTP transport, bearer header) +
 `--strict-mcp-config` so the spawned claude only loads OpenCompany's
 FastMCP server. The `mcpServers.opencompany` block sets `alwaysLoad:
 true` to opt out of MCP tool-search deferral so all
 `mcp__opencompany__*` tools enter context at session start.
-`--allowedTools` is the explicit allowlist, and it does NOT include
-claude's built-in escape hatches (`Read`, `Edit`, `Bash`, `Glob`,
-`Grep`, `Write`, `WebSearch`, `WebFetch`) — every workflow already
-wires the equivalents (`fileRead`, `fileModify`, `fsSearch`,
+`--allowedTools` is the explicit pre-approval list, and it does NOT
+include claude's built-in escape hatches (`Read`, `Edit`, `Bash`,
+`Glob`, `Grep`, `Write`, `WebSearch`, `WebFetch`) — every workflow
+already wires the equivalents (`fileRead`, `fileModify`, `fsSearch`,
 `shell`, `browser`, `perplexitySearch`, …) as MCP tools, and the
 built-ins were the leakage path that let the agent invoke
-capabilities the workflow didn't explicitly grant. The default
+capabilities the workflow didn't explicitly grant. The built-ins stay
+in the model's context, though: calling them is denied under
+`dontAsk`, except read-only Bash commands, which run. The default
 allowlist is:
 
 - `mcp__opencompany__<node_type>` per node connected to the agent's
@@ -304,16 +326,17 @@ allowlist is:
   least one skill is wired through the agent's `input-skill`
   handle. Paired with the `materialise_skills` helper (below)
   which writes the connected SKILL.md trees under
-  `<cwd>/.claude/skills/` so the built-in skill loader has
-  something to discover. The one exception to the
+  `<workspace_dir>/.claude/skills/` (reached through `--add-dir`) so
+  the built-in skill loader has something to discover. The one exception to the
   "no claude built-ins" rule, because the alternative (forcing the
   agent to load every skill through the `getSkill` MCP round-trip)
   is materially worse UX for the common case where the workflow
   pre-wired which skills should be on the table.
-- The seven OpenCompany MCP infrastructure tools — `getWorkspaceFiles`,
+- The OpenCompany MCP infrastructure tools — `getWorkspaceFiles`,
   `listSkills`, `getSkill`, `readSkillResource`, `searchSkillResource`,
-  `getCredential`, `broadcastLog` (`_provider.py:275-283`; defined in
-  `services/cli_agent/mcp_server.py:359-560`) — which are how the agent
+  `getCredential`, `broadcastLog` (listed in
+  `AnthropicClaudeProvider.interactive_argv`; defined in
+  `mcp_server._build_tools`) — which are how the agent
   reads its workspace, discovers connected skills (when no wiring is
   present), pages through and searches a loaded skill's declared
   resources, fetches scoped credentials, and surfaces intermediate
@@ -322,9 +345,9 @@ allowlist is:
 Callers wanting specific claude built-ins back in opt in per-task via
 `ClaudeTaskSpec.allowed_tools` (the field is honored verbatim — no
 auto-merge with workflow tools). Default value: empty string.
-Combined with `--permission-mode dontAsk`, the strict allowlist is
-actually enforced (see "argv shape" above for why `bypassPermissions`
-was the wrong default).
+Combined with `--permission-mode dontAsk`, anything not pre-approved
+is denied apart from read-only Bash commands (see "argv shape" above
+for why `bypassPermissions` was the wrong default).
 
 **Skills — per-workflow workspace, live-watched, diff-based.**
 [`nodes/agent/claude_code_agent/_skills.py::materialise_skills`](../server/nodes/agent/claude_code_agent/_skills.py)
@@ -391,8 +414,8 @@ claude: sessions spawn in a git worktree under
 otherwise), which does not see files dropped by upstream nodes
 (`fileDownloader`,
 `documentParser`, code executors, etc.). Mirrors the ai_agent
-pattern ([`services/ai.py:1186`](../server/services/ai.py) in
-`execute_agent`, `:1924` in `execute_chat_agent` —
+pattern (the tool config built in `AIService.execute_agent` and
+`execute_chat_agent` in [`services/ai.py`](../server/services/ai.py) —
 `config["workspace_dir"] = context.get("workspace_dir", "")`) but
 uses claude's native `--add-dir` instead of MCP-tool-config injection
 because claude has its own filesystem tools (`Read`, `Edit`, `Glob`,
@@ -414,6 +437,50 @@ claude's `Read` tool inside a pooled turn.
   manual). `_handle_stream_event` forwards it to
   `CompactionService.record(...)` so the local-threshold path doesn't
   double-fire on claude's native auto-compaction.
+
+## Known gaps
+
+Recorded from the code; none is fixed yet, because each fix changes how
+the agent runs.
+
+- **Context-bound runs lose Claude's own session after a reap, an
+  eviction or a generation change.** The pool entry and its UUID are
+  dropped and no UUID is stored for Context-bound runs, so the next run
+  is a fresh Claude session. What survives is the stored conversation,
+  which holds only each turn's original prompt and final response
+  (`SpecializedAgentContextBridge.record_turn`), not tool calls or
+  their results.
+- **The stored transcript is sent again on every turn.** `run_batch`
+  renders the whole stored conversation into the prompt
+  (`augment_prompt`) for every Context-bound run, warm or cold. A warm
+  process already holds the earlier turns, so it sees each earlier
+  exchange again inside every new prompt, and the repeated part grows
+  with the conversation. A crash-recovery `--resume` spawn gets the same
+  duplication.
+- **`--ide` is passed with no lockfile, and the spawn inherits the
+  backend's environment.** `_run_pooled_turn` copies `os.environ` whole
+  and adds only `PYTHONUNBUFFERED`, `CLAUDE_CONFIG_DIR` and the
+  parent-run ids. When the backend was started from an editor's
+  terminal, that editor's variables (including any IDE-integration
+  variables) reach the CLI, where `--ide` may act on them. Not verified
+  at runtime.
+- **`getCredential` and `broadcastLog` are visible to the model and
+  pre-approved.** `getCredential` returns the plaintext value of any
+  credential named in the node's hidden `allowed_credentials` parameter
+  (empty by default, so every call gets a 403); a prompt injection could
+  ask for such a key. `broadcastLog` lets the model write lines into the
+  Terminal panel. See R5 in
+  [cli_agent_canonical_patterns_rfc.md](./cli_agent_canonical_patterns_rfc.md).
+- **Warm reuse keeps the spawn-time flags.** `_prepare_warm_reuse`
+  rebinds only the MCP `BatchContext` and the materialised skill files.
+  `--model`, `--allowedTools` (including whether `Skill` is on it),
+  `--permission-mode`, `--append-system-prompt`, `--add-dir` and
+  `--effort` stay as they were at spawn until the process is reaped,
+  evicted or fenced. A tool, or a first skill, wired after the spawn is
+  exposed but not pre-approved, so `dontAsk` denies it. The rebind also
+  leaves `connected_skill_descriptors` unchanged, so `getSkill`,
+  `readSkillResource` and `searchSkillResource` can work from stale
+  skill descriptors.
 
 ## What changed (historical note)
 

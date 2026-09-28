@@ -3,8 +3,10 @@
 **Not used for Claude.** ``AICliService.run_batch`` routes every Claude
 task through ``ClaudeSessionPool`` (plain pipes + stream-json): a PTY
 stdin makes the CLI reject ``--input-format stream-json``, and this
-class never wrote the prompt to the child (GitHub #133 / #134). It
-remains the generic PTY + JSONL path for other providers.
+class never wrote the prompt to the child (GitHub #133 / #134). It is
+still what ``run_batch`` uses for a provider with no registered session
+pool (Codex), but ``_do_start`` raises for every provider except
+``claude``, so those runs fail (reported as ``worktree_setup_failed``).
 
 Each session is bound to:
   - one provider (Claude or Codex)
@@ -134,7 +136,7 @@ class AICliSession(BaseProcessSupervisor):
         # path (https://code.claude.com/docs/en/skills#where-skills-live).
         self._connected_skill_names: List[str] = list(connected_skill_names or [])
         # Memory-bound runs use ``cwd=repo_root`` so claude's project_key
-        # (derived from cwd via `[^a-zA-Z0-9.-] -> -`) stays stable
+        # (derived from cwd via ``_PROJECT_KEY_RE``) stays stable
         # across spawns. With a stable project_key, ``--resume <UUID>``
         # finds the prior session JSONL claude wrote on its previous
         # turn under ``<CLAUDE_CONFIG_DIR>/projects/<key>/<UUID>.jsonl``.
@@ -326,8 +328,8 @@ class AICliSession(BaseProcessSupervisor):
             )
 
         # Where claude will write its session JSONL. The project_key is
-        # derived from cwd by the algorithm verified in the memory
-        # bridge research (every non-`[a-zA-Z0-9.-]` char → `-`).
+        # derived from cwd by ``_PROJECT_KEY_RE`` (every char outside
+        # ``[a-zA-Z0-9-]`` becomes ``-``, dots included).
         project_dir = self._project_dir()
         try:
             project_dir.mkdir(parents=True, exist_ok=True)

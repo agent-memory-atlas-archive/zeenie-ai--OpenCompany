@@ -5,7 +5,7 @@ Multi-instance, multi-provider runtime for AI CLI agents (Claude Code, Codex, Ge
 | Provider | Status | Login flow |
 |---|---|---|
 | Claude Code (`@anthropic-ai/claude-code`) | shipping | Shared-tree install + spawn (`nodes/agent/claude_code_agent/_oauth.py:run_claude_login`) |
-| OpenAI Codex (`@openai/codex`) | shipping (no login flow yet) | User runs `codex login` manually; UI returns a graceful "not yet wired" error |
+| OpenAI Codex (`@openai/codex`) | **fails on every run** (see Risks); no login flow yet | User runs `codex login` manually; UI returns a graceful "not yet wired" error |
 | Google Gemini (`@google/gemini-cli`) | v2 stub | factory raises `NotImplementedError` |
 
 Browser automation has its own runtime (the installed Chrome/Edge/Chromium by default, plus a uv-installed browser-use CLI); it is not installed into this bun package tree. See [browser.md](./browser.md) and [browser_workspace.md](./browser_workspace.md) for its lifecycle and live control surface.
@@ -26,13 +26,14 @@ AICliService.run_batch(provider, tasks, *, node_id, workflow_id, workspace_dir)
         │                       or wt_<run>_<i> per task (ephemeral, removed after the batch)
         │       pool.acquire(): cold spawn over stdio pipes, or warm reuse
         │                       argv: --mcp-config <json> (MCP bearer) ... --ide (no lockfile written)
-        │                       env:  CLAUDE_CONFIG_DIR + OPENCOMPANY_PARENT_RUN_ID
+        │                       env:  the backend's os.environ + CLAUDE_CONFIG_DIR + OPENCOMPANY_PARENT_RUN_ID
         │       pool.send_turn(): stream-json line on stdin, wait for `result` on stdout
         │
         └──► codex (no session pool) → AICliSession (BaseProcessSupervisor + CodexProvider)
-                 _pre_spawn():   git worktree add (lockfile only if the provider declares
-                                 `ide_lockfile`; Codex does not)
-                 wait_for_completion(timeout); cleanup(): terminate_then_kill(5s) + worktree remove
+                 _do_start():    binary check, then _pre_spawn() (git worktree add; lockfile
+                                 only if the provider declares `ide_lockfile`, Codex does not),
+                                 then raises for every provider except claude, so the run fails
+                 cleanup(): terminate_then_kill(5s) + worktree remove
         │
         │  ◄────  CLI calls back via MCP/HTTP at /mcp/ide/mcp
         │           Authorization: Bearer <batch-token>  (per-batch isolation)
@@ -43,15 +44,18 @@ BatchResult { tasks: [SessionResult, ...], n_succeeded, n_failed, total_cost_usd
         │ token deregistered in finally (non-pool path; a pooled session keeps its
         │ spawn-time token until _terminate_locked)
         ▼
-existing Temporal heartbeat fires per WS broadcast (services/temporal/activities.py:259)
-existing tool-result envelope truncates response at 4000 chars (services/handlers/tools.py:993)
+Temporal keeps the long run alive with activity heartbeats (the per-type activity's periodic
+  heartbeat in BaseNode; the legacy execute_node_activity path heartbeats while waiting in
+  NodeExecutionActivities._execute_via_websocket)
+SessionResult.response is truncated to 4000 chars where the result is built
+  (ClaudeSessionPool._build_result_from_events; AICliSession does the same)
 ```
 
 Reuses (do not duplicate):
 
 - `services/_supervisor/{base,process,util}.py` — `BaseProcessSupervisor` (locked start/stop, `kill_tree`, `terminate_then_kill(5s)`, drain tasks, Windows `CTRL_BREAK_EVENT`)
 - `services/llm/{protocol,registry,config}.py` — Protocol + lazy `register_provider(ProviderSpec)` registry + JSON config blueprint (the old `llm/factory.py` was removed)
-- `services/handlers/tools.py:993` — 4000-char truncation
+- `services/handlers/tools.py` — `_execute_check_delegated_tasks` applies the same 4000-char cut to delegated-agent results
 - `services/status_broadcaster.py` — `update_node_status`, `broadcast_terminal_log`
 - `services/skill_loader.py` — `scan_skills` / `load_skill` consumed by MCP `listSkills` / `getSkill`
 - `services/auth.py` — `AuthService.get_api_key` consumed by MCP `getCredential`
@@ -92,17 +96,18 @@ class AICliProvider(Protocol):
 ### Claude argv (`AnthropicClaudeProvider.interactive_argv`)
 
 Spawned per task — the binary path comes from
-`nodes.agent.claude_code_agent._oauth.claude_binary_path()` (`_oauth.py:82`;
-the same project-local install the credentials Login button uses) and `CLAUDE_CONFIG_DIR` is
+`nodes.agent.claude_code_agent._oauth.claude_binary_path()` (the same
+project-local install the credentials Login button uses) and `CLAUDE_CONFIG_DIR` is
 injected on the spawn env so the agent shares one credential store with
 the auth surface.
 
 The pooled path (`ClaudeSessionPool`) spawns claude as a plain
 subprocess with stdio pipes — no PTY — and drives it over the
 VSCode-extension protocol: prompts written as stream-json to
-`proc.stdin`, events read as stream-json off `proc.stdout`. Stays in
-the interactive billing bucket (entrypoint `claude-vscode`, NOT
-`sdk-cli`) since `-p` / `--print` is never emitted.
+`proc.stdin`, events read as stream-json off `proc.stdout`. `-p` /
+`--print` is never emitted. The expectation that this keeps usage in
+the interactive billing bucket (entrypoint `claude-vscode`, not
+`sdk-cli`) is unverified.
 
 ```
 ~/.opencompany/packages/node_modules/.bin/claude[.exe]   # bun's bin shim; runs on bun
@@ -111,7 +116,7 @@ the interactive billing bucket (entrypoint `claude-vscode`, NOT
   --verbose                       # required with stream-json for full event detail
   --ide                           # matches the VSCode extension; no lockfile is written, MCP rides --mcp-config
   --model <model>
-  [--session-id <UUID> | --resume <UUID>]   # mutually exclusive
+  [--resume <UUID> | --continue | --session-id <UUID>]   # mutually exclusive, in that precedence
   --allowedTools <csv>
   --permission-mode <mode>
   [--append-system-prompt <text>]
@@ -143,8 +148,10 @@ that path never wrote the prompt (GitHub issues #133 / #134).
 Session identity follows the CLI reference: a cold spawn mints
 `--session-id <uuid4>` so the UUID is known before the first event;
 memory-bound runs pass `--resume <last_session_id>` (persisted on the
-memory node by `_persist_memory`). `--continue` is not used because the
-CLI skips non-interactively created sessions when resolving it. A child
+memory node by `_persist_memory`). The node's continuity logic never
+uses `--continue`, because the CLI skips non-interactively created
+sessions when resolving it; it is still emitted if a task in the node's
+`tasks` list sets `continue_session: true`. A child
 that exits without a `result` event wakes `send_turn` on stdout EOF and
 reports the exit code instead of burning the turn timeout.
 
@@ -155,7 +162,7 @@ calls `register_provider(name, factory)` on import (claude from
 existing name raises:
 
 ```python
-# server/services/cli_agent/factory.py:84-106
+# server/services/cli_agent/factory.py (create_cli_provider)
 def create_cli_provider(name: str) -> AICliProvider:
     factory = _PROVIDER_REGISTRY.get(name)
     if factory is not None:
@@ -187,6 +194,7 @@ class ClaudeTaskSpec(BaseAICliTaskSpec):
     provider: Literal["claude"] = "claude"
     session_id: Optional[str] = None
     resume_session_id: Optional[str] = None
+    continue_session: bool = False       # emits --continue; see Session identity
     max_turns: Optional[int] = None
     max_budget_usd: Optional[float] = None
     allowed_tools: Optional[str] = None  # default: "" — see "Strict allowlist"
@@ -217,7 +225,7 @@ AICliTaskSpec = Annotated[
 ]
 ```
 
-Each plugin's `Params.tasks` is hard-typed to one variant — the LLM tool-schema plugin fast-path in `_get_tool_schema` (`services/ai.py:2584`) produces a clean per-provider schema (no `$defs`/`$ref`).
+Each plugin's `Params.tasks` is hard-typed to one variant — the LLM tool-schema plugin fast-path in `_get_tool_schema` (`services/ai.py`) produces a clean per-provider schema (no `$defs`/`$ref`).
 
 ## Auth model — Stripe-style CLI-managed OAuth
 
@@ -250,13 +258,13 @@ Steps:
 
 **Codex login**: not yet wired. The handler returns a graceful error pointing the user at `bun add -g @openai/codex` + `codex login` manual flow (the provider itself falls back to `bun x @openai/codex` when no system `codex` is on PATH). Follow-up: mirror `nodes/agent/claude_code_agent/_oauth.py` for codex with a `HOME=<DATA_DIR>/codex/` env redirect (Codex has no `CONFIG_DIR` equivalent).
 
-**Frontend**: no changes. The existing `client/src/components/credentials/primitives/OAuthConnect.tsx:42-44` already documents and supports the Stripe-style fieldless-CLI case (`config.fields = []`, `kind: "oauth"`, `stored` flag drives Connected state).
+**Frontend**: no changes. The existing `client/src/components/credentials/primitives/OAuthConnect.tsx` already documents and supports the Stripe-style fieldless-CLI case (`config.fields = []`, `kind: "oauth"`, `stored` flag drives Connected state).
 
 ## VSCode-style IDE MCP server
 
-Spawned CLI sessions auto-discover OpenCompany over MCP via the lockfile pattern VSCode's Claude Code extension uses. No custom IPC.
+Claude reaches OpenCompany's MCP server through the `--mcp-config` entry in its argv (URL plus bearer header). No custom IPC.
 
-Lockfile path: `<DATA_DIR>/claude/ide/<pid>.lock` (Claude — `AnthropicClaudeProvider.ide_lockfile_dir = OPENCOMPANY_CLAUDE_DIR / "ide"`, so it sits under the isolated `CLAUDE_CONFIG_DIR`, not the user's `~/.claude/`) or `<tmpdir>/gemini/ide/gemini-ide-server-<pid>-<port>.json` (Gemini, v2). Format mirrors VSCode (`lockfile.py:64-79`):
+The VSCode-style lockfile (`lockfile.py`) is written only by `AICliSession._pre_spawn`, and only for a provider that declares `ide_lockfile`. Claude declares it but never runs through `AICliSession`, Codex does not declare it, and Gemini is a stub, so in practice no lockfile is written today. For reference, the path is `<DATA_DIR>/claude/ide/<pid>.lock` (Claude — `AnthropicClaudeProvider.ide_lockfile_dir = OPENCOMPANY_CLAUDE_DIR / "ide"`, so it sits under the isolated `CLAUDE_CONFIG_DIR`, not the user's `~/.claude/`) or `<tmpdir>/gemini/ide/gemini-ide-server-<pid>-<port>.json` (Gemini, v2). Format mirrors VSCode (`write_ide_lockfile` in `lockfile.py`):
 
 ```json
 {
@@ -270,7 +278,7 @@ Lockfile path: `<DATA_DIR>/claude/ide/<pid>.lock` (Claude — `AnthropicClaudePr
 }
 ```
 
-Two fields are load-bearing. The `url` MUST end in `/mcp/ide/mcp`: FastMCP's `streamable_http_app()` registers the JSON-RPC route at `/mcp` of the sub-app and `main.py` mounts the sub-app at `/mcp/ide`, so the older `/mcp/ide` form silently 404'd before the request reached the bearer-token middleware (`lockfile.py:64-70`). `ideName` is the provider name (`session.py:281` passes `self._provider.name`, which is `"claude"`), not `"opencompany"`.
+Two fields are load-bearing. The `url` MUST end in `/mcp/ide/mcp`: FastMCP's `streamable_http_app()` registers the JSON-RPC route at `/mcp` of the sub-app and `main.py` mounts the sub-app at `/mcp/ide`, so the older `/mcp/ide` form silently 404'd before the request reached the bearer-token middleware. `ideName` is the provider name (`AICliSession._pre_spawn` passes `self._provider.name`), not `"opencompany"`. The same `/mcp/ide/mcp` URL is what the Claude pool puts in `--mcp-config` (`AICliService._run_pooled_turn`).
 
 Bearer-token middleware (`mcp_server.py:_BearerAuthMiddleware`) validates each request against an in-memory per-batch `BatchContext` registry. **Non-pool path**: tokens registered at `AICliService.run_batch()` entry, unregistered in `finally` so 401s flip immediately when a batch settles. **Pool path** (`use_pool=True`, see [Claude Code Interactive Mode](./claude_code_interactive_mode.md#mcp-bearer-token-lifecycle) for the full lifecycle): claude bakes the bearer into argv (`--mcp-config`) at spawn time and can't rotate without respawning, so the pool stashes the spawn-time token on `PooledClaudeSession.batch_token` and rebinds the `BatchContext` in place on warm reuse via `rebind_batch(token, connected_tools=..., ...)` — closes the "disconnected tool still works" leak by (a) diffing `connected_tools` and decrementing FastMCP refcounts for tools dropped between batches, and (b) updating the per-handler scope check's data so `workflow_tools._build_handler` returns 403 for stale tools. `_terminate_locked` calls `unregister_batch(session.batch_token)` so refcounts drain on pool eviction / `clear` / `shutdown_all`.
 
@@ -302,10 +310,10 @@ Shared by every CLI provider plugin. Imports nothing from `nodes/`.
 | `config.py` | Loads `server/config/ai_cli_providers.json` (binary, package, defaults, supports flags per provider). |
 | `factory.py` | Three registries (`register_provider`, `register_session_pool`, `register_skill_materialiser`) + lookups + `create_cli_provider(name)`. |
 | `lockfile.py` | VSCode-style IDE lockfile read/write/sweep. |
-| `mcp_server.py` | FastMCP sub-app mounted at `/mcp/ide` (JSON-RPC endpoint `/mcp/ide/mcp`) with bearer-token middleware + 7 infrastructure tools (`getWorkspaceFiles`, `listSkills`, `getSkill`, `readSkillResource`, `searchSkillResource`, `getCredential`, `broadcastLog`) + `rebind_batch` for warm-reuse context updates. |
+| `mcp_server.py` | FastMCP sub-app mounted at `/mcp/ide` (JSON-RPC endpoint `/mcp/ide/mcp`) with bearer-token middleware + the infrastructure tools (`getWorkspaceFiles`, `listSkills`, `getSkill`, `readSkillResource`, `searchSkillResource`, `getCredential`, `broadcastLog`) + `rebind_batch` for warm-reuse context updates. |
 | `context_bridge.py` | `SpecializedAgentContextBridge` — RFC-0002 Context continuity for specialized providers (`resolve` / `augment_prompt` / `record_turn`); shared with RLM and Vertex. |
 | `workflow_tools.py` | Per-batch MCP tool exposure (`mcp__opencompany__<node_type>`) + handler scope check + `tools/list_changed` notify. |
-| `session.py` | `AICliSession(BaseProcessSupervisor)` — generic PTY + JSONL path for non-claude providers; not used for claude. |
+| `session.py` | `AICliSession(BaseProcessSupervisor)` — PTY + JSONL path. Not used for claude; `run_batch` uses it for a provider with no session pool (Codex), but `_do_start` raises for every provider except claude, so those runs fail. |
 | `service.py` | `AICliService.run_batch()` — dispatcher; every claude task goes to the pool via `factory.get_session_pool(provider_name)` (warm keyed session when bound, ephemeral per-task session otherwise). |
 | `_cli_auth.py` | CLI-agnostic `mark_logged_in` / `mark_logged_out` / `broadcast_credential_event` + `"cli-managed"` marker token. Shared by claude + codex handlers. |
 | `_handlers.py` | Codex WS handlers (`codex_cli_login` / `codex_cli_logout`). Claude's moved to the plugin folder. |
@@ -395,10 +403,11 @@ key doesn't drift.
 
 ### Why native resume needs a stable cwd
 
-Claude derives `project_key` from cwd via `re.sub(r"[^a-zA-Z0-9.-]", "-", str(cwd))`
-— every `:`, `\`, `/`, `_` becomes `-`. Verified against the on-disk
-`~/.opencompany/claude/projects/` listing — Python reproduces three
-encoded directory names byte-for-byte. The pre-bridge per-task
+Claude derives `project_key` from cwd via `re.sub(r"[^a-zA-Z0-9-]", "-", str(cwd))`
+(`_PROJECT_KEY_RE` in `session.py`) — every `:`, `\`, `/`, `_` and `.`
+becomes `-`. An earlier version kept `.` and watched a directory the
+CLI never wrote to (GitHub issue #132); the fix was checked against the
+on-disk `~/.opencompany/claude/projects/` listing. The pre-bridge per-task
 worktree (`<workspace>/<node_id>/wt_t_<random_8hex>`) changed cwd on
 every spawn → fresh project_key every run → `--resume <UUID>` looked
 under a brand-new directory with zero prior JSONL ("No conversation
@@ -418,7 +427,8 @@ would otherwise ride into every session.
 | First cold spawn, no stored session | `--session-id <uuid4>` | `ClaudeSessionPool._spawn` mints the UUID so it is known before the first event; `_persist_memory` stores it on the memory node as `last_session_id`. |
 | Cold spawn under a memory-wired node with a stored session | `--resume <last_session_id>` | Resume by UUID, never `--continue`: per [code.claude.com/docs/en/cli-reference](https://code.claude.com/docs/en/cli-reference) `--continue` skips sessions created non-interactively (`-p` / stream-json), which is every session the pool creates. |
 | Subsequent turn, SAME warm subprocess | nothing argv-level — stream-json line on `proc.stdin` | The pool keeps the subprocess alive between turns. Claude maintains the conversation in-process; same `session_id` across turns (verified end-to-end). |
-| Crash recovery (subprocess died between batches) | `--resume <captured_uuid>` | `ClaudeSessionPool.acquire` detects `process.returncode is not None`, captures the dead session's `current_session_uuid`, and respawns with `--resume`. Same `cwd=repo_root` → same `project_key` → claude finds the same JSONL it was writing before the crash. Mutually exclusive with `--continue`. |
+| Crash recovery (subprocess died between batches) | `--resume <captured_uuid>` | `ClaudeSessionPool.acquire` detects `process.returncode is not None`, captures the dead session's `current_session_uuid`, and respawns with `--resume`. Same cwd (the stable `<workspace>/<node>/wt_session` worktree) → same `project_key` → claude finds the same JSONL it was writing before the crash. Mutually exclusive with `--continue`. |
+| Idle reap or LRU eviction | `--session-id <new uuid4>`, or `--resume <last_session_id>` when memory-bound | The pool entry and its UUID are dropped. Memory-bound runs resume through the memory node; Context-bound runs start a fresh Claude session and keep only the rendered transcript (see [claude_code_interactive_mode.md → Known gaps](./claude_code_interactive_mode.md#known-gaps)). |
 
 Argv emission lives in
 [`nodes/agent/claude_code_agent/_provider.py:interactive_argv`](../server/nodes/agent/claude_code_agent/_provider.py).
@@ -435,21 +445,22 @@ rejects a UUID already in use).
 ### Plumbing
 
 ```
-ClaudeCodeAgentNode.execute_op                      (__init__.py:263-330)
+ClaudeCodeAgentNode.execute_op                      (claude_code_agent/__init__.py)
   ├─ collect_agent_connections() → context_data (first tuple element)
   │    ├─ Context node wired: a Context descriptor (kind == "context") → context_descriptor,
   │    │   handed to AICliService as connected_context and bridged through
   │    │   SpecializedAgentContextBridge; memory_data stays None
   │    └─ legacy input-memory graphs: the recorded Memory descriptor → memory_data
   │        {node_id, session_id, memory_content, window_size,
-  │         long_term_enabled, last_session_id (display-only)}
+  │         long_term_enabled, last_session_id (read on every run)}
   ├─ resume_session_id = memory_data.get("last_session_id")
-  ├─ ClaudeTaskSpec(..., continue_session=continue_session,
-  │                      resume_session_id=None)
+  ├─ ClaudeTaskSpec(..., resume_session_id=resume_session_id)
+  │    (a task from params.tasks gets it too, unless it set continue_session
+  │     or its own resume_session_id)
   └─ AICliService.run_batch(..., connected_memory=memory_data,
                             broadcaster=...)
        └─ For context/memory-wired single-task runs, route through ClaudeSessionPool
-          (service.py:357-363 — use_pool = the provider registered a session pool;
+          (run_batch: use_pool = the provider registered a session pool;
            bound_key = context_bridge.pool_key, else connected_memory["node_id"],
            else None. Unbound batches still run pooled, one ephemeral session per task.)
             ├─ pool.acquire(session_key, spec, cwd=<workspace>/<node>/wt_session, env, ...)
@@ -473,11 +484,11 @@ ClaudeCodeAgentNode.execute_op                      (__init__.py:263-330)
             │                                   when claude emits `result`)
             ├─ pool.release(session)   ← marks idle for the reaper
             └─ _persist_memory(connected_memory, results, broadcaster):
-                 ├─ saves params["last_session_id"] = most_recent.session_id
-                 │  (display-only — claude_code_agent no longer reads it)
-                 ├─ appends user/assistant turns to params["memory_content"]
-                 │  via append_to_memory_markdown + trim_markdown_window
-                 ├─ database.save_node_parameters(memory_node_id, params)
+                 ├─ append_memory_turns_atomic(db, memory_node_id, turns,
+                 │      window_size=..., parameter_updates={"last_session_id": ...})
+                 │  one write: appends the user/assistant turns to
+                 │  params["memory_content"] and stores last_session_id, which the
+                 │  next run reads for --resume
                  └─ broadcaster.broadcast_node_parameters_updated(
                         memory_node_id,
                         parameters=params,
@@ -515,7 +526,7 @@ a **display mirror**, not the resume channel. Claude's own JSONL on
 disk is what `--resume` loads from; `last_session_id` on the memory
 node is the resume handle. `_persist_memory`
 appends each successful run's prompt + response to `memory_content`
-via `append_to_memory_markdown` so the UI shows the conversation grow
+via `append_memory_turns_atomic` so the UI shows the conversation grow
 live. User edits to `memory_content` do NOT influence claude's next
 response.
 
@@ -559,11 +570,11 @@ On a crash-recovery path the trace shows:
 | Phase | When | Payload |
 |---|---|---|
 | `batch_started` | `run_batch` entry | `{provider, n_tasks, max_parallel, isolation:"worktree"}` |
-| `ai_cli_subtask` | per-task partial (NDJSON event) | `{task_id, provider, status:"running", message, cost_usd?, num_turns?}` |
-| `ai_cli_subtask` | per-task final | `{task_id, provider, status:"succeeded"|"failed", cost_usd?, duration_ms, num_turns?, error?}` |
+| `ai_cli_subtask` | per-task partial (NDJSON event); `AICliSession` only | `{task_id, provider, status:"running", message, cost_usd?, num_turns?}` |
+| `ai_cli_subtask` | per-task final; `AICliSession` only | `{task_id, provider, status:"succeeded"|"failed", cost_usd?, duration_ms, num_turns?, error?}` |
 | `batch_complete` | aggregator finish | `{provider, n_succeeded, n_failed, total_cost_usd?, wall_clock_ms}` |
 
-Plus `broadcast_terminal_log(source=f"{provider}:{task_id}", level)` on every NDJSON line — surfaced in the Terminal tab.
+`AICliSession` also calls `broadcast_terminal_log(source=f"{provider}:{task_id}", level)` on every event line for the Terminal tab. The Claude pool emits neither `ai_cli_subtask` nor terminal-log lines: a Claude run surfaces through `batch_started` / `batch_complete`, the node status the plugin sets, and the `claude.session.*` CloudEvents (see [claude_code_interactive_mode.md](./claude_code_interactive_mode.md#cloudevents-broadcasts)).
 
 ## Plugin contract — adding a new CLI provider
 
@@ -594,15 +605,16 @@ Live verification (needs a real Claude install + auth):
 1. Empty `~/.opencompany/claude/` + `~/.opencompany/packages/`. Open Credentials Modal → click "Login with Claude Code CLI". Confirm the `bun add` runs (visible in backend logs), `~/.opencompany/packages/node_modules/.bin/claude[.exe]` appears, browser opens for Anthropic OAuth. Modal flips Connected within ~2s of CLI exit (background `claude auth status` poll detects success). The browser tab should render the CLI's own "Signed in" success page (this needs the `stdin=PIPE` spawn — without it the native binary exits early and the tab is left on the bare `localhost/callback` URL).
 2. Refresh the page. Modal stays Connected (`auth_service.get_oauth_tokens("claude_code")` still returns the marker; idempotent re-click also stays Connected).
 3. Click Disconnect. Modal flips Disconnected (`claude auth logout` clears CLI creds + marker dropped).
-4. Add a `claude_code_agent` node, set `tasks=[{prompt:"echo A"},{prompt:"echo B"},{prompt:"echo C"}]`, run. Three distinct `claude:<task_id>` Terminal streams interleaved. Three distinct session_ids. Three worktrees created and removed. `summary.wall_clock_ms < sum(duration_ms)` (proves parallelism).
-5. With a Claude task running, `cat ~/.opencompany/claude/ide/<pid>.lock` and confirm format. Stream-json shows an `mcp__opencompany__*` tool invocation.
+4. Add a `claude_code_agent` node, set `tasks=[{prompt:"echo A"},{prompt:"echo B"},{prompt:"echo C"}]`, run. Three distinct session_ids. Three `wt_<run>_<i>` worktrees created and removed. `summary.wall_clock_ms < sum(duration_ms)` (proves parallelism).
+5. With a Claude task running that calls a wired tool, the backend log shows `[CC-Agent MCP auth] POST ... -> OK (node=... wf=... token=...)` for MCP requests carrying the `--mcp-config` bearer, and the task result's `tool_calls` is non-zero. No IDE lockfile is written.
 6. `curl -H "Authorization: Bearer <wrong>" http://127.0.0.1:${PYTHON_BACKEND_PORT}/mcp/ide/mcp` → 401.
 
 ## Risks / open considerations
 
 - **Codex login not yet wired.** v1 returns a graceful error directing the user to `bun add -g @openai/codex` + `codex login`. Follow-up: a codex `_oauth.py` mirroring `nodes/agent/claude_code_agent/_oauth.py` with a `HOME=<DATA_DIR>/codex/` env redirect (Codex has no `CONFIG_DIR` env; `HOME` redirect is risky on Windows, so Windows may need a different strategy or accept user-global Codex auth).
 - **Gemini deferred.** `factory.create_cli_provider("gemini")` raises `NotImplementedError` (the one name-specific branch left in the factory, kept so the dropdown can grey it out). v2 work: implement the provider, register it from a `nodes/agent/gemini_cli_agent/` plugin folder, and drop that branch. ~430 LoC. No abstraction changes needed.
-- **`--include-partial-messages`** assumes a recent Claude CLI; older versions fall back gracefully via the parser's `parse_event` returning `None` for unknown shapes.
+- **Codex fails on every run.** No session pool is registered for Codex, so `run_batch` runs it through `AICliSession`, and `AICliSession._do_start` raises for every provider except `claude`. The task comes back failed with `worktree_setup_failed: AICliSession (interactive PTY+JSONL) currently only supports the 'claude' provider ...` (or `cli_not_installed` when the Codex binary is missing). A Codex session class or pool is needed before the node can work.
+- **Claude pool gaps.** Context-bound runs lose Claude's own session after a reap or eviction, the stored transcript is re-sent on every warm turn, the spawn inherits the backend's environment while passing `--ide`, `getCredential` / `broadcastLog` are model-visible, and warm reuse keeps the spawn-time flags and skill descriptors. Details in [claude_code_interactive_mode.md → Known gaps](./claude_code_interactive_mode.md#known-gaps).
 - **Native-binary stdin sensitivity.** claude-code >= 2.1.162 ships a native binary that reads stdin during `auth login`. We spawn it with `stdin=asyncio.subprocess.PIPE` (never written) so the read blocks and the OAuth callback server stays alive; an inherited/closed stdin EOFs the binary into an early exit that drops the browser callback. If a future CLI version changes its stdin contract this is the spot to revisit.
 - **Marker token written without verifying CLI is actually functional** — we trust `claude auth status`'s exit code. If Anthropic invalidates the token server-side and the CLI hasn't re-checked, the modal still shows Connected until the next session attempt's `detect_auth_error` catches it.
 - **MCP SDK is pre-1.0-stable.** Pinned at `mcp>=1.0.0`. The surface is isolated in `mcp_server.py` so an SDK breaking change touches one file.

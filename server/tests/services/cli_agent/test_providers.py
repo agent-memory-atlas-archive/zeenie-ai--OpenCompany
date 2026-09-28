@@ -89,7 +89,7 @@ class TestClaudeArgv:
         in_idx = argv.index("--input-format")
         assert argv[in_idx + 1] == "stream-json"
         assert "--verbose" in argv  # required for stream-json detail
-        assert "--ide" in argv  # lockfile auto-discovery
+        assert "--ide" in argv  # matches the VSCode extension argv; no lockfile is written
         # The prompt is NEVER a positional in stream-json mode — it goes
         # over ``proc.stdin``. ``--`` separator is gone.
         assert "--" not in argv

@@ -28,11 +28,14 @@ stream-json --verbose --ide [--mcp-config ...] [--strict-mcp-config]
     ``ClaudeSessionPool._prepare_warm_reuse``; ``Skill`` enters
     ``--allowedTools`` iff at least one skill is wired.
 
-**Permission mode**: ``dontAsk`` (the config default) runs without a
-TUI prompt and denies anything outside ``--allowedTools``, so the
-strict allowlist is actually enforced — non-interactive automation has
-no human at the keyboard to click "Allow." See
-``code.claude.com/docs/en/permission-modes``.
+**Permission mode**: ``dontAsk`` (the config default) never shows a
+prompt: a call that would prompt is denied instead, unless it matches
+``--allowedTools``. Per ``code.claude.com/docs/en/permission-modes``,
+read-only Bash commands still run without a matching rule.
+``--allowedTools`` pre-approves tools; it does not remove Claude's
+other built-ins from the model's context (that is ``--tools`` /
+``--disallowedTools``, neither emitted by default), so the model can
+still call them and gets a denial.
 
 Session identity: a cold spawn with no continuity flag gets a
 host-minted ``--session-id <UUID>`` (``ClaudeSessionPool._spawn``) so the
@@ -133,8 +136,7 @@ class AnthropicClaudeProvider:
 
         Spawned as a regular subprocess with stdio pipes — NOT a PTY.
         Matches the invocation Anthropic's own VSCode extension uses
-        (verified in
-        ``C:\\Users\\Tgroh\\.vscode\\extensions\\anthropic.claude-code-2.1.140-win32-x64\\extension.js``
+        (read from ``$VSCODE_EXT_DIR/anthropic.claude-code-2.1.140-<platform>/extension.js``
         line 156):
 
           ``claude --output-format stream-json --input-format stream-json
@@ -149,10 +151,11 @@ class AnthropicClaudeProvider:
 
         Critically NOT emitted:
 
-          - ``-p`` / ``--print``: keeps us in the interactive billing
-            bucket (entrypoint ``claude-vscode``, NOT ``sdk-cli``). The
-            VSCode extension confirms this exact pattern works without
-            ``--print``.
+          - ``-p`` / ``--print``: the VSCode extension drives the CLI
+            without it. The expectation that this keeps usage in the
+            interactive billing bucket (entrypoint ``claude-vscode``,
+            not ``sdk-cli``) is unverified: nothing here checks the
+            entrypoint the CLI reports.
           - The positional prompt (``-- "<prompt>"``): the prompt
             arrives via ``proc.stdin`` in stream-json input mode.
             ``include_prompt`` is kept for back-compat but ignored.
@@ -161,7 +164,7 @@ class AnthropicClaudeProvider:
         emitted as ``--mcp-config <json>`` so the spawned claude
         registers OpenCompany's FastMCP server. Tools allowlist
         (``--allowedTools``) lists every wired ``mcp__opencompany__*``
-        plus OpenCompany's seven MCP infrastructure tools, the built-in
+        plus OpenCompany's MCP infrastructure tools, the built-in
         ``Skill`` only when a skill is wired, and any built-ins the task's
         ``allowed_tools`` opts in. Skills are materialised under
         ``<workspace_dir>/.claude/skills/`` by the pool before spawn.
@@ -243,11 +246,14 @@ class AnthropicClaudeProvider:
         elif task.session_id:
             argv += ["--session-id", task.session_id]
 
-        # Allowed tools — STRICTLY scoped to what the operator wired
-        # through ``input-tools`` plus OpenCompany's own MCP infrastructure
+        # Allowed tools — pre-approves what the operator wired through
+        # ``input-tools`` plus OpenCompany's own MCP infrastructure
         # tools. Claude's built-in escape hatches (Read, Edit, Bash,
         # Glob, Grep, Write, Skill, WebSearch, WebFetch) are intentionally
-        # NOT in the default allowlist: they let the agent invoke
+        # NOT pre-approved (they stay in the model's context, since this
+        # flag does not remove tools; under ``dontAsk`` calling them is
+        # denied, except read-only Bash commands, which the CLI runs
+        # anyway): they let the agent invoke
         # capabilities the workflow didn't explicitly grant — equivalent
         # filesystem / shell / search functionality is wired via the
         # ``fileRead`` / ``fileModify`` / ``fsSearch`` / ``shell`` /
@@ -298,17 +304,18 @@ class AnthropicClaudeProvider:
 
         # Permission mode — ``dontAsk`` is the documented mode for
         # "only pre-approved tools, no prompts"
-        # (https://code.claude.com/docs/en/permission-modes), which is
-        # what we want for non-interactive automation with a STRICT
-        # tool allowlist. The prior ``bypassPermissions`` default
-        # "skips the permission layer entirely" — meaning
-        # ``--allowedTools`` and ``--disallowedTools`` become
-        # documentation-only and claude's built-in Read / Edit / Bash /
-        # Glob / Grep / Write / Skill / WebSearch / WebFetch remain
-        # invocable even when not in the allowlist. ``acceptEdits``
-        # would prompt for non-Edit tools, hanging the headless agent.
-        # ``dontAsk`` is the correct middle: no prompts AND strict
-        # allowlist gating. Per-task override still honoured.
+        # (https://code.claude.com/docs/en/permission-modes): a call that
+        # would prompt is denied instead, unless ``--allowedTools``
+        # matches it; read-only Bash commands still run. The prior
+        # ``bypassPermissions`` default "skips the permission layer
+        # entirely" — meaning ``--allowedTools`` and
+        # ``--disallowedTools`` become documentation-only and claude's
+        # built-in Read / Edit / Bash / Glob / Grep / Write / Skill /
+        # WebSearch / WebFetch remain invocable even when not in the
+        # allowlist. ``acceptEdits`` would prompt for non-Edit tools,
+        # hanging the headless agent. ``dontAsk`` is the middle: no
+        # prompts, and a denial for anything not pre-approved (apart
+        # from read-only Bash). Per-task override still honoured.
         perm = task.permission_mode or defaults.get(
             "default_permission_mode",
             self._defaults.get("default_permission_mode", "dontAsk"),

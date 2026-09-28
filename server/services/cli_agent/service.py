@@ -748,10 +748,10 @@ class AICliService:
         mutation_id: Optional[str] = None,
     ) -> None:
         """Append each successful run's user prompt + assistant response
-        to ``simpleMemory.memory_content`` (markdown). Mirrors aiAgent /
-        chatAgent / rlm_agent's persistence pattern exactly
-        — same helpers (``append_to_memory_markdown``,
-        ``trim_markdown_window``), same field. One DB write.
+        to ``simpleMemory.memory_content`` (markdown) and store the most
+        recent ``session_id`` as ``last_session_id``, which the next run
+        resumes with ``--resume``. Both go through one
+        ``append_memory_turns_atomic`` call (one DB write).
         """
         successful = [r for r in results if r.success]
         logger.info(
