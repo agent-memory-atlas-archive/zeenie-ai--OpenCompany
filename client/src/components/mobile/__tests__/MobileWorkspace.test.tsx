@@ -22,6 +22,13 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe('Mobile Workspace', () => {
+  it('retains a startup failure across status refreshes without claiming the phone is ready', async () => {
+    snapshot.start_error = 'This phone is already open, but could not be safely reconnected.';
+    render(<MobileWorkspace workflowId="flow" nodes={nodes} />);
+    expect(await screen.findByRole('alert')).toHaveTextContent('already open');
+    expect(screen.queryByText(/Your phone is ready to turn on/)).toBeNull();
+    expect(screen.getByRole('button', { name: 'Start phone' })).toBeEnabled();
+  });
   it('keeps the phone connected and preserves a task draft when secondary panels collapse', async () => {
     snapshot.running = true;
     render(<MobileWorkspace workflowId="flow" nodes={nodes} />);

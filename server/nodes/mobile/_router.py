@@ -97,7 +97,12 @@ async def status(principal: str = Depends(authorize)):
     # During startup/shutdown return lifecycle status without touching the
     # driver. The serial is assigned before Android and automation are ready.
     if runtime.serial and not runtime.lifecycle_lock.locked():
-        await call(runtime.driver_call("geometry"))
+        try:
+            await runtime.driver_call("geometry")
+        except Exception:
+            # A lost connection is device state, not a failed status endpoint.
+            # Return the fresh snapshot so the UI can offer Start/reconnect.
+            runtime.start_error = "The phone connection was lost. Click Start phone to reconnect."
     return runtime.snapshot()
 
 

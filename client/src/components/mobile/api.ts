@@ -8,6 +8,7 @@ export interface MobileStatus {
   geometry?: Geometry | null;
   setup?: string | Record<string, unknown> | null;
   setup_error?: string | null;
+  start_error?: string | null;
   setup_progress?: { message?: string; started_at?: number | null; updated_at?: number | null; finished_at?: number | null; events?: { at: number; message: string }[] } | null;
   controller?: string | null;
   epoch: number;

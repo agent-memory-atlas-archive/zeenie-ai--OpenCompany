@@ -14,6 +14,7 @@ from ._install import AVD_NAME, install_engine, create_device, engine_ready, sdk
 from ._paths import mobile_root, runtime_python
 from ._process import command, hidden_options
 from ._diagnostics import event, recent
+from ._emulator import DeviceLock, recover_emulator, boot_error, owned_children, stop_children
 
 READS = frozenset({"geometry", "observe", "date", "packages", "foreground"})
 ACTIONS = frozenset({"tap", "swipe", "touch", "text", "erase", "key", "launch", "terminate", "url", "rotate"})
@@ -27,6 +28,8 @@ class MobileRuntime:
         self.worker: asyncio.subprocess.Process | None = None
         self.serial: str | None = None
         self.geometry: dict | None = None
+        self.device_lock = None
+        self.start_error = ""
         self.driver_lock = asyncio.Lock()
         self.lifecycle_lock = asyncio.Lock()
         self.task_lock = asyncio.Lock()
@@ -112,6 +115,7 @@ class MobileRuntime:
             "device": "Shared Android device",
             "setup": self.setup_state,
             "setup_error": self.setup_error,
+            "start_error": self.start_error,
             "setup_progress": self.setup_progress,
             "diagnostics": recent(),
             "active": {k: v for k, v in (self.active or {}).items() if k not in {"prompt"}},
@@ -217,74 +221,106 @@ class MobileRuntime:
         async with self.lifecycle_lock:
             if self.stopping or (self.setup_task and not self.setup_task.done()):
                 raise MobileError("device_busy", "Wait for setup or shutdown to finish")
-            if self.process and self.process.returncode is None:
-                return self.snapshot()
-            if self.process is not None:
-                await self._stop_driver()
-                self.process = None
-                self.serial = None
-            emulator, adb = sdk_tool("emulator"), sdk_tool("adb")
-            if not emulator or not adb or not engine_ready() or not (mobile_root() / "resource.json").is_file():
-                raise MobileError("setup_required", "Complete Mobile setup before starting the device")
-            port = None
-            for candidate in range(5560, 5680, 2):
-                held = []
-                try:
-                    for n in (candidate, candidate + 1):
-                        test = socket.socket()
-                        held.append(test)
-                        test.bind(("127.0.0.1", n))
-                    port = candidate
-                    break
-                except OSError:
-                    pass
-                finally:
-                    for test in held:
-                        test.close()
-            if port is None:
-                raise MobileError("ports_busy", "No emulator port pair is free")
-            root = mobile_root()
-            event("phone_starting")
-            root.mkdir(parents=True, exist_ok=True)
-            log = (root / "emulator.log").open("ab")
-            env = {**os.environ, "ANDROID_AVD_HOME": str(root / "avd"), "ANDROID_SDK_ROOT": str(sdk_root())}
+            self.start_error = ""
             try:
-                self.process = await asyncio.create_subprocess_exec(
-                    str(emulator),
-                    "-avd",
-                    AVD_NAME,
-                    "-port",
-                    str(port),
-                    "-no-window",
-                    "-no-audio",
-                    stdout=log,
-                    stderr=log,
-                    env=env,
-                    **hidden_options(),
-                )
-            finally:
-                log.close()
-            self.serial = f"emulator-{port}"
-            try:
-                deadline = time.monotonic() + 180
-                while time.monotonic() < deadline:
-                    if self.process.returncode is not None:
-                        raise MobileError("boot_failed", "Emulator exited; inspect the Mobile emulator log")
-                    boot = await command([str(adb), "-s", self.serial, "shell", "getprop", "sys.boot_completed"], check=False, timeout=10)
-                    if boot.strip() == "1":
-                        break
-                    await asyncio.sleep(1)
-                else:
-                    raise MobileError("boot_timeout", "Android did not finish booting within three minutes")
-                await self._start_driver()
-                event("phone_ready", serial=self.serial)
-                self.control.revoke()
-                self.control.state = "idle"
+                return await self._start_locked()
             except BaseException as exc:
+                self.start_error = str(exc) if isinstance(exc, MobileError) else "Phone startup was interrupted. Try Start phone again."
                 event("phone_start_failed", failed=True, error_type=type(exc).__name__, code=getattr(exc, "code", "startup_failed"))
                 await self._stop_owned()
                 raise
+
+    async def _start_locked(self) -> dict:
+        if self.stopping or (self.setup_task and not self.setup_task.done()):
+            raise MobileError("device_busy", "Wait for setup or shutdown to finish")
+        if self.process and self.process.returncode is None:
+            if not self.driver or self.driver.returncode is not None or self.geometry is None:
+                await self._stop_driver()
+                await self._start_driver()
+                self.control.revoke()
+                self.control.state = "idle"
             return self.snapshot()
+        if self.process is not None:
+            await self._stop_driver()
+            self.process = None
+            self.serial = None
+        emulator, adb = sdk_tool("emulator"), sdk_tool("adb")
+        if not emulator or not adb or not engine_ready() or not (mobile_root() / "resource.json").is_file():
+            raise MobileError("setup_required", "Complete Mobile setup before starting the device")
+        root = mobile_root()
+        root.mkdir(parents=True, exist_ok=True)
+        if self.device_lock is None:
+            self.device_lock = DeviceLock(root)
+        recovered = await recover_emulator(adb, emulator, root / "avd" / f"{AVD_NAME}.avd")
+        if recovered:
+            self.process, self.serial = recovered
+            event("phone_reconnected", serial=self.serial)
+            await self._start_driver()
+            self.control.revoke()
+            self.control.state = "idle"
+            return self.snapshot()
+        port = None
+        for candidate in range(5560, 5680, 2):
+            held = []
+            try:
+                for n in (candidate, candidate + 1):
+                    test = socket.socket()
+                    held.append(test)
+                    test.bind(("127.0.0.1", n))
+                port = candidate
+                break
+            except OSError:
+                pass
+            finally:
+                for test in held:
+                    test.close()
+        if port is None:
+            raise MobileError("ports_busy", "No emulator port pair is free")
+        root = mobile_root()
+        event("phone_starting")
+        root.mkdir(parents=True, exist_ok=True)
+        log_path = root / "emulator.log"
+        if log_path.exists() and log_path.stat().st_size > 2 * 1024 * 1024:
+            log_path.replace(root / "emulator.previous.log")
+        log = log_path.open("ab")
+        log_offset = log.tell()
+        env = {**os.environ, "ANDROID_AVD_HOME": str(root / "avd"), "ANDROID_SDK_ROOT": str(sdk_root())}
+        try:
+            self.process = await asyncio.create_subprocess_exec(
+                str(emulator),
+                "-avd",
+                AVD_NAME,
+                "-port",
+                str(port),
+                "-no-window",
+                "-no-audio",
+                stdout=log,
+                stderr=log,
+                env=env,
+                **hidden_options(),
+            )
+        finally:
+            log.close()
+        self.serial = f"emulator-{port}"
+        deadline = time.monotonic() + 180
+        while time.monotonic() < deadline:
+            if self.process.returncode is not None:
+                raise boot_error(log_path, log_offset, self.process.returncode)
+            try:
+                boot = await command([str(adb), "-s", self.serial, "shell", "getprop", "sys.boot_completed"], check=False, timeout=10)
+            except TimeoutError:
+                event("phone_boot_probe_timeout", serial=self.serial)
+                continue
+            if boot.strip() == "1":
+                break
+            await asyncio.sleep(1)
+        else:
+            raise MobileError("boot_timeout", "Android did not finish booting within three minutes")
+        await self._start_driver()
+        event("phone_ready", serial=self.serial)
+        self.control.revoke()
+        self.control.state = "idle"
+        return self.snapshot()
 
     def driver_env(self) -> dict:
         allowed = {
@@ -605,6 +641,7 @@ class MobileRuntime:
 
     async def _stop_driver(self):
         proc, self.driver = self.driver, None
+        self.geometry = None
         if proc and proc.returncode is None:
             proc.kill()
             await proc.wait()
@@ -615,17 +652,23 @@ class MobileRuntime:
         self.capabilities.clear()
         await self._stop_worker()
         await self._stop_driver()
-        proc, self.process = self.process, None
+        proc = self.process
+        children = owned_children(getattr(proc, "pid", None)) if proc else []
         if proc and proc.returncode is None:
             if self.serial:
                 with contextlib.suppress(Exception):
-                    await command([str(sdk_tool("adb")), "-s", self.serial, "emu", "kill"], timeout=2)
+                    await command([str(sdk_tool("adb")), "-s", self.serial, "emu", "kill"], timeout=5)
             try:
-                await asyncio.wait_for(proc.wait(), 2)
+                await asyncio.wait_for(proc.wait(), 10)
             except asyncio.TimeoutError:
                 proc.kill()
-                await proc.wait()
+                await asyncio.wait_for(proc.wait(), 5)
+        await stop_children(children)
+        self.process = None
         self.serial, self.geometry = None, None
+        if self.device_lock is not None:
+            self.device_lock.close()
+            self.device_lock = None
         async with self.control.lock:
             self.control.state = "idle"
             self.control.results.clear()
@@ -638,6 +681,7 @@ class MobileRuntime:
             raise MobileError("device_busy", "Cancel the active task before stopping the device")
         async with self.lifecycle_lock:
             await self._stop_owned()
+            self.start_error = ""
 
     async def shutdown(self):
         self.stopping = True
@@ -648,7 +692,8 @@ class MobileRuntime:
         if self.active:
             self.active["status"] = "cancelled"
         self.resume_event.set()
-        await self._stop_owned()
+        async with self.lifecycle_lock:
+            await self._stop_owned()
         if self.broker_runner:
             await self.broker_runner.cleanup()
             self.broker_runner, self.broker_url = None, None

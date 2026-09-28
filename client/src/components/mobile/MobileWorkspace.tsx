@@ -242,7 +242,8 @@ function MobileSession({ workflowId, nodeId, visible }: { workflowId: string; no
           })}>{setupFailed ? 'Retry setup' : 'Set up phone'}</Button>
           {(setupActive || setupFailed || status?.setup_progress) && <SetupProgress status={status} ticking={visible && pageVisible} />}
         </section>}
-        {!running && !status?.starting && installed && <p className="m-0 text-sm text-fg-muted">Your phone is ready to turn on. Click Start phone to use it.</p>}
+        {!error && status?.start_error && <p role="alert" className="m-0 text-sm text-destructive">{status.start_error}</p>}
+        {!running && !status?.starting && installed && !status?.start_error && <p className="m-0 text-sm text-fg-muted">Your phone is ready to turn on. Click Start phone to use it.</p>}
       </div>}
       {running && <>
         <div ref={surface} className={`relative flex min-h-0 min-w-0 flex-1 touch-none items-center justify-center overflow-hidden bg-slate-950 ${held ? 'cursor-crosshair' : ''}`} onPointerDown={down} onPointerUp={up} onPointerCancel={() => { pointer.current = null; }} aria-label={held ? 'Phone screen: tap or drag to interact' : 'Phone screen, view only'}>
