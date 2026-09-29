@@ -91,18 +91,31 @@ OPENCOMPANY_PARENT_PID=<shell pid>
 OPENCOMPANY_DESKTOP_TOKEN=<random per launch>
 OPENCOMPANY_DESKTOP_STDIN=1            # shell keeps stdin as an open pipe
 OPENCOMPANY_APP_ROOT=<bundle>/app-root
+OPENCOMPANY_CLIENT_DIST=<bundle>/app-root/client/dist
 OPENCOMPANY_ENV_FILE=<data dir>/desktop.env
-OPENCOMPANY_BUN_BIN=<bundle>/bun/bun[.exe]     # the bundled bun (core/js_runtime.py); PATH prefix also works
-BUN_INSTALL=<data dir>/bun                     # bun's global state, kept out of a dev install's ~/.bun
+OPENCOMPANY_BUN_BIN=<bundle>/runtime/bun/bun[.exe]  # when the bundled bun exists (core/js_runtime.py)
+BUN_INSTALL=<data dir>/bun                          # same condition; bun's global state, kept out of a dev install's ~/.bun
 BUN_INSTALL_CACHE_DIR=<data dir>/bun/install/cache
-OPENCOMPANY_UV_BIN=<bundle>/uv/uv              # optional; PATH prefix also works
+OPENCOMPANY_UV_BIN=<bundle>/runtime/uv/uv[.exe]     # when the bundled uv exists
 PORT=<PORT>  PYTHON_BACKEND_PORT=<PORT>  HOST=127.0.0.1
 SERVE_STATIC_CLIENT=1  PYTHONUTF8=1  PYTHONUNBUFFERED=1
 PYTHONPYCACHEPREFIX=<data dir>/pycache          # bundle is read-only
 LOG_FILE=<data dir>/logs/backend.log  LOG_FORMAT=json
 TEMPORAL_GRACEFUL_SHUTDOWN_SECONDS=10
-PATH=<bundle>/bun:<bundle>/uv:$PATH             # bun (JS runtime + package installs), uv; no Node, no npm
+UV_PROJECT_ENVIRONMENT=<data dir>/pyenv/venv    # the backend's venv
+UV_PYTHON_INSTALL_DIR=<data dir>/pyenv/python  UV_CACHE_DIR=<data dir>/pyenv/cache
+UV_TOOL_DIR=<data dir>/pyenv/tools  UV_TOOL_BIN_DIR=<data dir>/pyenv/tools/bin
+UV_NO_CONFIG=1  UV_SYSTEM_CERTS=1
+PATH=<bundle>/runtime/bun:<bundle>/runtime/uv:<data dir>/pyenv/tools/bin:$PATH  # bun and uv only when bundled; no Node, no npm
 ```
+
+The shell starts from its own environment (minus `VIRTUAL_ENV`, `PYTHONHOME`,
+`PYTHONPATH` and `ELECTRON_RUN_AS_NODE`), lays the values above over it, then
+applies `<data dir>/desktop.env` on top for every key except those in
+`LOCKED_KEYS` (`desktop/src/main/env.ts`: the desktop identity and token keys,
+the app-root / client-dist / env-file paths, the port and host keys,
+`SERVE_STATIC_CLIENT` and `UV_PROJECT_ENVIRONMENT`). `PATH` is computed last
+from the inherited `PATH`, so `desktop.env` cannot replace it.
 
 `DATA_DIR` is left at its default (`~/.opencompany`) so the desktop app and
 a CLI install share workflows, credentials, and downloaded binaries.
@@ -135,9 +148,10 @@ raises the signal uvicorn already handles (SIGINT on Windows, SIGTERM
 elsewhere). The lifespan teardown then runs: plugin shutdown hooks, the
 process manager, every registered supervisor (Temporal dev server, the JS
 executor sidecar on bun, WhatsApp bridge) through `terminate_then_kill`, then database
-close. The route exists only under `OPENCOMPANY_DESKTOP=1` and refuses every
-request when the token is unset. Locked by
-`tests/test_desktop_shutdown_endpoint.py`.
+close. Plugin hooks run one after another, each capped at `HOOK_TIMEOUT_SECONDS`
+(10 s, `services/plugin/shutdown_hooks.py`). The route exists only under
+`OPENCOMPANY_DESKTOP=1` and refuses every request when the token is unset.
+Locked by `tests/test_desktop_shutdown_endpoint.py`.
 
 Also acceptable on POSIX: SIGTERM to the process. Do not `TerminateProcess`
 first on Windows; that skips the lifespan.
@@ -145,6 +159,12 @@ first on Windows; that skips the lifespan.
 Shell should wait up to 30 s, then tree-kill as a fallback (Windows:
 `taskkill /PID <pid> /T /F`; POSIX: SIGKILL to the process group, so spawn
 the backend detached in its own group).
+
+**Known gap:** nothing keeps the backend's teardown inside that 30 s. Plugin
+hooks can take up to 10 s each, one after another, and the Temporal workers
+get their own grace period (`TEMPORAL_GRACEFUL_SHUTDOWN_SECONDS=10` under the
+shell), so a slow teardown can outlast the wait and end in the tree-kill
+instead of a clean exit.
 
 ## 6. Parent death
 

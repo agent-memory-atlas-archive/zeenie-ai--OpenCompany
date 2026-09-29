@@ -10,7 +10,7 @@
  *     pyenv/venv          UV_PROJECT_ENVIRONMENT (the backend interpreter)
  *     pyenv/python        UV_PYTHON_INSTALL_DIR (fallback path only)
  *     pyenv/cache         UV_CACHE_DIR
- *     pyenv/tools         UV_TOOL_DIR / bin (browser-harness etc.)
+ *     pyenv/tools         UV_TOOL_DIR / bin (the browser-use CLI)
  *     pycache/            PYTHONPYCACHEPREFIX (the bundle is read-only)
  *     bun/                BUN_INSTALL (bun's package cache for the plugin CLIs)
  *     logs/

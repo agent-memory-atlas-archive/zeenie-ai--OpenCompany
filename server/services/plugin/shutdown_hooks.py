@@ -43,11 +43,14 @@ logger = get_logger(__name__)
 ShutdownHook = Callable[[], Awaitable[None]]
 
 # Per-hook ceiling. A hook that never returns used to wedge the whole
-# lifespan teardown: under ``company serve`` the CLI's 5 s grace + tree-kill
-# masked it, but a desktop shell waiting for a clean exit (so Temporal / the
-# Node sidecar / the WhatsApp bridge are reaped, not orphaned) saw the
-# backend hang until the 45 s desktop deadline killed it. Each hook now gets
-# this long, then teardown moves on and names the offender at WARNING.
+# lifespan teardown: under ``company serve`` the CLI's tree-kill (then 5 s
+# after SIGTERM) masked it, but a desktop shell waiting for a clean exit (so
+# Temporal / the JS executor sidecar / the WhatsApp bridge are reaped, not
+# orphaned) saw the backend hang until the 45 s desktop deadline killed it.
+# Each hook now gets this long, then teardown moves on and names the offender
+# at WARNING. Hooks run one after another, so the worst case grows with the
+# number of hooks, while the desktop shell waits only 30 s before its own
+# tree-kill (docs-internal/desktop_host_contract.md).
 HOOK_TIMEOUT_SECONDS = 10.0
 
 

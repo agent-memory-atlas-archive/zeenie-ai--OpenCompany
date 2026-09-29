@@ -2,7 +2,7 @@
  * Stop the backend the contract way (docs-internal/desktop_host_contract.md §5):
  *
  *   1. POST /api/desktop/shutdown with the per-launch token -> lifespan
- *      teardown reaps Temporal / node / WhatsApp.
+ *      teardown reaps Temporal / the bun sidecar / WhatsApp.
  *   2. Close our end of stdin (the backend's fast parent-gone signal).
  *   3. Wait up to `timeoutMs` for exit.
  *   4. Fallback: tree-kill (taskkill /T on Windows, SIGKILL to the process

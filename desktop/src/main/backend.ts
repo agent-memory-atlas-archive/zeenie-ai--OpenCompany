@@ -29,7 +29,7 @@ export interface SpawnBackendOptions {
  * renderer's WebSocket died with a reset rather than a clean close, the
  * handler task lingered and uvicorn never reached the lifespan, so the
  * shell's 30 s budget expired and the backend had to be tree-killed. Bound
- * it; the lifespan teardown (which reaps Temporal / node / edgymeow) is what
+ * it; the lifespan teardown (which reaps Temporal / the bun sidecar / edgymeow) is what
  * actually matters and still runs after this window.
  */
 export const GRACEFUL_SHUTDOWN_SECONDS = 5;

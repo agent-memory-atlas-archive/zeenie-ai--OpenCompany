@@ -16,12 +16,12 @@ three things the CLI supervisor used to provide:
    ``OPENCOMPANY_DESKTOP_TOKEN``) calls :func:`request_shutdown`, which
    raises the signal uvicorn already handles. The normal lifespan teardown
    then runs: shutdown hooks, process service, every registered supervisor
-   (Temporal dev server, Node sidecar, WhatsApp bridge) via
+   (Temporal dev server, JS executor sidecar on bun, WhatsApp bridge) via
    ``terminate_then_kill``.
 3. **No orphans when the backend dies hard.** On Windows the backend puts
    *itself* into a Job Object with ``KILL_ON_JOB_CLOSE``; children inherit
    membership, so if this process is terminated by any means the kernel
-   kills Temporal / node / edgymeow with it. Done with ``ctypes`` because
+   kills Temporal / the bun sidecar / edgymeow with it. Done with ``ctypes`` because
    the server venv deliberately has no ``pywin32`` (that is a CLI-side
    dependency).
 

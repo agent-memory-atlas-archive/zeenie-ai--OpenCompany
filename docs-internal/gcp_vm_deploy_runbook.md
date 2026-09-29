@@ -9,7 +9,8 @@ This is the manual path — it does NOT use `company deploy` / Terraform
 `demo.opencompany.sh` (June 2026, before the scoped-package cutover) and encodes every pitfall hit on the way.
 Re-validated July 2026 against `0.0.95` with an **IP-only variant** (no Cloudflare /
 domain — skip step 4): pitfalls 2 and 3 are fixed in `>= 0.0.95` (annotated below),
-and pitfalls 11-13 were added from that run.
+and pitfalls 11-13 were added from that run. Pitfall 14 is an open issue in 0.2.0
+and 0.2.1.
 
 The unscoped `opencompany` package belongs to a different publisher. Do not install
 or remove it while following this runbook.
@@ -59,16 +60,16 @@ print('ENC='+secrets.token_hex(24))"
    in `ubuntu-os-cloud`), which ships Python 3.12.
 2. **`company serve` exists only in `>= 0.0.95`.** Releases up to 0.0.88 shipped only
    `start | dev | stop | build | clean | doctor | help | version`; 0.0.95 added the
-   single-port `serve` (API + WS + SPA, used by the Terraform path). This runbook's
-   tested shape remains `company start` (static client on **:3000**, backend uvicorn
-   on **:3010**) plus an nginx reverse proxy on :80/:443 — it works on every release.
-   **Releases after 0.0.95**: `company start` became single-port itself (uvicorn
-   serves the SPA; no :3000 static server) AND the default ports moved to the
-   ports named in `.env.template`: `PYTHON_BACKEND_PORT` (backend), `TEMPORAL_UI_PORT`,
-   `TEMPORAL_FRONTEND_GRPC_PORT`, `NODEJS_EXECUTOR_PORT`, `WHATSAPP_RPC_PORT`.
-   When upgrading a VM past 0.0.95, point EVERY nginx `proxy_pass` in step 2
-   (`/api/`, `/ws/`, `/webhook/`, `/health`, and `location /`) at
-   `http://127.0.0.1:$PYTHON_BACKEND_PORT;` and reload nginx.
+   single-port `serve` (API + WS + SPA, used by the Terraform path). This runbook
+   runs `company start` behind an nginx reverse proxy on :80/:443. Up to 0.0.95,
+   `company start` served the static client on **:3000** and the backend on
+   **:3010**. After 0.0.95 it is single-port itself (uvicorn serves the SPA) and
+   the ports moved to the ones named in `.env.template`: `PYTHON_BACKEND_PORT`
+   (the app), `TEMPORAL_UI_PORT`, `TEMPORAL_FRONTEND_GRPC_PORT`,
+   `NODEJS_EXECUTOR_PORT`, `WHATSAPP_RPC_PORT`. Step 2 reads `PYTHON_BACKEND_PORT`
+   from the installed package and points every nginx `proxy_pass` at it. On a
+   0.0.95-or-older release, use :3010 for `/api/`, `/ws/`, `/webhook/` and
+   `/health`, and :3000 for `location /`.
 3. **Owner env seeding requires `>= 0.0.95`.** 0.0.88 ignored `MACHINA_OWNER_*`
    entirely. Since 0.0.95 the backend seeds the owner at startup from
    `OPENCOMPANY_OWNER_EMAIL` + `OPENCOMPANY_OWNER_PASSWORD` (>= 8 chars;
@@ -76,8 +77,11 @@ print('ENC='+secrets.token_hex(24))"
    package. You can add those two keys to the env file in step 2 instead of racing to
    register. The manual `POST /api/auth/register` in step 6 remains the fallback for
    older releases and still works as first-user-becomes-owner either way.
-4. **Unknown env vars are fine, but don't set `PORT=80`.** The released backend does
-   not read `PORT`; nginx owns :80. Keep the env file to the keys listed in step 2.
+4. **Unknown env vars are fine, but don't set `PORT=80`.** The backend requires
+   `PORT` between 1024 and 65535 (`Settings.port`), so `PORT=80` stops it at
+   startup; nginx owns :80. Leave `PORT` at the template value: `company start`
+   binds `PYTHON_BACKEND_PORT` while the backend dials itself on `PORT`, so the two
+   must match. Keep the env file to the keys listed in step 2.
 5. **Cloudflare proxied + "Full" SSL mode → 521 without origin TLS.** If the zone
    forces HTTPS and SSL mode is Full, Cloudflare connects to origin :443. Fix: nginx
    listens on 443 with a **self-signed** cert (Full mode accepts it; only
@@ -115,6 +119,11 @@ print('ENC='+secrets.token_hex(24))"
     root-owned chmod 600: an unprivileged `grep`/`cat` on it fails and short-circuits
     any `cmd1 && cmd2` chain (e.g. skipping a trailing `systemctl restart`). Use
     `sudo` on every command touching it, or chain with `;` and verify state after.
+14. **0.2.0 and 0.2.1: `company start` stops with `Project not built. Run "company build" first.`**
+    ([errors.md #25 and #26](./errors.md)). The service then fails and restarts in a
+    loop, and the package also lacks the JS executor sidecar bundle. Until the fix
+    ships, run `sudo company build` once after step 2 (it fixes both), then
+    `sudo systemctl restart opencompany`.
 
 ## Step 1 — Reserve a static IP
 
@@ -158,6 +167,11 @@ bun add -g @zeenie-ai/opencompany@latest
 # side now so the service's first start is warm. The shim lives in bun's
 # global bin dir ($BUN_INSTALL/bin) and knows its own package root.
 "$BUN_INSTALL/bin/company" provision
+OPENCOMPANY_BIN=$(command -v company)
+# The shim is a symlink into the package (bun keeps global packages wherever it
+# likes); resolve it rather than spelling that directory.
+OPENCOMPANY_PACKAGE_DIR="$(cd "$(dirname "$(readlink -f "$OPENCOMPANY_BIN")")/.." && pwd)"
+test -f "$OPENCOMPANY_PACKAGE_DIR/package.json"
 
 echo "[opencompany] writing login-gate env..."
 mkdir -p /etc/opencompany
@@ -197,7 +211,12 @@ if [ ! -f /etc/nginx/certs/origin.crt ]; then
     -subj "/CN=<DOMAIN>"
 fi
 
-echo "[opencompany] nginx reverse proxy (SPA :3000, backend :3010)..."
+echo "[opencompany] nginx reverse proxy (everything to the app port)..."
+# company start serves API + WS + SPA on one port: PYTHON_BACKEND_PORT in the
+# installed package's .env.template. The heredoc stays quoted so nginx's own
+# $variables are not expanded; APP_PORT is filled in with sed below.
+APP_PORT=$(grep -E '^PYTHON_BACKEND_PORT=' "$OPENCOMPANY_PACKAGE_DIR/.env.template" | cut -d= -f2)
+test -n "$APP_PORT"
 cat > /etc/nginx/sites-available/opencompany <<'NGINX_EOF'
 server {
     listen 80 default_server;
@@ -208,14 +227,14 @@ server {
     client_max_body_size 50m;
 
     location /api/ {
-        proxy_pass http://127.0.0.1:3010;
+        proxy_pass http://127.0.0.1:APP_PORT;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_read_timeout 300s;
     }
     location /ws/ {
-        proxy_pass http://127.0.0.1:3010;
+        proxy_pass http://127.0.0.1:APP_PORT;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
@@ -225,20 +244,21 @@ server {
         proxy_send_timeout 3600s;
     }
     location /webhook/ {
-        proxy_pass http://127.0.0.1:3010;
+        proxy_pass http://127.0.0.1:APP_PORT;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     }
     location = /health {
-        proxy_pass http://127.0.0.1:3010;
+        proxy_pass http://127.0.0.1:APP_PORT;
     }
     location / {
-        proxy_pass http://127.0.0.1:3000;
+        proxy_pass http://127.0.0.1:APP_PORT;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     }
 }
 NGINX_EOF
+sed -i "s/APP_PORT/$APP_PORT/g" /etc/nginx/sites-available/opencompany
 rm -f /etc/nginx/sites-enabled/default
 ln -sf /etc/nginx/sites-available/opencompany /etc/nginx/sites-enabled/opencompany
 nginx -t
@@ -246,11 +266,6 @@ systemctl enable --now nginx
 systemctl reload nginx
 
 echo "[opencompany] installing systemd service (README usage: company start)..."
-OPENCOMPANY_BIN=$(command -v company)
-# The shim is a symlink into the package (bun keeps global packages wherever it
-# likes); resolve it rather than spelling that directory.
-OPENCOMPANY_PACKAGE_DIR="$(cd "$(dirname "$(readlink -f "$OPENCOMPANY_BIN")")/.." && pwd)"
-test -f "$OPENCOMPANY_PACKAGE_DIR/package.json"
 cat > /etc/systemd/system/opencompany.service <<SERVICE_EOF
 [Unit]
 Description=OpenCompany (released, company start)

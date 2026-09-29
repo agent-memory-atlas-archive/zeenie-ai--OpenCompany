@@ -2,11 +2,12 @@
  * The environment the backend is spawned with — the shell's half of
  * docs-internal/desktop_host_contract.md.
  *
- * Precedence (low -> high): the shell's contract values below, then the
- * operator's `desktop.env` lines, then the shell's own process env for the
- * handful of pass-through keys. The backend then layers .env.template <
- * OPENCOMPANY_ENV_FILE under all of that with setdefault semantics, so a
- * key set here always wins over the template.
+ * Precedence (low -> high): the shell's own process env (minus a few Python /
+ * Electron keys), then the contract values below, then the operator's
+ * `desktop.env` lines for every key outside LOCKED_KEYS. PATH is computed
+ * last from the inherited PATH, so desktop.env cannot replace it. The backend
+ * then layers .env.template < OPENCOMPANY_ENV_FILE under all of that with
+ * setdefault semantics, so a key set here always wins over the template.
  *
  * Pure (no Electron imports) so it is unit-testable.
  */
@@ -21,7 +22,7 @@ export interface BackendEnvOptions {
   port: number;
   token: string;
   parentPid: number;
-  /** The interpreter's venv dir; only used for UV_PROJECT_ENVIRONMENT. */
+  /** The environment to inherit (default: `process.env`); tests pass their own. */
   baseEnv?: NodeJS.ProcessEnv;
 }
 
