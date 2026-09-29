@@ -114,6 +114,10 @@ def _trigger_text(employee: Any, graph: GraphIndex) -> str:
     return "When you start them"
 
 
+#: A running employee whose only work is what the owner sends them.
+_WAITING_FOR_OWNER = "Waiting for your messages"
+
+
 def _waiting_text(employee: Any, graph: GraphIndex) -> str:
     trigger = getattr(employee, "trigger", None) or {}
     kind = trigger.get("kind") if isinstance(trigger, Mapping) else None
@@ -126,7 +130,7 @@ def _waiting_text(employee: Any, graph: GraphIndex) -> str:
     if SCHEDULE_TRIGGER_TYPE in graph.trigger_types:
         return "Waiting for the next scheduled run"
     if kind == "manual" or CHAT_TRIGGER_TYPE in graph.trigger_types:
-        return "Waiting for your messages"
+        return _WAITING_FOR_OWNER
     return "Waiting for work"
 
 
@@ -190,13 +194,18 @@ def _task(
     employee: Any,
     graph: GraphIndex,
     browser_request: Optional[Mapping[str, Any]] = None,
-) -> Dict[str, str]:
+    talk_on: bool = False,
+) -> Optional[Dict[str, str]]:
+    """The card's task line, or None when the page already says it: a
+    running employee that only waits for the owner's messages, with the
+    message box right under the card."""
     if browser_request is not None:
         return {"label": "Waiting", "text": _BROWSER_REQUEST_TEXT.get(browser_request["reason"], "Needs your help in the browser")}
     if pending > 0:
         return {"label": "Waiting", "text": f"{pending} {_plural(pending, 'draft is', 'drafts are')} waiting for you to check"}
     if status == "working":
-        return {"label": "Now", "text": _waiting_text(employee, graph)}
+        text = _waiting_text(employee, graph)
+        return None if talk_on and text == _WAITING_FOR_OWNER else {"label": "Now", "text": text}
     if status == "attention":
         return {"label": "Paused", "text": _attention_text(control)}
     if status == "paused":
@@ -257,8 +266,6 @@ async def _summary(
     if not watch:
         watch = list(graph.agent_ids) + list(graph.todo_ids)
     talk = _talk(graph, control_row)
-    if talk.agent_node_id is not None and talk.agent_node_id not in watch:
-        watch.append(talk.agent_node_id)
     # The board Home's Workspace shows: the one the hire made, while it is
     # still in the graph, else the first canvas the owner added.
     canvas = roles.get("canvas") if roles else None
@@ -280,6 +287,7 @@ async def _summary(
             employee=employee,
             graph=graph,
             browser_request=browser_request,
+            talk_on=talk.state == "on",
         ),
         "done_today": done_today,
         "pending_approvals": pending,

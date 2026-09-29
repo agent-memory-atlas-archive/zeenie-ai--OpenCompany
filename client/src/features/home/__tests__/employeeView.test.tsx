@@ -2,14 +2,13 @@
  * The employee page: the card's main button (Connect goes to the provider's
  * connect dialog, Pause sends the summary's revision and says "Pausing…"
  * until the summary shows the pause, never flashing "Pause" again in
- * between), Watch live, More > Open in Dev mode, and the conversation under
- * the card, which offers the same main action while the employee cannot
- * read messages.
+ * between), Watch live, what the card leaves out when the page already says
+ * it, and the conversation under the card, which offers the same main
+ * action while the employee cannot read messages.
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 const actions = {
@@ -122,20 +121,27 @@ describe('EmployeeView', () => {
     expect(useHomeStore.getState()).toMatchObject({ workspaceOpen: true, workspaceFor: 'w1' });
   });
 
-  it('opens the workflow in Dev mode from More', async () => {
-    const user = userEvent.setup();
-    renderCard(summary({ status: 'working' }, { state: 'running' }));
-    expect(screen.queryByRole('button', { name: 'Open in Dev mode' })).not.toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'More' }));
-    await user.click(await screen.findByRole('menuitem', { name: 'Open in Dev mode' }));
-    expect(enterDev).toHaveBeenCalledWith({ workflowId: 'w1' });
+  it('says only what the page does not already say', () => {
+    // Waiting for the owner's messages (no task line), a role that repeats
+    // the name, nothing done yet: none of it shows.
+    renderCard(summary({ status: 'working', role: 'maya', task: null, done_today: 0, apps: [] }, { state: 'running' }));
+    expect(screen.queryByText('maya')).not.toBeInTheDocument();
+    expect(screen.queryByText(/done today/)).not.toBeInTheDocument();
+    expect(screen.queryByText('Now')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'More' })).not.toBeInTheDocument();
+  });
+
+  it('shows the role, the task and the count once they say something', () => {
+    renderCard(summary({ status: 'working', task: { label: 'Now', text: 'Waiting for new WhatsApp messages' }, done_today: 2 }, { state: 'running' }));
+    expect(screen.getByText('Receptionist')).toBeInTheDocument();
+    expect(screen.getByText('Waiting for new WhatsApp messages')).toBeInTheDocument();
+    expect(screen.getByText(/done today/)).toHaveTextContent('2 done today');
   });
 
   it('makes Open in Dev mode the main button when nothing else is possible', () => {
     renderCard(summary({ status: 'attention' }, { state: 'failed', can_resume: false }));
     fireEvent.click(screen.getByRole('button', { name: 'Open in Dev mode' }));
     expect(enterDev).toHaveBeenCalledWith({ workflowId: 'w1' });
-    expect(screen.queryByRole('button', { name: 'More' })).not.toBeInTheDocument();
   });
 
   it('offers Start under the conversation while the employee is not running', async () => {

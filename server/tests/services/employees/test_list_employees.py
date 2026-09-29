@@ -354,14 +354,16 @@ async def test_talk_is_read_off_the_saved_graph_when_nothing_runs(real_database)
     assert detail["trigger_text"] == "When you message them"
 
 
-async def test_a_hired_employee_watches_its_talk_agent_too(real_database):
+async def test_the_card_follows_the_work_and_talk_follows_the_talk_agent(real_database):
+    # The conversation shows its own "Thinking...", so the card does not
+    # also follow the agent answering the owner.
     data = talking("23")
     data["nodes"].insert(0, node("23:aiAgent:2", "aiAgent", "Worker"))
     data["nodes"].insert(0, node("23:writeTodos:1", "writeTodos", "Checklist"))
     await save(real_database, "23", "Sam", data)
     await _hired(real_database, "23", {"agent": "23:aiAgent:2", "todos": "23:writeTodos:1", "talk_agent": "23:aiAgent:1"})
     summary = await get_employee_summary(real_database, "23", auth_service=FakeAuth(keys={"openai"}))
-    assert summary["watch_node_ids"] == ["23:aiAgent:2", "23:writeTodos:1", "23:aiAgent:1"]
+    assert summary["watch_node_ids"] == ["23:aiAgent:2", "23:writeTodos:1"]
     assert summary["talk"]["agent_node_id"] == "23:aiAgent:1"
 
 
@@ -378,7 +380,13 @@ async def test_talk_follows_the_live_generation_and_changes_wait_for_a_restart(r
     summary = await get_employee_summary(real_database, "24", auth_service=FakeAuth(keys={"openai"}))
     assert summary["talk"] == {"state": "on", "agent_node_id": "24:aiAgent:1"}
     assert summary["pending_changes"] is False
-    assert "24:aiAgent:1" in summary["watch_node_ids"]
+    # Waiting for the owner's messages goes without saying with the message
+    # box under the card: no task line. Without Talk the line stays.
+    assert summary["task"] is None
+    await save(real_database, "24", "Sam", talking("24", reply=False))
+    await control(real_database, "24", "running", generation=3, graph_snapshot=snapshot("24", talking("24", reply=False)))
+    summary = await get_employee_summary(real_database, "24", auth_service=FakeAuth(keys={"openai"}))
+    assert summary["task"] == {"label": "Now", "text": "Waiting for your messages"}
 
 
 async def test_asking_first(real_database):

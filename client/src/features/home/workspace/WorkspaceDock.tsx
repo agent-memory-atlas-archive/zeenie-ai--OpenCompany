@@ -72,7 +72,7 @@ function DockButtons() {
 
 /** Who, what they are doing, and a Live pill while they work. */
 function Identity({ employee }: { employee: EmployeeSummary }) {
-  const live = useLiveTask(employee);
+  const task = useLiveTask(employee) ?? employee.task;
   const pill =
     employee.status === 'working' && !employee.browser_request ? { tone: 'live' as const, label: 'Live' } : presentEmployee(employee).pill;
   return (
@@ -80,7 +80,7 @@ function Identity({ employee }: { employee: EmployeeSummary }) {
       <Avatar name={employee.name} colorRole={employee.color_role} size="sm" />
       <div className="flex min-w-0 flex-1 flex-col gap-px">
         <span className="truncate text-base font-semibold text-fg-default">{employee.name}’s workspace</span>
-        <span className="truncate font-mono text-2xs text-fg-muted">{(live ?? employee.task).text}</span>
+        {task && <span className="truncate font-mono text-2xs text-fg-muted">{task.text}</span>}
       </div>
       <StatusPill size="sm" tone={pill.tone} label={pill.label} />
     </>

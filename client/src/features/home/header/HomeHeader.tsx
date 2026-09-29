@@ -1,7 +1,8 @@
 /**
  * Normal mode's header (design handoff "Main header"): with the sidebar
  * collapsed, an open button and the logo; the view's title; the Workspace
- * pill, the Normal/Dev switch and the theme button. The bottom border appears only once the
+ * pill, the Normal/Dev switch (on an employee's page, Dev opens their
+ * workflow) and the theme button. The bottom border appears only once the
  * content has scrolled, so the hero reads as one surface.
  */
 
@@ -18,6 +19,7 @@ export function HomeHeader({ title, scrolled }: { title: string; scrolled: boole
   const sidebarOpen = useHomeStore((s) => s.sidebarOpen);
   const toggleSidebar = useHomeStore((s) => s.toggleSidebar);
   const logoPulse = useHomeStore((s) => s.logoPulse);
+  const employeeId = useHomeStore((s) => (s.view.kind === 'employee' ? s.view.workflowId : undefined));
 
   return (
     <header
@@ -38,7 +40,7 @@ export function HomeHeader({ title, scrolled }: { title: string; scrolled: boole
       <h2 className="truncate px-1.5 text-lead font-semibold text-fg-default">{title}</h2>
       <div className="ml-auto flex shrink-0 items-center gap-2">
         <WorkspaceButton />
-        <ModeToggle />
+        <ModeToggle workflowId={employeeId} />
         <ThemeButton />
       </div>
     </header>

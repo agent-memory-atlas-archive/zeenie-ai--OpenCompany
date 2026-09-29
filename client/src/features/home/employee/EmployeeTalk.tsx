@@ -15,7 +15,7 @@
  *   setup cannot answer gets a note.
  */
 
-import { ArrowUp, MessageSquare } from 'lucide-react';
+import { ArrowUp } from 'lucide-react';
 import { Suspense, lazy, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
@@ -38,8 +38,6 @@ import type { EmployeeControl } from './useEmployeeControl';
 
 // Its own chunk: the markdown stack stays out of Home's first load.
 const ThreadMarkdown = lazy(() => import('./ThreadMarkdown'));
-
-const SUGGESTIONS = ['What are you working on?', 'What did you get done today?', 'What can you help me with?'];
 
 /** Lines up an answer's time under its text, past the avatar. */
 const PAST_AVATAR = 'pl-10.5';
@@ -75,50 +73,21 @@ function RestartDivider({ name }: { name: string }) {
   );
 }
 
-function EmptyThread({ name, onPick }: { name: string; onPick: ((text: string) => void) | null }) {
-  return (
-    <div className="flex flex-col items-center gap-3 py-6 text-center">
-      <MessageSquare aria-hidden className="size-5 text-fg-faint" strokeWidth={1.75} />
-      <p className="m-0 text-md font-medium text-fg-default">Talk with {name}</p>
-      <p className="m-0 max-w-100 text-sm text-fg-muted">Ask a question, hand them a job, or check how things are going.</p>
-      {onPick && (
-        <div className="flex flex-wrap justify-center gap-2 pt-1">
-          {SUGGESTIONS.map((suggestion) => (
-            <Button key={suggestion} variant="chip" size="chip" onClick={() => onPick(suggestion)}>
-              {suggestion}
-            </Button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 function TalkBox({
   name,
   value,
   onChange,
   onSend,
   canSend,
-  focusNonce,
 }: {
   name: string;
   value: string;
   onChange: (value: string) => void;
   onSend: () => void;
   canSend: boolean;
-  /** Change this number to move focus into the box. */
-  focusNonce: number;
 }) {
   const boxRef = useRef<HTMLTextAreaElement>(null);
   useAutoGrow(boxRef, value);
-
-  useEffect(() => {
-    if (!focusNonce) return;
-    const box = boxRef.current;
-    box?.focus();
-    box?.setSelectionRange(box.value.length, box.value.length);
-  }, [focusNonce]);
 
   // Enter sends, Shift+Enter is a new line; while the box holds, Enter waits.
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -157,7 +126,6 @@ function Conversation({ employee, control }: { employee: EmployeeSummary; contro
   const mode = talkMode(employee.control);
   const [draft, setDraft] = useState('');
   const [queued, setQueued] = useState(false);
-  const [focusNonce, setFocusNonce] = useState(0);
   const endRef = useRef<HTMLDivElement>(null);
 
   // A message that waited for Resume reaches the employee when they run
@@ -209,11 +177,6 @@ function Conversation({ employee, control }: { employee: EmployeeSummary; contro
     });
   };
 
-  const pick = (suggestion: string) => {
-    setDraft(suggestion);
-    setFocusNonce((n) => n + 1);
-  };
-
   const rows = messages ? threadRows(messages) : [];
   const notice = talkNoticeText(mode, name, queued);
   const now = new Date();
@@ -225,15 +188,15 @@ function Conversation({ employee, control }: { employee: EmployeeSummary; contro
           <Skeleton className="h-10 w-3/5 self-end rounded-card" />
           <Skeleton className="h-16 w-4/5 rounded-card" />
         </div>
-      ) : thread.isError ? (
-        <div className="flex flex-col items-center gap-2 py-6 text-center">
-          <p className="m-0 text-sm text-fg-default">Couldn’t load the conversation.</p>
-          <Button variant="quiet" onClick={() => void thread.refetch()} className="border-border-default text-fg-default">
-            Try again
-          </Button>
-        </div>
       ) : (
-        rows.length === 0 && !waiting && <EmptyThread name={name} onPick={mode === 'start' ? null : pick} />
+        thread.isError && (
+          <div className="flex flex-col items-center gap-2 py-6 text-center">
+            <p className="m-0 text-sm text-fg-default">Couldn’t load the conversation.</p>
+            <Button variant="quiet" onClick={() => void thread.refetch()} className="border-border-default text-fg-default">
+              Try again
+            </Button>
+          </div>
+        )
       )}
       {/* A log: screen readers announce new messages and "Thinking…". */}
       <div role="log" aria-live="polite" aria-label={`Conversation with ${name}`} className="flex flex-col gap-4">
@@ -260,9 +223,7 @@ function Conversation({ employee, control }: { employee: EmployeeSummary; contro
             <PrimaryActionButton control={control} />
           </div>
         )}
-        {mode !== 'start' && (
-          <TalkBox name={name} value={draft} onChange={setDraft} onSend={submit} canSend={canSend} focusNonce={focusNonce} />
-        )}
+        {mode !== 'start' && <TalkBox name={name} value={draft} onChange={setDraft} onSend={submit} canSend={canSend} />}
       </div>
       <div ref={endRef} aria-hidden />
     </section>

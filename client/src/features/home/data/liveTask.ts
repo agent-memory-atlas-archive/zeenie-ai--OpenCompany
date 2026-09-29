@@ -7,6 +7,8 @@
  * 1. an in-progress todo of the employee's todo list ("Checking tomorrow's
  *    appointments"),
  * 2. otherwise, one of its watched nodes running ("Working on it..."),
+ *    except the agent answering the owner in Talk: the conversation shows
+ *    its own "Thinking…",
  * 3. otherwise nothing, and the card shows the server's text ("Waiting for
  *    new WhatsApp messages").
  */
@@ -40,14 +42,15 @@ export function useLiveTask(employee: EmployeeSummary): { label: 'Now'; text: st
     staleTime: Infinity,
   });
   const watchKey = employee.watch_node_ids.join('|');
+  const talkAgent = employee.talk.agent_node_id;
   const running = useNodeStatusStore(
     useCallback(
       (state) => {
         const statuses = state.allStatuses[employee.workflow_id];
         if (!statuses) return false;
-        return watchKey.split('|').some((id) => id && statuses[id]?.status === 'executing');
+        return watchKey.split('|').some((id) => id && id !== talkAgent && statuses[id]?.status === 'executing');
       },
-      [employee.workflow_id, watchKey],
+      [employee.workflow_id, watchKey, talkAgent],
     ),
   );
   // While the agent waits for the owner in the browser its node is still

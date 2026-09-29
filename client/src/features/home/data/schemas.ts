@@ -42,9 +42,12 @@ export const employeeSummarySchema = z.object({
   color_role: z.enum(COLOR_ROLES).catch('agent'),
   derived: z.boolean().catch(true),
   status: z.enum(EMPLOYEE_STATUSES).catch('ready'),
+  /** The card's task line; null when the page already says it (waiting for
+   *  the owner's messages, with the message box under the card). */
   task: z
     .object({ label: z.enum(TASK_LABELS).catch('Now'), text: z.string().catch('') })
-    .catch({ label: 'Next', text: '' }),
+    .nullable()
+    .catch(null),
   done_today: z.number().int().nonnegative().catch(0),
   pending_approvals: z.number().int().nonnegative().catch(0),
   apps: appList,

@@ -189,11 +189,12 @@ async def test_a_running_hire_gets_a_talk_line_and_restarts(harness):
         "talk_reply": "7:chatReply:1",
         "builder": "7:agentBuilder:1",
     }
-    # Restarted on the saved graph, so the line runs and the page follows it.
+    # Restarted on the saved graph, so the line runs and the page follows it
+    # through `talk` (the card keeps following the worker).
     assert harness.restart.calls == [("7", "owner", "k1")]
     assert employee["talk"] == {"state": "on", "agent_node_id": "7:aiAgent:2"}
     assert employee["pending_changes"] is False
-    assert "7:aiAgent:2" in employee["watch_node_ids"]
+    assert "7:aiAgent:2" not in employee["watch_node_ids"]
     assert employee["revision"] > before["revision"]
 
     # The talk agent: the worker's model, instructions written from the hire.

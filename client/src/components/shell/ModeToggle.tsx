@@ -3,7 +3,8 @@
  * (design handoff "Mode toggle"). Normal takes the skill role's green, Dev
  * the agent role's purple, each as the soft chip tint. Switching goes
  * through the shell actions, so the unsaved-work guard and the transition
- * always run.
+ * always run. `workflowId`: the workflow Dev opens (Home passes the
+ * employee on screen); without one Dev shows what the editor last had.
  */
 
 import { Clock, Zap } from 'lucide-react';
@@ -14,7 +15,7 @@ import { enterDev, enterNormal } from '../../app/useShellActions';
 
 const ITEM = 'rounded-md data-[state=on]:shadow-none';
 
-export function ModeToggle({ className }: { className?: string }) {
+export function ModeToggle({ className, workflowId }: { className?: string; workflowId?: string }) {
   const mode = useShellMode();
   return (
     <ToggleGroup
@@ -27,7 +28,7 @@ export function ModeToggle({ className }: { className?: string }) {
       onValueChange={(next) => {
         // Radix reports '' when the pressed item is clicked again.
         if (next === 'normal') void enterNormal();
-        else if (next === 'dev') void enterDev();
+        else if (next === 'dev') void enterDev({ workflowId });
       }}
       className={cn('rounded-lg bg-bg-elevated p-0.5', className)}
     >

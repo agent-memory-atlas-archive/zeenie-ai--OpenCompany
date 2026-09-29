@@ -120,13 +120,11 @@ describe('the thread', () => {
     expect(screen.getByRole('link', { name: 'the calendar' })).toHaveAttribute('target', '_blank');
   });
 
-  it('suggests a first message, which fills the box', async () => {
+  it('starts as just the message box', async () => {
     renderTalk(employee());
-    fireEvent.click(await screen.findByRole('button', { name: 'What are you working on?' }));
-    const box = screen.getByRole('textbox', { name: 'Message Maya' });
-    expect(box).toHaveValue('What are you working on?');
-    expect(box).toHaveFocus();
-    expect(sendRequest).not.toHaveBeenCalledWith('send_chat_message', expect.anything());
+    expect(await screen.findByRole('textbox', { name: 'Message Maya' })).toHaveValue('');
+    expect(screen.getByRole('log', { name: 'Conversation with Maya' })).toBeEmptyDOMElement();
+    expect(screen.queryByRole('button', { name: 'What are you working on?' })).not.toBeInTheDocument();
   });
 });
 
