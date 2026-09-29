@@ -17,6 +17,7 @@ vi.mock('../../parameterPanel/canvas/CanvasContent', () => ({ default: () => <di
 vi.mock('../../browser/BrowserWorkspace', () => ({ default: ({ workflowId, nodes }: { workflowId: string; nodes: { node_id: string; label: string }[] }) => (
   <div data-testid="browser-view" data-workflow={workflowId}>{nodes.map((node) => <span key={node.node_id}>{node.label}</span>)}</div>
 ) }));
+vi.mock('../../../contexts/WebSocketContext', () => ({ useWebSocketActions: () => ({ addEventListener: () => () => {} }) }));
 
 import CanvasDock from '../CanvasDock';
 import { useCanvasDockStore } from '../../../stores/canvasDockStore';
