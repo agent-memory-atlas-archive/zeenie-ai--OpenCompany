@@ -8,7 +8,7 @@
  *    appointments"),
  * 2. otherwise, one of its watched nodes running ("Working on it..."),
  *    except the agent answering the owner in Talk: the conversation shows
- *    its own "Thinking…",
+ *    its own "Working…",
  * 3. otherwise nothing, and the card shows the server's text ("Waiting for
  *    new WhatsApp messages").
  */

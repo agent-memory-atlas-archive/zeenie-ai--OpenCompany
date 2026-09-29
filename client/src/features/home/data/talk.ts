@@ -10,7 +10,7 @@
  *   at once and leaves again if the server refuses it (`not_running`: it
  *   saved nothing); the response's `delivery` says whether it went now or
  *   waits for Resume.
- * - `useReplyWait(...)`: "Thinking…" after a send. It follows the talk
+ * - `useReplyWait(...)`: "Working…" after a send. It follows the talk
  *   agent's node status (`useNodeStatusStore` directly, like `useLiveTask`:
  *   the editor's hooks see only the workflow open in Dev mode), with
  *   fallbacks for an agent that never picks the message up or never ends.
@@ -33,7 +33,7 @@ import { parseEmployee, type EmployeeSummary } from './schemas';
 export const THREAD_LIMIT = 200;
 /** How long the talk agent has to pick a message up. */
 export const PICKUP_WAIT_MS = 30_000;
-/** The longest "Thinking…" lasts, however long the agent works. */
+/** The longest "Working…" lasts, however long the agent works. */
 export const REPLY_WAIT_MS = 180_000;
 /** Once the agent stops, how long its answer has to reach the thread. */
 export const SETTLE_WAIT_MS = 5_000;
@@ -201,7 +201,7 @@ interface Wait {
 }
 
 export interface ReplyWait {
-  /** "Thinking…": the message box holds until this clears. */
+  /** "Working…": the message box holds until this clears. */
   waiting: boolean;
   /** The last wait ended with no answer. */
   unanswered: boolean;

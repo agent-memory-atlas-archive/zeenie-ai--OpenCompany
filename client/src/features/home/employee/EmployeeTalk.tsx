@@ -7,7 +7,7 @@
  *   questions and routine reports all land in it, and `drafts` (the ones
  *   waiting for the owner's OK) follow the messages.
  * - While the employee runs, a message goes to them at once, and
- *   "Thinking…" holds the box until they answer (useReplyWait); overlapping
+ *   "Working…" holds the box until they answer (useReplyWait); overlapping
  *   runs would each save over the other's conversation. While they are
  *   paused, one message waits for Resume and then the box holds. Otherwise
  *   the box gives way to their main action (Start, or what they are
@@ -225,7 +225,7 @@ function Conversation({ employee, control, drafts }: { employee: EmployeeSummary
         )
       )}
       <div className="flex flex-col gap-4">
-        {/* A log: screen readers announce new messages and "Thinking…". */}
+        {/* A log: screen readers announce new messages and "Working…". */}
         <div role="log" aria-live="polite" aria-label={`Conversation with ${name}`} className="flex flex-col gap-4">
           {rows.map((row) =>
             row.kind === 'restart' ? (
@@ -237,7 +237,7 @@ function Conversation({ employee, control, drafts }: { employee: EmployeeSummary
           {waiting && (
             <div className="flex items-center gap-3">
               <Avatar name={name} colorRole={employee.color_role} size="sm" />
-              <span className="text-sm text-fg-muted">Thinking…</span>
+              <span className="text-sm text-fg-muted">Working…</span>
             </div>
           )}
           {unanswered && !waiting && <p className={cn('m-0 text-xs text-fg-muted', PAST_AVATAR)}>No answer from {name} yet.</p>}

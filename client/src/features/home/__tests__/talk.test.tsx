@@ -1,7 +1,7 @@
 /**
  * Talking to an employee on their page: the thread (every generation, with a
  * divider at each restart), sending (shown at once, taken back when the
- * server refuses), "Thinking…" until the answer lands, one message queued
+ * server refuses), "Working…" until the answer lands, one message queued
  * while paused, suggestions, Turn on Talk, and Apply. The reply wait's
  * fallbacks are checked on the hook itself.
  */
@@ -136,7 +136,7 @@ describe('sending', () => {
     fireEvent.keyDown(box, { key: 'Enter' });
 
     expect(box).toHaveValue('');
-    expect(screen.getByText('Thinking…')).toBeInTheDocument();
+    expect(screen.getByText('Working…')).toBeInTheDocument();
     expect(await screen.findByText('Any bookings today?')).toBeInTheDocument();
     await waitFor(() =>
       expect(sendRequest).toHaveBeenCalledWith(
@@ -153,7 +153,7 @@ describe('sending', () => {
     server.messages = [...server.messages, row(9, 'assistant', 'Two, at 10 and at 3.')];
     await chatUpdated();
     expect(await screen.findByText('Two, at 10 and at 3.')).toBeInTheDocument();
-    await waitFor(() => expect(screen.queryByText('Thinking…')).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText('Working…')).not.toBeInTheDocument());
     expect(screen.getByRole('button', { name: 'Send' })).toBeEnabled();
     expect(screen.getAllByText('Any bookings today?')).toHaveLength(1);
   });
@@ -168,7 +168,7 @@ describe('sending', () => {
     await waitFor(() => expect(pillToast).toHaveBeenCalledWith('Maya isn’t running. Start them first.', { tone: 'error' }));
     expect(screen.getByRole('log', { name: 'Conversation with Maya' })).not.toHaveTextContent('Hello?');
     expect(box).toHaveValue('Hello?');
-    expect(screen.queryByText('Thinking…')).not.toBeInTheDocument();
+    expect(screen.queryByText('Working…')).not.toBeInTheDocument();
   });
 
   it('lets one message wait while the employee is paused', async () => {
@@ -182,13 +182,13 @@ describe('sending', () => {
     fireEvent.change(box, { target: { value: 'Call me back' } });
     fireEvent.keyDown(box, { key: 'Enter' });
     expect(await screen.findByText('Your message is waiting. Maya will read it when you resume them.')).toBeInTheDocument();
-    expect(screen.queryByText('Thinking…')).not.toBeInTheDocument();
+    expect(screen.queryByText('Working…')).not.toBeInTheDocument();
     fireEvent.change(box, { target: { value: 'One more' } });
     expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
 
     // Resumed: the waiting message goes to them now.
     rerender(employee({}, 'running'));
-    expect(await screen.findByText('Thinking…')).toBeInTheDocument();
+    expect(await screen.findByText('Working…')).toBeInTheDocument();
   });
 
   it('gives the box to Start while the employee is not running', async () => {

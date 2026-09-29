@@ -376,7 +376,7 @@ and mutations are in [data/talk.ts](../client/src/features/home/data/talk.ts).
 - **The box** follows the control state the way `send_chat_message` does
   (`talkMode` in `presentation.ts`):
   - *send* (running, starting, resuming): a message shows at once
-    ("Sending…") and goes to the employee. "Thinking…" then holds the box
+    ("Sending…") and goes to the employee. "Working…" then holds the box
     until an answer arrives. `useReplyWait` follows the talk agent's node
     status in `nodeStatusStore` (for any workflow, not only the one open in
     Dev mode) and gives up after `PICKUP_WAIT_MS` if the agent never starts,
@@ -457,7 +457,7 @@ otherwise (a chat trigger that feeds no agent counts here). While a
 generation is live the summary reads the running snapshot, whose node ids are
 the ones that report status; otherwise the saved graph. `talk.agent_node_id`
 is the agent that answers. It stays out of `watch_node_ids`, and `useLiveTask`
-skips it: while it works, the conversation shows "Thinking…", and the
+skips it: while it works, the conversation shows "Working…", and the
 Workspace's task line stays on their other work.
 
 ### Turn on Talk and Apply
