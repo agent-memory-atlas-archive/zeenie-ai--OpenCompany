@@ -199,7 +199,8 @@ client/src/
 │   ├── queryConfig.ts / featureFlags.ts
 │   ├── queryPersist.ts             # localStorage persister + PERSISTED_KEY_PREFIXES whitelist
 │   ├── brandStorage.ts             # Canonical browser-storage keys + pre-rebrand aliases
-│   ├── connectionConfig.ts         # WS reconnect + auth-bootstrap backoff constants
+│   ├── connectionConfig.ts         # WS reconnect, heartbeat and close-code constants + auth-bootstrap backoff
+│   ├── webSocketHeartbeat.ts       # App-level ping/pong liveness check for one open socket
 │   ├── workflowOps.ts              # applyOperations for backend workflow-ops batches
 │   ├── canvasLock.ts               # Server-owned can_edit capability -> canvas lock
 │   ├── credentialProviderId.ts     # Which catalogue provider a canvas node's status dot reads (plugin credential ids pass through; legacy names mapped)
@@ -455,13 +456,14 @@ See [media_transport.md](./media_transport.md).
 
 ## Real-time
 
-`contexts/WebSocketContext.tsx` is the single connection + event bus. ~125 handlers (see `server/routers/websocket.py`). Handlers follow a request/response pattern via `sendRequest(type, data)` with correlation IDs. Push-only events (node status, workflow progress, token usage, android/whatsapp status) set context state directly; components subscribe via selector hooks (`useAndroidStatus`, `useNodeStatus(nodeId)`).
+`contexts/WebSocketContext.tsx` is the single connection + event bus. The server's handlers are the `MESSAGE_HANDLERS` dict in `server/routers/websocket.py` plus the plugin handlers registered through `services.ws_handler_registry` (live count: `len(MESSAGE_HANDLERS) + len(get_ws_handlers())`). Handlers follow a request/response pattern via `sendRequest(type, data)` with correlation IDs. Push-only events (node status, workflow progress, token usage, android/whatsapp status) set context state directly; components subscribe via selector hooks (`useAndroidStatus`, `useNodeStatus(nodeId)`).
 
 **Rules:**
 - `useEffect` fetch-on-mount is banned for anything the backend can push. Subscribe to the context slice instead.
 - All modifying operations go through WebSocket — REST is reserved for auth + webhooks.
 - No polling. If a component wants fresh data, call `sendRequest` once (or use TanStack Query with `staleTime: Infinity` + manual `invalidate`).
-- **`sendRequest` queues during disconnect with backpressure.** When the socket is not open, the request enqueues with an `AbortController`-backed per-request timeout (default 30s) and replays on reconnect inside `ws.onopen` before `setIsReady(true)`. Queue caps at 200 with FIFO eviction (rejects oldest with `backpressure: too many queued requests`). Intentional close (`event.code === 1000`) drops the queue; transient closes preserve it. Eliminates indefinite spinners during the 3-second reconnect window. Implementation: `pendingSendQueueRef` + `drainPendingSends` in `WebSocketContext.tsx`.
+- **`sendRequest` queues while the socket is down, with backpressure.** When the socket is not open, the request enqueues with an `AbortController`-backed per-request timeout (default 30s). On reconnect, `ws.onopen` sends it before `setIsReady(true)`, with whatever remains of its deadline. The queue caps at 200 with FIFO eviction (the oldest is rejected with `backpressure: too many queued requests`). Any close rejects requests that were already sent, because their outcome is unknown and they are never replayed; queued requests keep waiting. A remote close, even with code 1000, does not stop reconnecting. Only `disposeConnection` (logout or unmount) closes the socket with 1000, which stops PartySocket's retries and rejects everything still queued. Implementation: `pendingSendQueueRef`, `drainPendingSends` and `disposeConnection` in `WebSocketContext.tsx`.
+- **An application heartbeat replaces a dead socket.** While a socket is open and the page is visible, `lib/webSocketHeartbeat.ts` sends `{"type": "ping"}` every `WS_HEARTBEAT.INTERVAL_MS` (30 s). If no `pong` arrives within `WS_HEARTBEAT.TIMEOUT_MS` (10 s), it calls `ws.reconnect` with close code 4000 (`WS_CLOSE.HEARTBEAT_TIMEOUT`). A hidden page sends no pings. When the page becomes visible again, or the browser reports `online`, it probes at once with a fresh deadline. Reconnect delays come from `WS_RECONNECT` in `lib/connectionConfig.ts`.
 - **Workflow-control state reconciles on every WS connect.** The toolbar derives
   Start/Pause/Resume/Reset availability from `get_workflow_control_status`, whose
   persisted generation record is reconciled with the Temporal controller rather

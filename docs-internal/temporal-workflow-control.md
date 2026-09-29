@@ -18,8 +18,9 @@ is authoritative for execution history.
   nodes.
 - **Reset** revision-guards the old generation, closes controller and local
   admission, removes Temporal cron schedules, cancels local compatibility
-  resources, and then performs a final strict execution sweep before archiving
-  the old generation. It leaves the control state `ready`; the user must press
+  resources, and then performs a final strict execution sweep and resets the
+  workflow's [Workspace tasks](#workspace-tasks) before archiving the old
+  generation. It leaves the control state `ready`; the user must press
   **Start** to create the next generation.
 
 Clients send an expected revision and idempotency key with every mutation.
@@ -131,6 +132,35 @@ startup termination sweep. `TEMPORAL_TERMINATE_RUNNING_ON_STARTUP` defaults to
 prefer termination over durable resumption. The active-state guard reads the
 shared `WORKFLOW_CONTROL_ACTIVE_STATES` set (which includes `resetting`), so a
 boot mid-reset can never sweep the namespace.
+
+## Workspace tasks
+
+Phone tasks submitted directly from the Workspace run outside the control
+generation, under a per-workflow `WorkspaceTaskControllerWorkflow` (see
+[TEMPORAL_ARCHITECTURE.md → Direct Workspace tasks](./TEMPORAL_ARCHITECTURE.md#direct-workspace-tasks)).
+They can exist before the first Start and after a Reset. Pause and Resume do
+not gate them; of the control states, only a Reset in progress blocks new
+submissions. The control plane covers them in two places.
+
+- **Reset.** With an active generation, Reset resets the Workspace tasks after
+  its final execution sweep and before archiving
+  (`services/deployment/handlers.py::_reset_workspace_tasks`), and
+  `workflow_runtime_reset` carries `cancelled_workspace_tasks`. With no
+  generation, or after the latest one was reset, Reset still checks the
+  expected revision and then resets only the Workspace tasks. It returns
+  idempotently when the graph has no Workspace-task node and no controller
+  exists; otherwise it broadcasts `workflow_runtime_reset` and
+  `workflow_control_status`.
+- **Status.** Every control status read, mutation response and
+  `workflow_control_status` broadcast passes through `_with_runtime_counts`,
+  which merges `_workspace_runtime_status`. When the saved graph contains a
+  Workspace-task node, `can_reset` is true in every state and the controller's
+  active tasks are added to `active_count` and `in_flight_count`. Once the
+  controller exists, the payload also carries `workspace_epoch`,
+  `workspace_resetting` and `workspace_reset_request_id`; `workspace_available`
+  is false when Temporal or the controller query is unavailable. While the
+  controller is resetting, the payload reports `state: "resetting"` and turns
+  off `can_start`, `can_pause`, `can_resume` and `can_edit`.
 
 ## Months-long generations
 

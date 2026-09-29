@@ -75,7 +75,7 @@ StatusBroadcaster.connect(ws)
 Message loop:
   receive_json -> dispatch: MESSAGE_HANDLERS.get(type) or get_ws_handlers().get(type)
   send_json    -> pushed by broadcaster on state change
-  ping/pong    -> keepalive every 30s from frontend
+  ping/pong    -> frontend heartbeat (WS_HEARTBEAT; visible pages only)
         |
         v
 Frontend unmounts or logs out
@@ -84,7 +84,7 @@ Frontend unmounts or logs out
 StatusBroadcaster.disconnect(ws) -> remove from _connections
 ```
 
-Auto-reconnect is handled by `WebSocketContext.tsx` through PartySocket's `ReconnectingWebSocket` (`partysocket/ws`): jittered exponential backoff (`MIN_DELAY_MS` / `MAX_DELAY_MS` / `GROW_FACTOR` in `client/src/lib/connectionConfig.ts`), message replay, and intentional-close handling (code 1000 stops the reconnect loop). A 100ms mount delay avoids React Strict Mode double-connect in dev.
+Auto-reconnect is handled by `WebSocketContext.tsx` through PartySocket's `ReconnectingWebSocket` (`partysocket/ws`), with jittered exponential backoff (`MIN_DELAY_MS` / `MAX_DELAY_MS` / `GROW_FACTOR` in `client/src/lib/connectionConfig.ts`). Requests queued while disconnected are sent after the next open; requests already in flight are rejected on close and never replayed. A remote close, even with code 1000, keeps the loop retrying; only the client's own `disposeConnection` (logout or unmount) closes with 1000 and stops it. The full client-side rules are in [frontend_architecture.md → Real-time](./frontend_architecture.md#real-time). A 100ms mount delay avoids React Strict Mode double-connect in dev.
 
 ## Handler Registry
 
@@ -219,8 +219,8 @@ Android service nodes (`batteryMonitor`, `wifiAutomation`, etc.) check `androidS
 
 **Frontend** (`WebSocketContext.tsx`):
 
-- 30-second `setInterval` sends `{"type": "ping"}`.
-- On disconnect: PartySocket's `ReconnectingWebSocket` reconnects with jittered exponential backoff (`client/src/lib/connectionConfig.ts`), replaying queued messages; an intentional close (code 1000) stops the loop.
+- While the socket is open and the page is visible, `startWebSocketHeartbeat` (`client/src/lib/webSocketHeartbeat.ts`) sends `{"type": "ping"}` every 30 s (`WS_HEARTBEAT`). If no `pong` arrives within 10 s, it reconnects with close code 4000 (`WS_CLOSE.HEARTBEAT_TIMEOUT`).
+- On disconnect: PartySocket's `ReconnectingWebSocket` reconnects with jittered exponential backoff (`client/src/lib/connectionConfig.ts`). In-flight requests are rejected, and requests queued while disconnected are sent after the next open. A remote close, including code 1000, does not stop the loop; only `disposeConnection` (logout or unmount) does.
 - 100ms mount delay avoids React Strict Mode double-connect in development.
 - `isMountedRef` prevents connections after unmount.
 - WebSocket is gated on `isAuthenticated` from `AuthContext`: if auth is disabled or not yet loaded, the provider defers connection.
