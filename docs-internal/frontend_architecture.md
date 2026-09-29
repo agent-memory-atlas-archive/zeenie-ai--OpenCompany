@@ -174,14 +174,14 @@ client/src/
 │   └── useCredentialRegistry.ts    # UI-only: selectedId + paletteOpen + query
 │
 ├── styles/
-│   └── theme.ts                    # `lightColors` / `darkColors` base packs +
-│                                   # `dracula` / `solarized` constants. Read
-│                                   # exclusively by `useAppTheme` (which
-│                                   # overlays per-theme accents on top of the
-│                                   # base pack — see hooks/useAppTheme.ts) and
-│                                   # by canvas node components for inline
-│                                   # gradients tied to per-definition node
-│                                   # colors. Not imported anywhere else.
+│   └── theme.ts                    # `lightColors` / `darkColors` base packs,
+│                                   # `dracula` / `solarized` constants and the
+│                                   # static `theme` object (spacing, sizes such
+│                                   # as `nodeSize` / `iconSize`, layout, timing
+│                                   # constants). `useAppTheme` overlays
+│                                   # per-theme accents on the base pack (see
+│                                   # hooks/useAppTheme.ts); many components
+│                                   # import `theme` directly.
 │
 ├── services/
 │   ├── executionService.ts         # ExecutionResult shape + node-execution plumbing
