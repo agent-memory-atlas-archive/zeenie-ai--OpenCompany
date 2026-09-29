@@ -136,6 +136,9 @@ bun.lockb
 .cache/
 *.cache
 
+# Archived logo explorations; selected logos remain in output/imagegen/.
+/tmp/logo-explorations/
+
 # =============================================================================
 # Claude Code configuration + per-workflow runtime data
 # =============================================================================
