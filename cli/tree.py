@@ -70,6 +70,47 @@ def signal_group(pid: int, sig: signal.Signals = signal.SIGTERM) -> None:
         pass
 
 
+def send_ctrl_break(pid: int) -> bool:
+    """Send ``CTRL_BREAK_EVENT`` to the process group ``pid`` leads (Windows only).
+
+    Returns whether the event went out: False on other platforms, when
+    ``pid`` is not attached to this process's console (Windows delivers
+    console events only within one console), and when Windows refuses it.
+
+    Goes through pywin32, never ``os.kill(pid, CTRL_BREAK_EVENT)``. Before
+    CPython 3.12.9 and 3.13.2 (gh-58689), an ``os.kill`` whose event
+    Windows refuses hard-kills the target with ``TerminateProcess`` and
+    returns with the ``OSError`` still set; the stale error surfaces later
+    as a ``SystemError`` from an unrelated call. ``company stop`` died that
+    way inside psutil's ``Process.wait``, because the services it stops run
+    in another terminal's console. Checking the console first also covers
+    the console hosts that accept an event for another console and deliver
+    nothing, which left callers waiting out their whole grace period.
+    https://learn.microsoft.com/en-us/windows/console/generateconsolectrlevent
+    """
+    if sys.platform != "win32":
+        return False
+    try:
+        import pywintypes  # type: ignore[import-not-found]
+        import win32api  # type: ignore[import-not-found]
+        import win32con  # type: ignore[import-not-found]
+        import win32console  # type: ignore[import-not-found]
+    except ImportError as e:
+        sys.stderr.write(
+            f"WARN: pywin32 import failed ({e}); stopping pid={pid} without "
+            f"CTRL_BREAK. Reinstall via: pip install --force-reinstall pywin32\n"
+        )
+        return False
+    try:
+        # Raises when this process has no console.
+        if pid not in win32console.GetConsoleProcessList():
+            return False
+        win32api.GenerateConsoleCtrlEvent(win32con.CTRL_BREAK_EVENT, pid)
+    except pywintypes.error:
+        return False
+    return True
+
+
 # ---------------------------------------------------------------- Windows Job Object
 
 

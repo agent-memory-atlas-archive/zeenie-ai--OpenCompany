@@ -37,25 +37,31 @@ def test_windows_kill_pid_delivers_graceful_signal_before_waiting():
     with (
         patch.object(psutil, "Process", return_value=proc),
         patch.object(ports.sys, "platform", "win32"),
-        patch.object(ports.signal, "CTRL_BREAK_EVENT", 1, create=True),
-        patch.object(ports.os, "kill") as signal_process,
+        patch.object(ports, "send_ctrl_break", return_value=True) as send_break,
+        patch.object(ports.os, "kill") as os_kill,
     ):
         assert ports.kill_pid(123, graceful_timeout=125) is True
-    signal_process.assert_called_once_with(123, 1)
+    send_break.assert_called_once_with(123)
+    os_kill.assert_not_called()
     proc.wait.assert_called_once_with(timeout=125)
     proc.terminate.assert_not_called()
     proc.kill.assert_not_called()
 
 
-def test_windows_kill_pid_falls_back_if_control_signal_unavailable():
+def test_windows_kill_pid_terminates_what_the_signal_cannot_reach():
+    """A service started in another terminal cannot get the event. Sending it
+    with ``os.kill`` crashed ``company stop``: on Python 3.12.8 the refused
+    event became a hard kill plus a pending ``OSError``, which surfaced as a
+    ``SystemError`` inside psutil's ``Process.wait``."""
     proc = MagicMock()
     with (
         patch.object(psutil, "Process", return_value=proc),
         patch.object(ports.sys, "platform", "win32"),
-        patch.object(ports.signal, "CTRL_BREAK_EVENT", 1, create=True),
-        patch.object(ports.os, "kill", side_effect=OSError("no process group")),
+        patch.object(ports, "send_ctrl_break", return_value=False),
+        patch.object(ports.os, "kill") as os_kill,
     ):
         assert ports.kill_pid(123) is True
+    os_kill.assert_not_called()
     proc.terminate.assert_called_once()
     proc.wait.assert_called_once_with(timeout=3.0)
 

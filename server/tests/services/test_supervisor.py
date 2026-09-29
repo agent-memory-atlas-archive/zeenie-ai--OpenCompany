@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import subprocess
 import sys
+import time
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -25,7 +28,13 @@ from services._supervisor import (  # noqa: E402
     shutdown_all_supervisors,
 )
 from services._supervisor.registry import _SUPERVISORS  # noqa: E402
-from services._supervisor.util import drain_stream, kill_tree, terminate_then_kill  # noqa: E402
+from services._supervisor.util import (  # noqa: E402
+    _console_process_ids,
+    drain_stream,
+    kill_tree,
+    send_ctrl_break,
+    terminate_then_kill,
+)
 
 
 # --- helpers ---------------------------------------------------------------
@@ -235,6 +244,79 @@ async def test_terminate_then_kill_force_kills_after_grace():
 
     proc.terminate.assert_called_once()
     kill_tree_mock.assert_called_once_with(42)
+
+
+@pytest.mark.asyncio
+async def test_terminate_then_kill_sends_ctrl_break_without_os_kill():
+    """``os.kill(pid, CTRL_BREAK_EVENT)`` hard-kills the child and leaves an
+    ``OSError`` pending when Windows refuses the event (Python 3.12.8, gh-58689)."""
+    proc = MagicMock()
+    proc.returncode = None
+    proc.pid = 42
+
+    async def exit_after_the_break():
+        proc.returncode = 0
+
+    proc.wait = AsyncMock(side_effect=exit_after_the_break)
+    with (
+        patch("services._supervisor.util.sys.platform", "win32"),
+        patch("services._supervisor.util.send_ctrl_break", return_value=True) as send_break,
+        patch("services._supervisor.util.kill_tree") as kill_tree_mock,
+        patch("os.kill", side_effect=AssertionError("terminate_then_kill must not call os.kill")),
+    ):
+        await terminate_then_kill(proc, grace=1.0, use_ctrl_break=True)
+
+    send_break.assert_called_once_with(42)
+    proc.terminate.assert_not_called()
+    kill_tree_mock.assert_not_called()
+
+
+# --- util.send_ctrl_break (real Win32 calls) --------------------------------
+
+windows_only = pytest.mark.skipif(sys.platform != "win32", reason="console control events exist only on Windows")
+
+
+def _sleeper(creationflags: int) -> subprocess.Popen:
+    # The base interpreter: a venv launcher would add a process of its own.
+    return subprocess.Popen(
+        [sys._base_executable, "-c", "import time; time.sleep(30)"],
+        creationflags=creationflags,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
+@windows_only
+def test_send_ctrl_break_leaves_a_process_outside_this_console_alone():
+    sleeper = _sleeper(subprocess.DETACHED_PROCESS)
+    try:
+        assert send_ctrl_break(sleeper.pid) is False
+        with pytest.raises(subprocess.TimeoutExpired):
+            sleeper.wait(timeout=0.5)
+    finally:
+        sleeper.kill()
+        sleeper.wait(timeout=10)
+
+
+@windows_only
+def test_send_ctrl_break_stops_a_process_group_on_this_console():
+    attached = _console_process_ids()
+    if not attached:
+        pytest.skip("this test process has no console")
+    assert os.getpid() in attached
+    sleeper = _sleeper(subprocess.CREATE_NEW_PROCESS_GROUP)
+    try:
+        deadline = time.monotonic() + 10
+        while sleeper.pid not in _console_process_ids():
+            assert time.monotonic() < deadline, "the sleeper never attached to this console"
+            time.sleep(0.05)
+        assert send_ctrl_break(sleeper.pid) is True
+        sleeper.wait(timeout=10)  # long before its own 30 s sleep ends
+    finally:
+        if sleeper.poll() is None:
+            sleeper.kill()
+            sleeper.wait(timeout=10)
 
 
 # --- util.drain_stream -----------------------------------------------------

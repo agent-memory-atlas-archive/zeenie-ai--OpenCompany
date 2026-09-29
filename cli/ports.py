@@ -7,7 +7,6 @@ same battle-tested ``psutil`` paths that are already in production.
 from __future__ import annotations
 
 import os
-import signal
 import sys
 import subprocess
 import time
@@ -15,6 +14,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import psutil
+
+from cli.tree import send_ctrl_break
 
 
 # Post-kill grace before re-checking the port. Windows can lag a few
@@ -107,37 +108,19 @@ def kill_pid(pid: int, *, graceful_timeout: float = 3.0) -> bool:
     Windows: send ``CTRL_BREAK_EVENT`` first so daemons spawned with
     ``CREATE_NEW_PROCESS_GROUP`` (the supervisor's children — see
     ``cli/tree.py:new_session_kwargs``) get a real shutdown signal and
-    can release listener sockets cleanly. ``proc.terminate()``
-    (= ``TerminateProcess``) is the fallback for processes that weren't
-    spawned with a process group — equivalent to SIGKILL, leaves the
-    OS holding sockets briefly. Same pattern as
-    ``cli/supervisor.py:_stop_proc``.
+    can release listener sockets cleanly. The event only reaches
+    processes attached to this console, so anything else (a service
+    started in another terminal, an orphan from a previous session) goes
+    straight to ``proc.terminate()`` (= ``TerminateProcess``) --
+    equivalent to SIGKILL, leaves the OS holding sockets briefly. The
+    event is sent by ``cli/tree.py:send_ctrl_break``, never ``os.kill``;
+    its docstring says why. Same pattern as ``cli/supervisor.py:_stop_proc``.
 
     POSIX: plain ``proc.terminate()`` (SIGTERM).
     """
     try:
         proc = psutil.Process(pid)
-        if sys.platform == "win32":
-            try:
-                os.kill(pid, signal.CTRL_BREAK_EVENT)
-            except (OSError, ProcessLookupError, SystemError):
-                # Fall back to TerminateProcess via psutil.terminate.
-                #   * ``OSError`` -- target wasn't in our process group.
-                #   * ``SystemError`` -- CPython issue #106148: on
-                #     Windows, ``os.kill`` returns success AND sets an
-                #     ``OSError`` when ``GenerateConsoleCtrlEvent``
-                #     fails with ERROR_INVALID_PARAMETER (e.g. the
-                #     target process isn't in the caller's console
-                #     group). CPython detects the inconsistency and
-                #     raises ``SystemError`` instead of propagating
-                #     the underlying OSError. ``kill_pid`` is used to
-                #     clean up stale state (port squatters, orphans
-                #     from a prior session) -- none of them are in
-                #     our console group, so this path fires every
-                #     time on Windows and used to crash
-                #     ``company stop``.
-                proc.terminate()
-        else:
+        if sys.platform != "win32" or not send_ctrl_break(pid):
             proc.terminate()
         try:
             proc.wait(timeout=graceful_timeout)

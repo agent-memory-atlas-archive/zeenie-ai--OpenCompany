@@ -594,3 +594,23 @@ Seen 2026-09-05 with a `tikhubAction` tool whose results were about 400,000 char
 Locked by `server/tests/services/test_tool_output.py`, `server/tests/temporal/test_agent_context_pressure.py`, `server/tests/temporal/test_agent_workflow_pressure.py` and `server/tests/temporal/test_prepare_payload_pressure.py`. Design record: [ARCHIVE/AGENT_COMPACTION_FIX_PLAN.md](./ARCHIVE/AGENT_COMPACTION_FIX_PLAN.md).
 
 **Recovery for a row saved before the fix**: clear the conversation once from the Context panel (or Reset the deployment). New transcripts stay well under the cap.
+
+## 29. `company stop` crashes on Windows with `SystemError: <class 'int'> returned a result with an exception set`
+
+**Symptom**: `company stop` (or `bun run stop`) frees the ports and kills Temporal, then dies while reaping orphaned processes. The traceback ends inside psutil's `Process.wait`:
+
+```
+OSError: [WinError 87] The parameter is incorrect
+
+The above exception was the direct cause of the following exception:
+...
+SystemError: <class 'int'> returned a result with an exception set
+```
+
+The `OSError` has no traceback of its own. Orphans the reaper had not reached yet stay alive, and the command exits 1. The CLI supervisor's shutdown and the backend's `terminate_then_kill` sent the event the same way and could fail the same way.
+
+**Root cause**: `kill_pid` sent `CTRL_BREAK_EVENT` with `os.kill`. Windows delivers console events only to processes attached to the caller's console, and the services `company stop` reaps run in another terminal's console, so Windows refuses the event (error 87 in the reported case, error 6 when the caller has no console). Before CPython 3.12.9 and 3.13.2 ([gh-58689](https://github.com/python/cpython/issues/58689)), `os.kill` does not raise on that refusal: it records the error, falls through to `TerminateProcess` (hard-killing the target), and returns success with the error still set. CPython reports that inconsistency only on its generic call path. Once the `os.kill` call site has been specialized after its first run, release builds skip the check, and the stale error surfaces at the next call that does check: the `int()` inside psutil's `Process.wait`. So the `except SystemError` around `os.kill` covered only the first orphan. The CLI and server venvs here run 3.12.8.
+
+**Fix**: nothing sends console events through `os.kill` any more. `cli/tree.py::send_ctrl_break` (through pywin32) and its server copy in `services/_supervisor/util.py` (through `ctypes`, since the server has no pywin32) call `GenerateConsoleCtrlEvent` only for a process attached to the caller's console, and return whether the event went out. `kill_pid` terminates everything else at once. Before, some console hosts accepted an event for another console, delivered nothing, and `kill_pid` waited out its grace period. `_stop_proc` and `terminate_then_kill` treat an event that did not go out as they treated `os.kill`'s `OSError`. Locked by `cli/tests/test_tree.py`, `cli/tests/test_ports.py`, `cli/tests/test_supervisor.py` and `server/tests/services/test_supervisor.py`; their Windows-only tests send real events to processes they start.
+
+To reproduce the old failure on 3.12.8, run `kill_orphaned_opencompany_processes` from a process with no console against sleepers it started itself, with a root their command lines name: it raises the `SystemError`.

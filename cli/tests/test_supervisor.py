@@ -67,6 +67,47 @@ async def test_manager_runs_clean_exit_service():
     assert rc == 0
 
 
+class _ExitsWhenWaited:
+    """Stands in for an ``anyio`` process that exits once it is waited on."""
+
+    pid = 4321
+
+    def __init__(self) -> None:
+        self.returncode = None
+        self.terminated = False
+
+    async def wait(self) -> int:
+        self.returncode = 0
+        return 0
+
+    def terminate(self) -> None:
+        self.terminated = True
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("sent", [True, False])
+async def test_windows_stop_sends_ctrl_break_without_os_kill(monkeypatch, sent):
+    """``os.kill(pid, CTRL_BREAK_EVENT)`` hard-kills the child and leaves an
+    ``OSError`` pending when Windows refuses the event (Python 3.12.8). When the
+    event does not go out, ``_stop_proc`` returns without waiting, as it did on
+    that ``OSError``."""
+    from cli import supervisor
+
+    def forbidden(*_args):
+        raise AssertionError("_stop_proc must not call os.kill")
+
+    sent_to = []
+    monkeypatch.setattr(supervisor.sys, "platform", "win32")
+    monkeypatch.setattr(supervisor.os, "kill", forbidden)
+    monkeypatch.setattr(supervisor, "send_ctrl_break", lambda pid: sent_to.append(pid) or sent)
+    monkeypatch.setattr(supervisor, "emit", lambda *_args, **_kwargs: None)
+    proc = _ExitsWhenWaited()
+    await Manager()._stop_proc(proc, ServiceSpec(name="svc", argv=["true"]))
+    assert sent_to == [proc.pid]
+    assert proc.returncode == (0 if sent else None)
+    assert not proc.terminated
+
+
 @pytest.fixture
 def anyio_backend():
     return "asyncio"

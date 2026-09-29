@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import signal
 import sys
 from typing import Callable, Optional
@@ -45,6 +44,48 @@ def kill_tree(pid: int) -> None:
         pass
 
 
+def _console_process_ids() -> set[int]:
+    """PIDs attached to this process's console; empty when it has none (Windows only)."""
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.GetConsoleProcessList.restype = wintypes.DWORD
+    kernel32.GetConsoleProcessList.argtypes = [wintypes.LPDWORD, wintypes.DWORD]
+    ids = (wintypes.DWORD * 1)()
+    while True:
+        # 0 without a console; a count larger than the buffer is the size it needs.
+        count = kernel32.GetConsoleProcessList(ids, len(ids))
+        if count <= len(ids):
+            return set(ids[:count])
+        ids = (wintypes.DWORD * count)()
+
+
+def send_ctrl_break(pid: int) -> bool:
+    """Send ``CTRL_BREAK_EVENT`` to the process group ``pid`` leads (Windows only).
+
+    Returns whether the event went out: False on other platforms, when
+    ``pid`` is not attached to this process's console (Windows delivers
+    console events only within one console), and when Windows refuses it.
+    Calls ``GenerateConsoleCtrlEvent`` rather than ``os.kill``, which before
+    CPython 3.12.9 and 3.13.2 (gh-58689) turns a refused event into a
+    ``TerminateProcess`` hard kill and returns with the ``OSError`` still
+    set, so a ``SystemError`` surfaces later from an unrelated call. The CLI
+    has the same helper in ``cli/tree.py``; the server cannot import the CLI
+    package and has no pywin32.
+    https://learn.microsoft.com/en-us/windows/console/generateconsolectrlevent
+    """
+    if sys.platform != "win32" or pid not in _console_process_ids():
+        return False
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.GenerateConsoleCtrlEvent.restype = wintypes.BOOL
+    kernel32.GenerateConsoleCtrlEvent.argtypes = [wintypes.DWORD, wintypes.DWORD]
+    return bool(kernel32.GenerateConsoleCtrlEvent(signal.CTRL_BREAK_EVENT, pid))
+
+
 async def terminate_then_kill(
     proc: anyio.abc.Process,
     *,
@@ -56,17 +97,15 @@ async def terminate_then_kill(
     POSIX path: ``proc.terminate()`` (SIGTERM), wait, ``kill_tree()``.
     Windows graceful path (``use_ctrl_break=True``, requires the process
     to have been spawned with ``CREATE_NEW_PROCESS_GROUP``):
-    ``os.kill(pid, CTRL_BREAK_EVENT)`` — the only way to send a real
-    SIGINT-equivalent on Windows.
+    ``CTRL_BREAK_EVENT`` via :func:`send_ctrl_break` — the only way to send
+    a real SIGINT-equivalent on Windows.
     """
     if proc.returncode is not None:
         return
 
     if use_ctrl_break and sys.platform == "win32":
-        try:
-            os.kill(proc.pid, signal.CTRL_BREAK_EVENT)
-        except (ProcessLookupError, OSError):
-            pass
+        # When the event does not go out, the grace wait ends in the tree-kill below.
+        send_ctrl_break(proc.pid)
     else:
         try:
             proc.terminate()

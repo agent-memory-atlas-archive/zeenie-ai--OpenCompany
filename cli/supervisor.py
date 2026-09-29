@@ -33,7 +33,7 @@ import anyio
 from cli.colors import emit, next_color
 from cli.run import which_argv
 from cli.tcp import wait_for_tcp_port
-from cli.tree import add_to_job, kill_tree, new_session_kwargs
+from cli.tree import add_to_job, kill_tree, new_session_kwargs, send_ctrl_break
 
 
 class RestartPolicy(enum.Enum):
@@ -198,7 +198,8 @@ class Manager:
 
         POSIX: ``proc.terminate()`` sends ``SIGTERM`` to the child.
 
-        Windows: ``os.kill(pid, CTRL_BREAK_EVENT)`` — the only Win32
+        Windows: ``CTRL_BREAK_EVENT`` via ``cli/tree.py:send_ctrl_break``
+        (never ``os.kill``; its docstring says why) — the only Win32
         signal-equivalent that lets a child run cleanup handlers. We
         spawn every child with ``CREATE_NEW_PROCESS_GROUP``
         (``cli/tree.py:new_session_kwargs``) so ``CTRL_BREAK_EVENT`` is
@@ -223,7 +224,8 @@ class Manager:
         with anyio.CancelScope(shield=True):
             try:
                 if sys.platform == "win32":
-                    os.kill(proc.pid, signal.CTRL_BREAK_EVENT)
+                    if not send_ctrl_break(proc.pid):
+                        return
                 else:
                     proc.terminate()
             except (ProcessLookupError, OSError):
