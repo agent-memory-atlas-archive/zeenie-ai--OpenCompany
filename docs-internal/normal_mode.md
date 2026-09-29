@@ -365,14 +365,21 @@ the page (`HomeShell`'s scroll area is a column the view fills). Its queries
 and mutations are in [data/talk.ts](../client/src/features/home/data/talk.ts).
 
 - **The thread** is `get_chat_messages` with `all_generations: true` (the
-  newest `THREAD_LIMIT` messages), so it spans restarts. Where a message's
-  `run_key` (its generation) differs from the one before, a divider reads
-  "{Name} restarted — they start fresh from here". The owner's messages sit on
-  the right; answers carry the avatar and render as markdown (`ThreadMarkdown`,
-  in its own chunk). An empty thread is just the box. The list is an
-  `aria-live` log. It refetches on `chat.updated`, after a runtime reset,
-  and when the socket reopens. The drafts waiting for the owner's OK follow
-  the messages (`EmployeeTalk`'s `drafts`).
+  newest `THREAD_LIMIT` messages): the conversation since the employee last
+  started, since a Reset clears it (see [Turn on Talk and Apply](#turn-on-talk-and-apply)).
+  Where a message's `run_key` (its generation) differs from the one before
+  (a message left from before a Start, such as a test run in Dev mode), a
+  divider reads "{Name} restarted — they start fresh from here". Both sides
+  are one bubble, the same raised surface, border and type in every theme;
+  only the side (the owner's on the right, answers on the left beside the
+  avatar) and the corner that points at the speaker differ. Answers render
+  as markdown (`ThreadMarkdown`, in its own chunk). The bubbles carry
+  `chat-msg-user` / `chat-msg-bot`, the theme hooks the editor's chat pane
+  uses too. Times, "Working…" and the divider share the body font. An empty
+  thread is just the box. The list is an `aria-live` log. It refetches on
+  `chat.updated`, after a runtime reset, and when the socket reopens. The
+  drafts waiting for the owner's OK follow the messages (`EmployeeTalk`'s
+  `drafts`).
 - **The box** follows the control state the way `send_chat_message` does
   (`talkMode` in `presentation.ts`):
   - *send* (running, starting, resuming): a message shows at once
@@ -401,8 +408,8 @@ and mutations are in [data/talk.ts](../client/src/features/home/data/talk.ts).
   setup has no way to answer.
 - **Pending changes**: while `pending_changes` is true, a notice above the box
   reads "{Name} has new abilities for this conversation. Apply to make them
-  part of all their work (restarts {name}; the conversation continues after a
-  divider)." Its Apply (`ActionButton intent="config"`) calls
+  part of all their work (restarts {name} and clears this conversation)."
+  Its Apply (`ActionButton intent="config"`) calls
   `apply_employee_changes`.
 - **Asking first**: under the page, a line says whether the employee asks
   before sending anything on the owner's behalf (the summary's `asks_first`).
@@ -484,8 +491,13 @@ running → Reset, then Start again (ends running); paused or failed → Reset
 (ends ready, and the next Start takes the saved graph); ready or never
 started → nothing to do; starting, pausing, resuming or resetting →
 `conflict`. The same idempotency key reports the restart it already made. A
-Reset clears the workflow's Context conversations (hence the divider), drops
-messages queued while paused, and cancels the drafts waiting for the owner.
+Reset ends the chat session with the generation: the Context node clears
+the workflow's conversations and the chat nodes (`chatTrigger`, `chatReply`)
+clear its thread through the same `reset_execution_state` hook, so Talk and
+the editor's chat pane never show a conversation the agent no longer has.
+It also drops messages queued while paused and cancels the drafts waiting
+for the owner. Deleting the workflow deletes its thread (a workflow-deleted
+hook `chatReply` registers).
 
 `pending_changes` is true while a generation is live (starting, running,
 pausing, paused, resuming) and the saved graph, put through Start's own
@@ -732,10 +744,10 @@ chat's rollback), `lib/__tests__/workflowOps.test.ts` and
   the saved node, bind-only). The worker gets it only after Apply.
 - Messages queued while paused each start a run on Resume; the page allows
   one queued message at a time.
-- Turn on Talk and Apply reset the employee: its Context conversations start
-  fresh (the thread's divider says so), messages queued while paused are
-  dropped, and drafts waiting for the owner are cancelled (the confirmation
-  and the notice warn about those).
+- Turn on Talk and Apply reset the employee: the conversation starts fresh
+  (its thread is cleared with the agent's Context), messages queued while
+  paused are dropped, and drafts waiting for the owner are cancelled (the
+  confirmation and the notice warn about those).
 - A Dev editor holding unsaved edits made before a server-side change (Turn on
   Talk, the Agent Builder) can still overwrite it on its next save, because
   saves carry no revision check. Adopting persisted batches narrows the

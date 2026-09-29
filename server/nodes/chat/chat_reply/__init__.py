@@ -8,6 +8,11 @@ which stamps the live generation and announces ``chat.updated``.
 
 A message that is empty, or exactly NO_REPLY (the agent had nothing to
 say), posts nothing.
+
+The thread ends with the workflow's generation: a Reset (every restart)
+clears it through ``reset_execution_state``, as the Context node forgets
+the conversation in the same Reset, and deleting the workflow deletes it
+(the workflow-deleted hook registered below).
 """
 
 from __future__ import annotations
@@ -79,3 +84,30 @@ class ChatReplyNode(ActionNode):
         if not await record_chat_message(get_database(), ctx.workflow_id, "assistant", text):
             raise RuntimeError("The reply could not be saved to the chat")
         return ChatReplyOutput(posted=True, message=text)
+
+    @classmethod
+    async def reset_execution_state(
+        cls,
+        *,
+        node_id: str,
+        workflow_id: str,
+        execution_id: str,
+        generation: int,
+        graph: dict,
+        database,
+    ) -> dict:
+        """A Reset clears the workflow's thread: the conversation it holds
+        ended with the generation (the Context node forgets it in the same
+        Reset), so neither Talk nor the editor's chat pane keeps showing it."""
+        del node_id, execution_id, generation, graph
+        from services.chat_thread import clear_chat_thread
+
+        cleared = await clear_chat_thread(database, str(workflow_id))
+        return {"reset": bool(cleared), "cleared_chat_messages": cleared}
+
+
+# The thread belongs to its workflow: deleting the workflow deletes it.
+from services.chat_thread import clear_chat_thread  # noqa: E402
+from services.workflow_storage.hooks import register_workflow_deleted_hook  # noqa: E402
+
+register_workflow_deleted_hook(clear_chat_thread)

@@ -1140,7 +1140,9 @@ async def handle_get_chat_messages(data: Dict[str, Any], websocket: WebSocket) -
     """A session's messages, oldest first, the newest ``limit`` of them:
     ``{id, role, message, timestamp, run_key}``. ``run_key`` is the
     generation the message was written in. The live generation's only,
-    unless ``all_generations`` (Home's thread, which spans restarts)."""
+    unless ``all_generations`` (Home's thread, which also shows a message
+    from before a Start). A Reset clears a workflow's thread (the chat
+    nodes' Reset hook), so generations rarely mix."""
     session_id = data.get("session_id", "default")
     limit = data.get("limit")  # Optional limit
 

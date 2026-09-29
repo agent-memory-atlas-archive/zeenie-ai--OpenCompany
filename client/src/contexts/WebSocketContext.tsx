@@ -1810,7 +1810,8 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
               return next;
             });
             queryClient.removeQueries({ queryKey: queryKeys.compactionStats._def });
-            // Home's thread spans restarts: refetch it rather than clear it.
+            // The Reset cleared the thread on the server (the chat nodes'
+            // Reset hook); Home refetches it.
             void queryClient.invalidateQueries({ queryKey: queryKeys.chatThread.bySession(workflowId).queryKey });
             if (useAppStore.getState().currentWorkflow?.id === workflowId) {
               setConsoleLogs([]);

@@ -2,8 +2,9 @@
  * Talking to an employee on its page, over the chat session whose id is the
  * employee's workflow id:
  *
- * - `useTalkThread(workflowId)`: the conversation across restarts
- *   (`get_chat_messages` with `all_generations`), the newest 200 messages.
+ * - `useTalkThread(workflowId)`: the conversation (`get_chat_messages` with
+ *   `all_generations`, so a message from before a Start shows too), the
+ *   newest 200 messages. A Reset clears the thread on the server.
  *   WebSocketContext invalidates it on `chat.updated`, on a runtime reset
  *   and when the socket reopens.
  * - `useSendTalkMessage(workflowId)`: `send_chat_message`. The message shows

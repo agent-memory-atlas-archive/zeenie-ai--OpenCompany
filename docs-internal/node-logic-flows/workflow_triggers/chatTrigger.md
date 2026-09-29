@@ -94,10 +94,15 @@ flowchart TD
 
 ## Side Effects
 
-- **Database writes**: none in the trigger plugin itself. (`send_chat_message`
-  keeps the message in the session's thread first, through
+- **Database writes**: none while it fires. (`send_chat_message` keeps the
+  message in the session's thread first, through
   `services/chat_thread.record_chat_message`, which stamps the live generation
-  and broadcasts `chat.updated`.)
+  and broadcasts `chat.updated`.) On a workflow Reset its
+  `reset_execution_state` clears the workflow's own thread (session = the
+  workflow id, never a custom `session_id` another workflow may share),
+  as `chatReply`'s does: the conversation ended with the generation. It
+  matters for a graph with a trigger and no reply yet, such as the one
+  Turn on Talk resets before its new reply node runs.
 - **Broadcasts**: the producer emits a CloudEvents `WorkflowEvent` via
   `dispatch.emit` (Temporal Signal fan-out + in-process WS broadcast). The
   `TriggerListenerWorkflow` emits firing-pulse status via

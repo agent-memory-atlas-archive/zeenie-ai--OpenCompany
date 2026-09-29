@@ -16,9 +16,18 @@ Talk, and the editor shows it in its chat pane.
   editor's chat reads one generation, so a row without it would never show
   there), then announce it.
 - ``clear_chat_thread``: delete the session's rows, every generation, then
-  announce it.
+  announce it when there were any.
 
-Every insert and clear is announced as ``chat.updated`` (CloudEvent type
+A workflow's thread lives as long as its generation and its workflow. A
+Reset (every restart, Home's Apply and Turn on Talk included) clears it
+through the chat nodes' ``reset_execution_state`` (``chatTrigger`` and
+``chatReply``), in the same Reset in which the Context node forgets the
+conversation, so no screen shows a conversation the agent no longer has.
+Deleting the workflow deletes its thread (a workflow-deleted hook the
+``chatReply`` plugin registers).
+
+Every insert, and every clear that removed rows, is announced as
+``chat.updated`` (CloudEvent type
 ``com.opencompany.chat.updated``, data ``{workflow_id, session_id, role}``,
 ``role`` None for a clear). Identity only: the frame reaches every socket,
 and clients refetch the thread through ``get_chat_messages``. Broadcast
@@ -102,10 +111,12 @@ async def record_chat_message(database: Any, session_id: str, role: str, message
 
 
 async def clear_chat_thread(database: Any, session_id: str) -> int:
-    """Delete the thread, every generation of it, and announce it. Returns
+    """Delete the thread, every generation of it, and announce it when there
+    was anything to delete (a Reset runs one clear per chat node). Returns
     the rows deleted."""
     count = await database.clear_chat_messages(session_id)
-    await _announce(session_id, None)
+    if count:
+        await _announce(session_id, None)
     return count
 
 

@@ -1,8 +1,9 @@
 """A workflow's chat thread (services/chat_thread.py) and the chat
 WebSocket handlers built on it: rows carry the live generation, every
-insert and clear is announced on ``chat.updated``, a message reaches a
-workflow only while a deployment would read it, and Home's history spans
-restarts with the generation on every row."""
+insert and every clear that removed rows is announced on ``chat.updated``,
+a message reaches a workflow only while a deployment would read it, the
+generation is on every row, a Reset clears the thread through the chat
+nodes' Reset hook, and deleting the workflow deletes it."""
 
 from __future__ import annotations
 
@@ -146,6 +147,42 @@ async def test_clearing_removes_every_generation_and_is_announced(database, fram
     assert updates(frames) == [{"workflow_id": "7", "session_id": "7", "role": None}]
 
 
+async def test_clearing_an_empty_thread_says_nothing(database, frames):
+    assert await chat_thread.clear_chat_thread(database, "7") == 0
+    assert frames == []
+
+
+@pytest.mark.parametrize("node", ["chatTrigger", "chatReply"])
+async def test_a_reset_ends_the_workflows_chat_session(database, frames, node):
+    from nodes.chat.chat_reply import ChatReplyNode
+    from nodes.trigger.chat_trigger import ChatTriggerNode
+
+    reset = {"chatTrigger": ChatTriggerNode, "chatReply": ChatReplyNode}[node].reset_execution_state
+    await database.add_chat_message("7", "user", "What's on today?", execution_id="gen-1")
+    await database.add_chat_message("7", "assistant", "Two calls.", execution_id="gen-1")
+    await database.add_chat_message("8", "user", "another workflow's thread", execution_id="gen-5")
+    args = {"node_id": f"7:{node}:1", "workflow_id": "7", "execution_id": "gen-1", "generation": 1, "graph": {}, "database": database}
+
+    assert await reset(**args) == {"reset": True, "cleared_chat_messages": 2}
+    assert await database.get_chat_messages("7") == []
+    assert [row["message"] for row in await database.get_chat_messages("8")] == ["another workflow's thread"]
+    # The next chat node in the same Reset finds nothing, and says nothing.
+    assert await reset(**args) == {"reset": False, "cleared_chat_messages": 0}
+    assert updates(frames) == [{"workflow_id": "7", "session_id": "7", "role": None}]
+
+
+async def test_deleting_the_workflow_deletes_its_thread(database, frames, monkeypatch):
+    import nodes.chat.chat_reply  # noqa: F401  (registers the hook on import)
+    from services.workflow_storage import hooks
+
+    assert chat_thread.clear_chat_thread in hooks._HOOKS
+    # Run it alone: other plugins' hooks have nothing to do with this test.
+    monkeypatch.setattr(hooks, "_HOOKS", [chat_thread.clear_chat_thread])
+    await database.add_chat_message("7", "user", "hello", execution_id="gen-1")
+    await hooks.run_workflow_deleted_hooks(database, "7")
+    assert await database.get_chat_messages("7") == []
+
+
 async def test_history_is_the_newest_rows_oldest_first_in_utc(database):
     for text in ("one", "two", "three"):
         await database.add_chat_message("7", "user", text, execution_id="gen-1")
@@ -211,7 +248,8 @@ async def test_history_is_one_generation_unless_all_are_asked_for(router):
     assert [m["message"] for m in newest["messages"]] == ["an answer", "after it"]
 
 
-async def test_after_a_reset_only_all_generations_shows_the_thread(router):
+async def test_after_a_reset_the_live_read_is_empty(router):
+    # A row a Reset left (its graph had no chat node to clear it).
     await router.database.add_chat_message("7", "user", "kept", execution_id="gen-1")
     await control(router.database, "7", "reset", generation=1)
     assert (await ws_router.handle_get_chat_messages({"session_id": "7"}, None))["messages"] == []

@@ -2,10 +2,12 @@
  * Talking to an employee, under their name: the conversation, and a message
  * box pinned to the bottom of the page.
  *
- * - The thread keeps every message across restarts, with a divider where
- *   the employee restarted (they start fresh from there). Replies,
- *   questions and routine reports all land in it, and `drafts` (the ones
- *   waiting for the owner's OK) follow the messages.
+ * - The thread is the conversation since the employee last started: a
+ *   restart clears it on the server, as the employee forgets it too. A
+ *   message left from before a Start (a test run in Dev mode) sits above a
+ *   divider saying they started fresh. Replies, questions and routine
+ *   reports all land in it, and `drafts` (the ones waiting for the owner's
+ *   OK) follow the messages.
  * - While the employee runs, a message goes to them at once, and
  *   "Working…" holds the box until they answer (useReplyWait); overlapping
  *   runs would each save over the other's conversation. While they are
@@ -46,23 +48,36 @@ const ThreadMarkdown = lazy(() => import('./ThreadMarkdown'));
 /** Lines up an answer's time under its text, past the avatar. */
 const PAST_AVATAR = 'pl-10.5';
 
+/*
+ * One bubble for both sides of the conversation: the same raised surface,
+ * border and type in every theme. Only the side (the owner's on the right,
+ * the employee's on the left beside their avatar) and the corner that
+ * points at the speaker differ. `chat-msg-user` / `chat-msg-bot` are the
+ * theme hooks the editor's chat pane carries too.
+ */
+const BUBBLE =
+  'chat-msg min-w-0 max-w-4/5 border border-border-default bg-bg-elevated px-3.5 py-2.5 text-md leading-normal break-words';
+const MINE = 'chat-msg-user rounded-l-card rounded-br-card rounded-tr-sm text-fg-default';
+const THEIRS = 'chat-msg-bot rounded-r-card rounded-bl-card rounded-tl-sm';
+
 function MessageRow({ message, employee, now }: { message: ThreadMessage; employee: EmployeeSummary; now: Date }) {
   const mine = message.role === 'user';
   const time = message.pending ? 'Sending…' : timeLabel(message.timestamp, now);
-  const text = 'm-0 min-w-0 text-md leading-normal break-words whitespace-pre-wrap text-fg-default';
   return (
     <div data-message={message.id} className={cn('flex flex-col gap-1', mine ? 'items-end' : 'items-start')}>
       {mine ? (
-        <p className={cn(text, 'max-w-4/5 rounded-card border border-border-default bg-bg-panel px-3.5 py-2.5')}>{message.message}</p>
+        <p className={cn('m-0 whitespace-pre-wrap', BUBBLE, MINE)}>{message.message}</p>
       ) : (
-        <div className="flex w-full gap-3">
+        <div className="flex w-full items-start gap-3">
           <Avatar name={employee.name} colorRole={employee.color_role} size="sm" />
-          <Suspense fallback={<p className={text}>{message.message}</p>}>
-            <ThreadMarkdown text={message.message} />
-          </Suspense>
+          <div className={cn(BUBBLE, THEIRS, 'text-fg-default')}>
+            <Suspense fallback={<p className="m-0 whitespace-pre-wrap">{message.message}</p>}>
+              <ThreadMarkdown text={message.message} />
+            </Suspense>
+          </div>
         </div>
       )}
-      {time && <span className={cn('font-mono text-2xs text-fg-faint', !mine && PAST_AVATAR)}>{time}</span>}
+      {time && <span className={cn('text-xs text-fg-muted', !mine && PAST_AVATAR)}>{time}</span>}
     </div>
   );
 }
@@ -235,9 +250,9 @@ function Conversation({ employee, control, drafts }: { employee: EmployeeSummary
             ),
           )}
           {waiting && (
-            <div className="flex items-center gap-3">
+            <div className="flex items-start gap-3">
               <Avatar name={name} colorRole={employee.color_role} size="sm" />
-              <span className="text-sm text-fg-muted">Working…</span>
+              <p className={cn('m-0', BUBBLE, THEIRS, 'text-fg-muted')}>Working…</p>
             </div>
           )}
           {unanswered && !waiting && <p className={cn('m-0 text-xs text-fg-muted', PAST_AVATAR)}>No answer from {name} yet.</p>}

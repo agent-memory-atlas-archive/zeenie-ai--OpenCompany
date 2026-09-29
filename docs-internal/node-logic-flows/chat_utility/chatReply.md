@@ -84,7 +84,18 @@ flowchart TD
   nothing was started since the last Reset). The editor's chat pane reads the
   latest generation only, so a row without the stamp would not show there
   while one is live; Home's Talk reads every generation and draws a restart
-  divider where the stamp changes.
+  divider where the stamp changes (a row left from before a Start).
+- **Reset** (`reset_execution_state`): clears the workflow's thread, every
+  generation, through `chat_thread.clear_chat_thread`. The conversation
+  ended with the generation (the Context node forgets it in the same Reset,
+  and every restart, Home's Apply and Turn on Talk included, is a Reset), so
+  neither Talk nor the editor's chat pane keeps showing it. Returns
+  `{reset, cleared_chat_messages}`; `reset` is false when there was nothing
+  to clear, as when `chatTrigger`'s identical hook ran first in the same
+  Reset.
+- **Workflow deleted**: the plugin registers `clear_chat_thread` as a
+  workflow-deleted hook (`services/workflow_storage/hooks.py`), so a deleted
+  workflow's thread goes with it.
 - **Error paths**: no `ctx.workflow_id` raises
   `NodeUserError("Reply in Chat posts to the workflow's chat: save the workflow first.")`
   (one WARN line, no traceback); a row the database did not save
@@ -96,7 +107,8 @@ flowchart TD
 
 - **Database writes**: one `chat_messages` row: `session_id` = the workflow id,
   `role` = `assistant`, `message` = the trimmed text, `execution_id` = the
-  live generation.
+  live generation. On a Reset or a workflow delete, every row of the
+  workflow's thread is deleted.
 - **Broadcasts**: `chat.updated` (CloudEvents `com.opencompany.chat.updated`,
   data `{workflow_id, session_id, role: "assistant"}`), sent directly through
   the status broadcaster, not `services.events.dispatch.emit`. Home's thread

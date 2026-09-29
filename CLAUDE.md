@@ -987,7 +987,7 @@ const [selectedConsoleId, setSelectedConsoleId] = useState<string>('');
 ```
 
 #### Chat Message Persistence
-Chat messages are persisted to SQLite database and survive server restarts. A workflow's session id is its workflow id (`"default"` with no workflow open), and Home shows the same thread as Talk on the employee's page. Every row is written through [`services/chat_thread.py`](./server/services/chat_thread.py) (`record_chat_message` / `clear_chat_thread`), which stamps the session's live generation and broadcasts the identity-only `chat.updated`; agents answer into the thread through the `chatReply` ("Reply in Chat") node.
+Chat messages are persisted to SQLite database and survive server restarts. A workflow's session id is its workflow id (`"default"` with no workflow open), and Home shows the same thread as Talk on the employee's page. Every row is written through [`services/chat_thread.py`](./server/services/chat_thread.py) (`record_chat_message` / `clear_chat_thread`), which stamps the session's live generation and broadcasts the identity-only `chat.updated`; agents answer into the thread through the `chatReply` ("Reply in Chat") node. The thread lives as long as the generation: a workflow Reset (every restart, Home's Apply and Turn on Talk included) clears it through the `chatTrigger` / `chatReply` `reset_execution_state` hook, in the same Reset in which the Context node forgets the conversation, and deleting the workflow deletes it (a workflow-deleted hook the `chatReply` plugin registers).
 
 **Database Model** (`server/models/database.py`):
 ```python
@@ -1005,7 +1005,7 @@ class ChatMessage(SQLModel, table=True):
 | Handler | Description |
 |---------|-------------|
 | `send_chat_message` | Save the message and dispatch it to the workflow's chatTriggers. A workflow session answers `delivery: "now"` (running / starting / resuming) or `"queued"` (paused / pausing, runs on Resume); in any other state `not_running`, saving nothing |
-| `get_chat_messages` | A session's messages, oldest first: `{id, role, message, timestamp, run_key}` (UTC-offset timestamps; `run_key` = the generation). The latest generation only (none after a Reset), unless `all_generations` (Home's thread spans restarts) |
+| `get_chat_messages` | A session's messages, oldest first: `{id, role, message, timestamp, run_key}` (UTC-offset timestamps; `run_key` = the generation). The latest generation only (none after a Reset), unless `all_generations` (Home's thread; a Reset clears the thread, so only a row from before a Start shows beside the live ones) |
 | `clear_chat_messages` | Clear all messages for session |
 | `save_chat_message` | Save one message with the given role |
 

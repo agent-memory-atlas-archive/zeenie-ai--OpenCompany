@@ -4,6 +4,11 @@ Event-based trigger that fires when the Console panel's chat tab
 sends a message. Filter narrows to ``session_id`` so two chatTrigger
 nodes with different session IDs receive independent streams.
 
+A Reset clears the workflow's chat thread (``reset_execution_state``), as
+``chatReply`` does: a workflow with a trigger and no reply yet (Turn on
+Talk resets on that graph before adding the reply) must not carry its old
+messages into the next generation.
+
 Replaces:
 - ``nodes/triggers.py:chatTrigger`` metadata-only registration.
 - ``event_waiter.build_chat_filter`` stays wired until the generic
@@ -65,6 +70,26 @@ class ChatTriggerNode(TriggerNode):
     @Operation("wait")
     async def wait(self, ctx: NodeContext, params: ChatTriggerParams) -> ChatTriggerOutput:
         raise NotImplementedError("Event triggers return via TriggerNode.execute, not the op body")
+
+    @classmethod
+    async def reset_execution_state(
+        cls,
+        *,
+        node_id: str,
+        workflow_id: str,
+        execution_id: str,
+        generation: int,
+        graph: Dict[str, Any],
+        database: Any,
+    ) -> Dict[str, Any]:
+        """A Reset clears the workflow's chat thread: the session ended with
+        the generation. Only the workflow's own thread (session = workflow
+        id), never a custom ``session_id`` another workflow may share."""
+        del node_id, execution_id, generation, graph
+        from services.chat_thread import clear_chat_thread
+
+        cleared = await clear_chat_thread(database, str(workflow_id))
+        return {"reset": bool(cleared), "cleared_chat_messages": cleared}
 
 
 # Wave 12 C1 rollout #1: opt this trigger into the TriggerListenerWorkflow

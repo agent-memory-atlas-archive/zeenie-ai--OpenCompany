@@ -38,8 +38,8 @@ export function PendingChangesNotice({ employee }: { employee: EmployeeSummary }
   return (
     <div className="flex flex-wrap items-center gap-3 rounded-card border border-border-default bg-bg-panel px-4 py-3">
       <p className="m-0 min-w-60 flex-1 text-sm text-fg-default">
-        {name} has new abilities for this conversation. Apply to make them part of all their work (restarts {name}; the
-        conversation continues after a divider).
+        {name} has new abilities for this conversation. Apply to make them part of all their work (restarts {name} and
+        clears this conversation).
         {drafts > 0 && ` ${restartDraftsWarning(name, drafts)}`}
       </p>
       <ActionButton intent="config" disabled={apply.isPending} onClick={onApply} className="h-9 rounded-row px-4">
