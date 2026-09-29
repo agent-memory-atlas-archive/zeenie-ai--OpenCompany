@@ -17,6 +17,10 @@ Talk, and the editor shows it in its chat pane.
   there), then announce it.
 - ``clear_chat_thread``: delete the session's rows, every generation, then
   announce it when there were any.
+- ``clear_chat_session``: the owner's Clear. The thread goes, and the
+  listeners registered with ``register_chat_cleared_listener`` forget what
+  it held: the Context plugin clears the workflow's conversations, so the
+  agent starts over with the chat.
 
 A workflow's thread lives as long as its generation and its workflow. A
 Reset (every restart, Home's Apply and Turn on Talk included) clears it
@@ -39,12 +43,19 @@ query that matches nothing on every message (the same reason as
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Awaitable, Callable, List, Optional
 
 from core.logging import get_logger
 from services.events.envelope import WorkflowEvent
 
 logger = get_logger(__name__)
+
+#: ``await listener(database=..., workflow_id=...)`` after the owner clears
+#: a workflow's chat. Plugins register (this module never imports
+#: ``nodes/``); a Reset and a workflow delete forget the conversation
+#: through their own paths.
+ChatClearedListener = Callable[..., Awaitable[None]]
+_CLEARED_LISTENERS: List[ChatClearedListener] = []
 
 #: The editor's chat when no workflow is open: not a workflow's thread.
 DEFAULT_SESSION = "default"
@@ -120,12 +131,45 @@ async def clear_chat_thread(database: Any, session_id: str) -> int:
     return count
 
 
+def register_chat_cleared_listener(listener: ChatClearedListener) -> None:
+    """Run ``await listener(database=..., workflow_id=...)`` after the owner
+    clears a workflow's chat. Registering the same listener twice is a
+    no-op."""
+    if listener not in _CLEARED_LISTENERS:
+        _CLEARED_LISTENERS.append(listener)
+
+
+async def clear_chat_session(database: Any, session_id: str) -> int:
+    """The owner's Clear: delete the thread, then let the listeners forget
+    what it held, so the agent starts over with the chat. Only a workflow's
+    session has listeners to tell (``"default"`` is no workflow's). A
+    failing listener is logged and never fails the clear. Returns the rows
+    deleted."""
+    count = await clear_chat_thread(database, session_id)
+    if session_id == DEFAULT_SESSION:
+        return count
+    for listener in list(_CLEARED_LISTENERS):
+        try:
+            await listener(database=database, workflow_id=session_id)
+        except Exception:
+            logger.warning(
+                "Chat-cleared listener failed",
+                listener=getattr(listener, "__qualname__", repr(listener)),
+                workflow_id=session_id,
+                exc_info=True,
+            )
+    return count
+
+
 __all__ = [
     "DEFAULT_SESSION",
     "WIRE_KEY",
+    "ChatClearedListener",
     "chat_execution_id",
     "chat_updated",
+    "clear_chat_session",
     "clear_chat_thread",
     "delivery_for",
     "record_chat_message",
+    "register_chat_cleared_listener",
 ]

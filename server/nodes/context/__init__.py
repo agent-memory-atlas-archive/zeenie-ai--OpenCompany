@@ -148,6 +148,7 @@ __all__ = [
 from services.agent_context.listeners import (  # noqa: E402
     register_conversation_listener,
 )
+from services.chat_thread import register_chat_cleared_listener  # noqa: E402
 from services.plugin.edge_walker import (  # noqa: E402
     register_agent_context_builder,
 )
@@ -155,7 +156,7 @@ from services.ws_handler_registry import register_ws_handlers  # noqa: E402
 
 from ._descriptor import build_agent_context_descriptor  # noqa: E402
 from ._events import on_conversation_saved  # noqa: E402
-from ._handlers import WS_HANDLERS  # noqa: E402
+from ._handlers import WS_HANDLERS, on_chat_cleared  # noqa: E402
 
 register_ws_handlers(WS_HANDLERS)
 # The framework walks `input-context` edges but knows nothing about this
@@ -165,3 +166,6 @@ register_agent_context_builder(build_agent_context_descriptor)
 # `context.updated` broadcast.  Registering here keeps the store free of any
 # knowledge that a UI exists.
 register_conversation_listener(on_conversation_saved)
+# The owner's chat Clear forgets the conversation too, so the agent starts
+# over with the chat (services/chat_thread.clear_chat_session).
+register_chat_cleared_listener(on_chat_cleared)

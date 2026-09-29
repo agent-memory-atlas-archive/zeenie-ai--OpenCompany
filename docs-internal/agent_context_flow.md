@@ -232,7 +232,14 @@ messages}`, where `messages` is the requested `agent_node_id`'s transcript,
 else the newest row's; `clear_agent_context` deletes rows and fences warm
 claude processes), and one CloudEvents broadcast (`context.updated`, fired from the
 registered save listener; payload is identity + count only — the panel
-refetches through the authorized handler). The node declares **no
+refetches through the authorized handler). Both ways of forgetting share
+`_handlers.forget_conversations` (delete, fence warm claude processes,
+announce). The plugin also registers `on_chat_cleared` with
+`services/chat_thread.register_chat_cleared_listener`: when the owner clears
+a workflow's chat (`clear_chat_messages` → `clear_chat_session`), every
+conversation of that workflow goes too, so the agent starts over with the
+chat. A Reset forgets them through the node's `reset_execution_state`, and
+clears the chat thread through the chat nodes' own Reset hook. The node declares **no
 parameters**; the connection is the whole configuration.
 
 The node is optional and user-owned. `normalize_workflow_graph` never

@@ -1006,7 +1006,7 @@ class ChatMessage(SQLModel, table=True):
 |---------|-------------|
 | `send_chat_message` | Save the message and dispatch it to the workflow's chatTriggers. A workflow session answers `delivery: "now"` (running / starting / resuming) or `"queued"` (paused / pausing, runs on Resume); in any other state `not_running`, saving nothing |
 | `get_chat_messages` | A session's messages, oldest first: `{id, role, message, timestamp, run_key}` (UTC-offset timestamps; `run_key` = the generation). The latest generation only (none after a Reset), unless `all_generations` (Home's thread; a Reset clears the thread, so only a row from before a Start shows beside the live ones) |
-| `clear_chat_messages` | Clear all messages for session |
+| `clear_chat_messages` | Clear a session's chat, every generation; for a workflow's session its agents forget the conversation too (`chat_thread.clear_chat_session` tells the listeners registered with `register_chat_cleared_listener`: the Context plugin clears the workflow's conversations) |
 | `save_chat_message` | Save one message with the given role |
 
 **Database Methods** (`server/core/database.py`):

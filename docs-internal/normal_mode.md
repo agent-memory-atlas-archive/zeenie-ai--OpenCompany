@@ -355,7 +355,10 @@ row goes through
 messages from `send_chat_message`, answers and reports from the
 [chatReply](./node-logic-flows/chat_utility/chatReply.md) ("Reply in Chat")
 node. Each row is stamped with the live generation, and each insert or clear
-is announced as `chat.updated`.
+is announced as `chat.updated`. Clearing the chat in the editor's chat pane
+(`clear_chat_messages`, `chat_thread.clear_chat_session`) deletes the thread
+and, through the Context plugin's chat-cleared listener, every conversation
+of the workflow, so the employee starts over with the chat.
 
 ### On the employee's page
 

@@ -172,31 +172,23 @@ async def handle_get_agent_context(
     }
 
 
-@ws_response
-async def handle_clear_agent_context(
-    data: Dict[str, Any],
-    websocket: WebSocket,
-) -> Dict[str, Any]:
-    """Delete stored conversations for one workflow's Context node.
-
-    Narrowable by ``generation`` and/or ``agent_node_id``; without either,
-    every conversation for the workflow is deleted. Warm claude
+async def forget_conversations(
+    database: Any,
+    *,
+    workflow_id: str,
+    announce_as: str,
+    generation: Optional[int] = None,
+    agent_node_id: Optional[str] = None,
+) -> int:
+    """Delete stored conversations, every one of the workflow's unless
+    narrowed by ``generation`` and/or ``agent_node_id``. Warm claude
     subprocesses holding a cleared conversation in memory are terminated so
-    the next turn cannot silently continue from wiped state.
-    """
-
-    workflow_id = str(data.get("workflow_id") or "")
-    context_node_id = str(data.get("context_node_id") or "")
-    await _authorize_context_node(
-        websocket=websocket,
-        workflow_id=workflow_id,
-        context_node_id=context_node_id,
-    )
-    generation = _optional_generation(data)
-    agent_node_id = str(data.get("agent_node_id") or "") or None
+    the next turn cannot silently continue from wiped state, and
+    ``context.updated`` (subject ``announce_as``) refreshes an open panel.
+    Returns the conversations deleted."""
 
     cleared = await clear_conversation(
-        _database(),
+        database,
         workflow_id=workflow_id,
         generation=generation,
         agent_node_id=agent_node_id,
@@ -217,11 +209,49 @@ async def handle_clear_agent_context(
         await dispatch_context_updated(
             workflow_id=workflow_id,
             generation=generation or 0,
-            agent_node_id=agent_node_id or context_node_id,
+            agent_node_id=announce_as,
             message_count=0,
         )
     except Exception as exc:
         logger.debug("[Context] clear broadcast failed: %s", exc)
+    return cleared
+
+
+async def on_chat_cleared(*, database: Any, workflow_id: str) -> None:
+    """The owner cleared the workflow's chat (services/chat_thread
+    ``clear_chat_session``): its agents forget the conversation too, so they
+    start over with the chat. Every conversation of the workflow, as a
+    Reset clears them."""
+
+    await forget_conversations(database, workflow_id=workflow_id, announce_as=workflow_id)
+
+
+@ws_response
+async def handle_clear_agent_context(
+    data: Dict[str, Any],
+    websocket: WebSocket,
+) -> Dict[str, Any]:
+    """Delete stored conversations for one workflow's Context node.
+
+    Narrowable by ``generation`` and/or ``agent_node_id``; without either,
+    every conversation for the workflow is deleted (``forget_conversations``).
+    """
+
+    workflow_id = str(data.get("workflow_id") or "")
+    context_node_id = str(data.get("context_node_id") or "")
+    await _authorize_context_node(
+        websocket=websocket,
+        workflow_id=workflow_id,
+        context_node_id=context_node_id,
+    )
+    agent_node_id = str(data.get("agent_node_id") or "") or None
+    cleared = await forget_conversations(
+        _database(),
+        workflow_id=workflow_id,
+        announce_as=agent_node_id or context_node_id,
+        generation=_optional_generation(data),
+        agent_node_id=agent_node_id,
+    )
     return {"success": True, "cleared": cleared}
 
 
@@ -234,6 +264,8 @@ WS_HANDLERS: Dict[str, WSHandler] = {
 
 __all__ = [
     "WS_HANDLERS",
+    "forget_conversations",
     "handle_clear_agent_context",
     "handle_get_agent_context",
+    "on_chat_cleared",
 ]

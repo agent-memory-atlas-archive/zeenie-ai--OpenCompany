@@ -397,6 +397,7 @@ const ConsolePanel: React.FC<ConsolePanelProps> = ({
             variant="outline"
             size="xs"
             onClick={handleClearChat}
+            title="Clear the chat, and what the agent remembers of it"
             className="border-destructive/40 text-destructive hover:bg-destructive/10"
           >
             Clear

@@ -1168,11 +1168,14 @@ async def handle_get_chat_messages(data: Dict[str, Any], websocket: WebSocket) -
 
 @ws_handler()
 async def handle_clear_chat_messages(data: Dict[str, Any], websocket: WebSocket) -> Dict[str, Any]:
-    """Clear all chat messages for a session."""
-    from services.chat_thread import clear_chat_thread
+    """Clear a session's chat, every generation of it. For a workflow's
+    session the agent forgets the conversation too
+    (``services.chat_thread.clear_chat_session``: the Context plugin clears
+    the workflow's conversations), so it starts over with the chat."""
+    from services.chat_thread import clear_chat_session
 
     session_id = data.get("session_id", "default")
-    count = await clear_chat_thread(container.database(), session_id)
+    count = await clear_chat_session(container.database(), session_id)
 
     return {"success": True, "message": f"Cleared {count} chat messages", "cleared_count": count}
 

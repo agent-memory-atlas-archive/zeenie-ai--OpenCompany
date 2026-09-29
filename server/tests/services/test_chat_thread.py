@@ -68,6 +68,8 @@ def router(monkeypatch, database, frames):
 
     monkeypatch.setattr(ws_router, "container", SimpleNamespace(database=lambda: database))
     monkeypatch.setattr(chat_events, "dispatch_chat_message_received", dispatch)
+    # The Clear's listeners are whatever a test registers, never the plugins'.
+    monkeypatch.setattr(chat_thread, "_CLEARED_LISTENERS", [])
     return SimpleNamespace(database=database, frames=frames, dispatched=dispatched)
 
 
@@ -254,6 +256,31 @@ async def test_after_a_reset_the_live_read_is_empty(router):
     await control(router.database, "7", "reset", generation=1)
     assert (await ws_router.handle_get_chat_messages({"session_id": "7"}, None))["messages"] == []
     assert len((await ws_router.handle_get_chat_messages({"session_id": "7", "all_generations": True}, None))["messages"]) == 1
+
+
+async def test_the_owners_clear_lets_the_agent_forget_too(router):
+    heard: list = []
+
+    async def forget(*, database, workflow_id):
+        heard.append((database, workflow_id))
+
+    async def broken(**_):
+        raise RuntimeError("a listener that fails")
+
+    chat_thread.register_chat_cleared_listener(broken)
+    chat_thread.register_chat_cleared_listener(forget)
+    chat_thread.register_chat_cleared_listener(forget)  # registering twice is a no-op
+    await router.database.add_chat_message("7", "user", "hello", execution_id="gen-1")
+
+    cleared = await ws_router.handle_clear_chat_messages({"session_id": "7"}, None)
+    assert cleared["cleared_count"] == 1
+    assert await router.database.get_chat_messages("7") == []
+    # A failing listener never fails the clear, nor stops the next one.
+    assert heard == [(router.database, "7")]
+
+    # The editor's "default" chat is no workflow's: nothing to forget.
+    await ws_router.handle_clear_chat_messages({"session_id": "default"}, None)
+    assert heard == [(router.database, "7")]
 
 
 async def test_save_and_clear_go_through_the_thread(router):

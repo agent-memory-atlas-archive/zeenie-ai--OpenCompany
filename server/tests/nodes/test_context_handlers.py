@@ -178,6 +178,48 @@ async def test_workflow_reset_clears_the_stored_conversations(
 
 
 @pytest.mark.asyncio
+async def test_clearing_the_chat_forgets_the_workflows_conversations(
+    handler_database, monkeypatch
+):
+    """The owner's chat Clear (services/chat_thread.clear_chat_session)
+    reaches the plugin's listener: every conversation of that workflow
+    goes, so the agent starts over with the chat; other workflows keep
+    theirs."""
+
+    from nodes.context import _handlers
+    from services import chat_thread
+    from services.agent_context import list_conversations
+
+    assert _handlers.on_chat_cleared in chat_thread._CLEARED_LISTENERS
+
+    database = handler_database
+    for workflow_id, generation in (("wf-1", 1), ("wf-1", 2), ("wf-2", 1)):
+        await save_conversation(
+            database,
+            workflow_id=workflow_id,
+            generation=generation,
+            agent_node_id="agent-a",
+            messages=[{"role": "user", "content": "what did I ask?"}],
+        )
+
+    broadcasts: list[dict] = []
+
+    async def capture(**kwargs):
+        broadcasts.append(kwargs)
+
+    monkeypatch.setattr(_handlers, "dispatch_context_updated", capture)
+
+    await _handlers.on_chat_cleared(database=database, workflow_id="wf-1")
+
+    assert await list_conversations(database, workflow_id="wf-1") == []
+    assert len(await list_conversations(database, workflow_id="wf-2")) == 1
+    # An open Context panel refreshes off the broadcast.
+    assert broadcasts == [
+        {"workflow_id": "wf-1", "generation": 0, "agent_node_id": "wf-1", "message_count": 0}
+    ]
+
+
+@pytest.mark.asyncio
 async def test_reset_without_an_admitted_generation_is_a_no_op(
     handler_database,
 ):
