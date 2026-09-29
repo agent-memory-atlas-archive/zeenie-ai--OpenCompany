@@ -45,6 +45,10 @@ server/nodejs/dist
 # The Electron shell is not part of the server image.
 desktop
 
+# Neither is the product film (a standalone Remotion package with its own
+# node_modules, rendered audio and video output).
+marketing
+
 # Terraform providers and state (state files carry secrets).
 **/.terraform
 **/*.tfstate*

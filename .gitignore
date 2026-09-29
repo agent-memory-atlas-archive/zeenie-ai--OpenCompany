@@ -16,6 +16,9 @@ test-temp*/
 # External design handoff bundle (reference-only; merged copy lives in docs-internal/design-system/)
 design_handoff_opencompany_home/
 
+# Product film (Remotion project, rendered video, generated audio). Local only.
+marketing/
+
 # npm-generated lock file. This project uses bun (canonical lock:
 # ``bun.lock``, tracked). Source checkouts are gated to bun
 # by ``scripts/preinstall.js``; ``package-lock.json`` only appears
