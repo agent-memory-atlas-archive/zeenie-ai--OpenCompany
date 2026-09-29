@@ -1,8 +1,9 @@
 /**
  * The Workspace dock: what it saves and how it reads that back, the orb
- * spike on opening, whose workspace it shows, the header's pill, the
- * placeholder tabs, the Canvas tab (no request without a Canvas, the board
- * with one), closing, and the header pill's dot.
+ * spike on opening, whose workspace it shows, the header's pill and main
+ * action (Pause lives here), the placeholder tabs, the Canvas tab (no
+ * request without a Canvas, the board with one), closing, and the header
+ * pill's dot.
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -11,7 +12,14 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactElement } from 'react';
 
-const actions = { isReady: true, sendRequest: vi.fn(), addEventListener: () => () => {} };
+const actions = {
+  isReady: true,
+  sendRequest: vi.fn(),
+  addEventListener: () => () => {},
+  pauseWorkflow: vi.fn(),
+  resumeWorkflow: vi.fn(),
+  startEmployee: vi.fn(),
+};
 
 vi.mock('@/contexts/WebSocketContext', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/contexts/WebSocketContext')>()),
@@ -58,7 +66,7 @@ function employee(patch: Record<string, unknown> = {}): EmployeeSummary {
   })!;
 }
 
-function renderWith(team: EmployeeSummary[], ui: ReactElement = <WorkspaceDock />) {
+function renderWith(team: EmployeeSummary[], ui: ReactElement = <WorkspaceDock onConnect={vi.fn()} />) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
   client.setQueryData(EMPLOYEES_QUERY_KEY, team);
   render(
@@ -146,11 +154,21 @@ describe('WorkspaceDock', () => {
     expect(screen.getByRole('button', { name: 'Restore size' })).toBeInTheDocument();
   });
 
-  it('shows the card’s pill when the employee is not working', () => {
+  it('shows their status and Resume when the employee is not working', () => {
     useHomeStore.setState({ workspaceOpen: true, workspaceTab: 'browser' });
     renderWith([employee({ status: 'paused' })]);
     expect(screen.getByText('Paused')).toBeInTheDocument();
     expect(screen.queryByText('Live')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Resume' })).toBeEnabled();
+  });
+
+  it('pauses the employee from the header', () => {
+    actions.pauseWorkflow.mockReturnValue(new Promise(() => {}));
+    useHomeStore.setState({ workspaceOpen: true, workspaceTab: 'browser' });
+    renderWith([employee({ control: normalizeWorkflowControlStatus({ generation: 1, state: 'running', revision: 4 }, 'w1') })]);
+    fireEvent.click(screen.getByRole('button', { name: 'Pause' }));
+    expect(actions.pauseWorkflow).toHaveBeenCalledWith('w1', 4);
+    expect(screen.getByRole('button', { name: 'Pausing…' })).toBeDisabled();
   });
 
   it('follows the employee last opened, else the first', () => {

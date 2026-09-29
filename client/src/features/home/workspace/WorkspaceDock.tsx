@@ -2,7 +2,9 @@
  * The Workspace (design handoff "Workspace panel"): a dock on the right of
  * Home showing what one employee is working on. Canvas shows the
  * employee's board; Browser attaches to their saved browser nodes. The
- * editor shares the same tabs and live browser surface.
+ * editor shares the same tabs and live browser surface. The header carries
+ * their main action (Pause, Resume, Start, or connect what they are
+ * missing), the place to pause them from Normal mode.
  *
  * At 1100px and wider the dock pushes the page aside; narrower, it lies
  * over the page with a shadow. The left edge drags from 360px to the
@@ -29,6 +31,8 @@ import { useEmployeesQuery } from '../data/employees';
 import { useLiveTask } from '../data/liveTask';
 import { presentEmployee } from '../data/presentation';
 import type { EmployeeSummary } from '../data/schemas';
+import { PrimaryActionButton } from '../employee/PrimaryActionButton';
+import { useEmployeeControl } from '../employee/useEmployeeControl';
 import { useHomeStore } from '../state/homeStore';
 import { Avatar, StatusPill } from '../ui/primitives';
 
@@ -85,6 +89,11 @@ function Identity({ employee }: { employee: EmployeeSummary }) {
       <StatusPill size="sm" tone={pill.tone} label={pill.label} />
     </>
   );
+}
+
+function DockAction({ employee, onConnect }: { employee: EmployeeSummary; onConnect: (providerId: string) => void }) {
+  const control = useEmployeeControl(employee, onConnect);
+  return <PrimaryActionButton control={control} className="h-7.5 px-3" />;
 }
 
 function CanvasTab({ employee }: { employee: EmployeeSummary }) {
@@ -146,7 +155,8 @@ function NoEmployee({ status }: { status: 'pending' | 'error' | 'success' }) {
   );
 }
 
-export function WorkspaceDock() {
+/** `onConnect`: opens an app's connect dialog, for a main action that connects one. */
+export function WorkspaceDock({ onConnect }: { onConnect: (providerId: string) => void }) {
   const open = useHomeStore((s) => s.workspaceOpen);
   const widthPx = useHomeStore((s) => s.workspaceWidth);
   const wide = useHomeStore((s) => s.workspaceWide);
@@ -227,7 +237,10 @@ export function WorkspaceDock() {
         >
           <header className="flex h-(--h-home-header) shrink-0 items-center gap-2.5 border-b border-border-default pr-2.5 pl-4">
             {employee ? (
-              <Identity employee={employee} />
+              <>
+                <Identity employee={employee} />
+                <DockAction employee={employee} onConnect={onConnect} />
+              </>
             ) : (
               <span className="min-w-0 flex-1 truncate text-base font-semibold text-fg-default">Workspace</span>
             )}

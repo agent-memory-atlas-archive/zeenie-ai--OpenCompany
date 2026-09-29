@@ -184,8 +184,8 @@ export function sameTrigger(a: HireTrigger, b: HireTrigger): boolean {
   );
 }
 
-/** "Every weekday at 09:00", in the words the employee's card uses for the
- *  same schedule (services/employees/summaries.py). `app` is the app's own
+/** "Every weekday at 09:00", in the words the employee's summary uses for
+ *  the same schedule (services/employees/summaries.py). `app` is the app's own
  *  name when it is known. */
 export function triggerSentence(trigger: HireTrigger, app: string | undefined = trigger.app): string {
   if (trigger.kind === 'manual') return 'When you message them';

@@ -2,7 +2,7 @@
  * Normal mode ("Home"): the owner-facing screen where AI employees are hired
  * and supervised (design_handoff_opencompany_home, "App shell (Normal
  * mode)"). The team sidebar on the left; on the right the header and the
- * current view, either hiring a new employee or one employee's card.
+ * current view, either hiring a new employee or one employee's page.
  *
  * The shell owns what spans views: the employee broadcasts that keep the
  * team current, the orb behind the content, the Workspace dock on the
@@ -16,6 +16,7 @@
 
 import { useLayoutEffect, useRef, useState } from 'react';
 import { animate } from '@/lib/motion';
+import { cn } from '@/lib/utils';
 import { useApprovalLifecycle } from './approvals/data';
 import { ConnectAIDialog } from './connectAI/ConnectAIDialog';
 import { useEmployeeLifecycle, useEmployeesQuery } from './data/employees';
@@ -46,7 +47,7 @@ function AsksFirstNote({ workflowId }: { workflowId: string }) {
   const employee = employees?.find((item) => item.workflow_id === workflowId);
   if (!employee) return null;
   return (
-    <p className="m-0 pt-4 text-center text-xs text-fg-muted">
+    <p className="m-0 pt-2 text-center text-xs text-fg-muted">
       {employee.asks_first
         ? `${employee.name} asks before sending anything on your behalf.`
         : `${employee.name} doesn’t ask before sending anything on your behalf.`}
@@ -96,7 +97,13 @@ export default function HomeShell() {
           onScroll={(event) => setScrolled(event.currentTarget.scrollTop > HEADER_BORDER_AFTER_PX)}
           className="relative z-10 flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto"
         >
-          <div className="mx-auto flex w-full max-w-(--w-home-content) flex-1 flex-col items-center px-6 pt-2 pb-10">
+          {/* An employee's page ends at its pinned message box and one line under it. */}
+          <div
+            className={cn(
+              'mx-auto flex w-full max-w-(--w-home-content) flex-1 flex-col items-center px-6 pt-2',
+              view.kind === 'employee' ? 'pb-3' : 'pb-10',
+            )}
+          >
             <div ref={viewRef} key={viewKey} className="flex w-full flex-1 flex-col items-center">
               {view.kind === 'employee' ? (
                 <EmployeeView workflowId={view.workflowId} onConnect={openConnect} />
@@ -108,7 +115,7 @@ export default function HomeShell() {
           </div>
         </div>
       </main>
-      <WorkspaceDock />
+      <WorkspaceDock onConnect={openConnect} />
       <HomeSettings onConnect={openConnect} />
       <ConnectDialog providerId={connectId} onClose={() => setConnectId(null)} />
       <ConnectAIDialog />

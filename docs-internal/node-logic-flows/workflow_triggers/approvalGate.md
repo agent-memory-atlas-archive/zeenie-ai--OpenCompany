@@ -13,7 +13,7 @@
 Holds a draft until the owner sends or discards it. A Normal-mode employee
 with "Ask me before sending anything" on answers through
 `agent -> approvalGate -> reply`: the gate records the agent's draft (who it
-goes to, what it says), shows it on the employee's card in Home, and waits.
+goes to, what it says), shows it on the employee's page in Home, and waits.
 Send lets the draft, or the owner's edit of it, through to the reply node;
 Discard, expiry or a Reset lets nothing through. Hire builds this wiring
 (`services/employees/builder.py`); the node is also usable by hand in the
@@ -115,7 +115,7 @@ flowchart TD
 - **Broadcasts**: `approval_lifecycle` (CloudEvents type
   `com.opencompany.approval.{requested|decided|expired|cancelled}`, subject =
   approval id). Identity only, never the message body or the recipient; the
-  card refetches through `list_approvals`. Node status `waiting` while it waits.
+  page refetches through `list_approvals`. Node status `waiting` while it waits.
 - **External API calls**: none.
 - **File I/O**: none.
 - **Subprocess**: none.

@@ -3,7 +3,7 @@
  * behind a left nav, in the shared Modal with its spring entrance. One
  * `PAGES` list drives both the nav and the panels. The nav's search keeps
  * the pages whose label or keywords match, and drops a group with none.
- * Connect dialogs open on top from Connectors (and from the employee card's
+ * Connect dialogs open on top from Connectors (and from an employee's
  * "Connect {App}"); HomeShell owns them.
  */
 

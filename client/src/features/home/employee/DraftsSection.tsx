@@ -1,5 +1,5 @@
 /**
- * "Waiting for you" on the employee card: every draft the employee holds
+ * "Waiting for you" on the employee's page: every draft the employee holds
  * for approval, as the message will go out, with Discard, Edit and Send.
  *
  * Send delivers the draft (or the edited text) through the channel it
@@ -97,7 +97,7 @@ export function DraftsSection({ workflowId, employeeName, paused }: { workflowId
   const { data: approvals } = useApprovalsQuery(workflowId);
   if (!approvals || approvals.length === 0) return null;
   return (
-    <section aria-label="Waiting for you" className="flex flex-col gap-3 rounded-card border border-status-waiting-border bg-status-waiting-fill p-4">
+    <section aria-label="Waiting for you" className="flex w-full flex-col gap-3 rounded-card border border-status-waiting-border bg-status-waiting-fill p-4">
       <MicroLabel className="text-status-waiting-ink">Waiting for you</MicroLabel>
       <div className="flex flex-col gap-5">
         {approvals.map((approval) => (

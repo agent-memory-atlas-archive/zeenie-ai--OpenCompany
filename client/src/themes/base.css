@@ -177,7 +177,7 @@
   --h-composer-max: 200px;   /* the job box grows with its text up to this */
   --w-employee-card: 620px;
   --size-orb-hire: min(230px, 26vh);
-  --size-orb-employee: min(150px, 20vh);
+  --size-orb-employee: min(96px, 14vh);  /* small: the conversation has the page */
   --w-settings: 1040px;
   --h-settings: 760px;
   --w-settings-nav: 224px;

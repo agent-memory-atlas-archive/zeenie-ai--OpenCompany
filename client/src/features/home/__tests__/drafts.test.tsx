@@ -1,5 +1,5 @@
 /**
- * Drafts on the employee card: Send and Discard take the draft away at once
+ * Drafts on the employee's page: Send and Discard take the draft away at once
  * and bring it back if the server refuses, an edit must fit the channel,
  * each click carries its own decision key, and a new draft says so.
  */

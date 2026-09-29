@@ -4,7 +4,7 @@ Normal mode is the landing screen for owners who are not technical. They
 describe a job in plain words, an LLM on the server drafts a setup screen for
 a new AI employee, they adjust it and press **Hire**, and the server builds,
 saves and starts a workflow that does the job. Each employee appears in a
-sidebar with a live status card, and the owner talks to them on their page
+sidebar with a live status, and the owner talks to them on their page
 (Talk), where they can also be asked to take on new tools and skills. The
 workflow editor is **Dev mode**, one switch away.
 
@@ -65,10 +65,10 @@ is the reference.
 | Folder | Contents |
 |---|---|
 | `HomeShell.tsx` | Sidebar, header, the current view (hire or one employee), the Workspace dock, Settings, the connect dialog, the guided Connect an AI model dialog, the orb's stage, and under an employee's page a line saying whether they ask first |
-| `sidebar/`, `header/` | The team list, New employee, the profile row; the view title, the Workspace pill, mode toggle and theme button |
+| `sidebar/`, `header/` | The team list, New employee, the profile row; the view title, the Workspace pill, the mode toggle (on an employee's page, Dev opens their workflow) and the theme button |
 | `hire/` | The hero, the composer, the template chips, the hire notice (`HireNotice.tsx`), and the starter bundles (`starters.json`), which the chips and Settings > Plugins both read |
 | `genui/` | The setup draft under the composer, and the hire itself, from a setup or a starter (below) |
-| `employee/` | One employee's page: the card (status, the current task, apps, "done today", Start / Pause / Resume, Watch live, the drafts waiting for the owner, and a More menu with Open in Dev mode), then Talk (below). The card and the message box share one main action (`useEmployeeControl`, `PrimaryActionButton`) |
+| `employee/` | One employee's page, which is the conversation with them: only their name under a small orb, then Talk (below). What to act on shows in the conversation only while there is something to do: the drafts waiting for the owner after the messages, and above the message box their main action while they can't read messages (Resume, Start, or connect what is missing; `useEmployeeControl`, `PrimaryActionButton`) or Help in browser while they wait there. It never says why they stopped. Pausing them, and watching them work, is the Workspace's: the header's Workspace pill opens it on the employee on screen, and its header carries the same main action |
 | `connectAI/` | The guided Connect an AI model dialog (below) |
 | `workspace/` | The Workspace dock (below), its header pill, and its Canvas tab, which loads in its own chunk |
 | `settings/` | The Settings pages (Profile, Billing, Skills, Connectors, Plugins), the shared catalog page the last three build on, and `ConnectDialog` (the editor's credential panel for one provider, in its compact variant) |
@@ -82,9 +82,9 @@ Status comes from the server: an employee summary is `working`, `ready`,
 `paused` or `attention` (an automatic pause, see below), and a pending draft
 shows as "Needs you". So does a browser waiting for the owner: when an agent
 calls `request_user`, the summary's `browser_request` (`{node_id, reason,
-since}`, never the agent's message, since summaries reach every socket) takes
-over the task line, and the card's Watch live button becomes Help in browser,
-which opens the Workspace on its Browser tab. The Browser plugin publishes
+since}`, never the agent's message, since summaries reach every socket) is
+said above the message box on their page, beside Help in browser, which opens
+the Workspace on its Browser tab. The Browser plugin publishes
 that state through `services/employees/node_signals.py` and re-sends the
 summary when it changes. Motion goes through [lib/motion.ts](../client/src/lib/motion.ts),
 which reads the `--dur-*` / `--ease-*` tokens, runs at 1 ms under reduced
@@ -101,8 +101,10 @@ first time it runs). [orb/orb.ts](../client/src/features/home/orb/orb.ts) holds
 what the engine reads each frame (the slot to fill, an energy target, a spike)
 and its lifecycle: leaving Home keeps the renderer, the app shell disposes it.
 `OrbStage` is the canvas host below the header; each view's `OrbSlot` reserves
-the square the orb glides into. The composer sets the energy target (focused,
-holding text, a setup being written). These spike it: a hire, a theme or mode
+the square the orb glides into (`--size-orb-hire`, `--size-orb-employee`:
+large on the hire view, small on an employee's page, where the conversation
+needs the room). The composer sets the energy target (focused, holding text,
+a setup being written). These spike it: a hire, a theme or mode
 switch, a connect, a task change, opening Settings or the Workspace, a setup
 arriving or failing, and saving the profile (`SPIKE` in orb.ts). In dark the orb keeps the
 logo's colours with white particles and packets; in light it is glossy
@@ -116,13 +118,15 @@ after a lost WebGL context, the slot shows the static mark.
 A dock on the right of Home ([workspace/WorkspaceDock.tsx](../client/src/features/home/workspace/WorkspaceDock.tsx))
 that shows what one employee is working on. The header's Workspace pill
 opens and closes it, and carries a blinking dot while it is closed and
-someone is working. Watch live on an employee's card opens it on that
-employee. It shows the employee last opened or watched, else the first on
-the team.
+someone is working. It shows the employee last opened (their page, or their
+Help in browser), else the first on the team.
 
-- **Header**: the avatar, "{Name}’s workspace", the live task line
-  (`useLiveTask`, else the summary's task), and a pill: Live while the
-  employee works, otherwise the card's own pill. Expand and Close.
+- **Header**: the avatar, "{Name}’s workspace", the live task line when
+  there is one (`useLiveTask`, else the summary's task), and a pill: Live
+  while the employee works, otherwise their status (Ready, Paused, Needs
+  attention, Needs you). Then their main action (Pause, Resume, Start, or
+  connect what is missing), the one place to pause them in Normal mode, and
+  Expand and Close.
 - **Canvas**: the board named by the summary's `canvas_node_id`, drawn by
   the editor's Canvas renderer (`CanvasContent`, see [Canvas Node](./canvas_node.md)).
   It loads in its own chunk, which keeps the board's markdown, code and
@@ -134,8 +138,9 @@ the team.
   summary. Multiple nodes get a selector. Running sessions appear automatically;
   Start browser opens an idle session. The view supports navigation, tabs,
   Take control / Hand back, and browser dialogs. Frames use `/ws/browser`,
-  not a URL iframe. The card's Help in browser opens the Workspace on this
-  tab while the agent waits for the owner. See
+  not a URL iframe. Help in browser, above the message box on the
+  employee's page while the agent waits for the owner, opens the Workspace
+  on this tab. See
   [Browser workspace](./browser_workspace.md).
 - **Android**: a shared panel explains that live mirroring is not yet available.
   Dev mode uses the same three workspace tabs and browser viewer.
@@ -214,8 +219,8 @@ as the Hire button's `trigger`, else a new message in the app the routine's
 first "When" step names, else the owner messaging them, snapped to what the
 server builds: a known kind, a frequency, a time from `trigger.times` (the
 builder's `SCHEDULE_TIMES`; `test_genui_catalog_sync.py` holds them equal), and
-a weekday or day of the month. It reads as one sentence in the card's words
-("Every weekday at 08:00"). Edit offers the owner messaging them, a schedule,
+a weekday or day of the month. It reads as one sentence ("Every weekday at
+08:00"). Edit offers the owner messaging them, a schedule,
 or a new message in any app whose `can_trigger` is true; a change rewrites the
 routine's "When" step, and the hire payload reads `/trigger` before the
 button's params. `render.tsx` labels the routine "Their routine" and its steps
@@ -301,7 +306,7 @@ and the agent it talks to the owner through, `node_roles` `agent` and
 `talk_agent`) onto a usable model, and calls `start_saved_workflow`, the same
 start path the editor uses. One that stopped after a problem is reset first
 (`reset_if_failed`); the reset moves its control revision on, so the revision
-the card sent is checked here instead. Pause and Resume are the editor's
+the page sent is checked here instead. Pause and Resume are the editor's
 `pause_workflow` / `resume_workflow`.
 
 Automatic pauses now record why: `WorkflowControlExecution.pause_reason`
@@ -336,7 +341,7 @@ catalogue. Picking one opens that provider's own panel, compact, with a link
 to its key page, and the dialog closes once the provider connects; "See all
 AI models" opens Settings > Connectors on AI. `homeStore.openConnectAI()`
 opens it when a setup answers `no_ai_provider`, after a hire that answers
-`needs_ai`, from the card's Connect an AI model, and when Start is refused
+`needs_ai`, from the page's Connect an AI model, and when Start is refused
 with `needs_ai`. The key-page links live in `aiProviderLinks.ts`, not in the
 credential catalogue.
 
@@ -355,7 +360,7 @@ is announced as `chat.updated`.
 ### On the employee's page
 
 [employee/EmployeeTalk.tsx](../client/src/features/home/employee/EmployeeTalk.tsx)
-sits under the card: the thread, then a message box pinned to the bottom of
+sits under the name: the thread, then a message box pinned to the bottom of
 the page (`HomeShell`'s scroll area is a column the view fills). Its queries
 and mutations are in [data/talk.ts](../client/src/features/home/data/talk.ts).
 
@@ -364,9 +369,10 @@ and mutations are in [data/talk.ts](../client/src/features/home/data/talk.ts).
   `run_key` (its generation) differs from the one before, a divider reads
   "{Name} restarted — they start fresh from here". The owner's messages sit on
   the right; answers carry the avatar and render as markdown (`ThreadMarkdown`,
-  in its own chunk). An empty thread offers suggestion chips that fill the box.
-  The list is an `aria-live` log. It refetches on `chat.updated`, after a
-  runtime reset, and when the socket reopens.
+  in its own chunk). An empty thread is just the box. The list is an
+  `aria-live` log. It refetches on `chat.updated`, after a runtime reset,
+  and when the socket reopens. The drafts waiting for the owner's OK follow
+  the messages (`EmployeeTalk`'s `drafts`).
 - **The box** follows the control state the way `send_chat_message` does
   (`talkMode` in `presentation.ts`):
   - *send* (running, starting, resuming): a message shows at once
@@ -380,8 +386,11 @@ and mutations are in [data/talk.ts](../client/src/features/home/data/talk.ts).
   - *queue* (paused, pausing): one message waits for Resume ("Your message is
     waiting…"), and the box holds until the employee runs again.
   - *start* (never started, ready, resetting, failed): no box; a line says
-    they can't read messages, beside the card's main action (Start, or what
-    they are missing).
+    they can't read messages, beside their main action (Start, or what they
+    are missing), which the Workspace header offers too.
+  - While the agent waits for the owner in the browser, the server's line
+    for it ("Needs you to sign in to a site in the browser") sits above the
+    box beside Help in browser.
   - A refused message leaves the thread and its text goes back in the box;
     `not_running` (the state moved meanwhile) says "{Name} isn't running" and
     refetches the team.
@@ -447,7 +456,9 @@ trigger and an `aiAgent` / `chatAgent` a talk agent can copy; `unsupported`
 otherwise (a chat trigger that feeds no agent counts here). While a
 generation is live the summary reads the running snapshot, whose node ids are
 the ones that report status; otherwise the saved graph. `talk.agent_node_id`
-is the agent that answers, and it joins `watch_node_ids`.
+is the agent that answers. It stays out of `watch_node_ids`, and `useLiveTask`
+skips it: while it works, the conversation shows "Thinking…", and the
+Workspace's task line stays on their other work.
 
 ### Turn on Talk and Apply
 
@@ -523,7 +534,7 @@ What goes live when:
 ## Asking before sending
 
 With the rule on, a reply waits in an `approvalGate` until the owner decides
-on the employee's card. The gate stores the draft in `approval_requests`,
+on the employee's page. The gate stores the draft in `approval_requests`,
 wakes the moment it is decided, survives restarts (its idempotency key finds
 the same row on every attempt), expires after `timeout_hours`, and fails
 closed: nothing is sent unless it was approved, and the recipient always comes
@@ -627,7 +638,7 @@ WebSocket requests (snake_case; failures come back as `success: false` with an
 
 | Type | Payload | Response |
 |---|---|---|
-| `list_employees` | `{}` | `{employees}`; each summary's `canvas_node_id` is its Canvas board: the one it was hired with, else the graph's first Canvas node, else null. `browser_request` is a browser waiting for the owner (`{node_id, reason, since}`), else null. `talk` is `{state: "on" \| "off" \| "unsupported", agent_node_id}` (the agent that answers the owner, which also joins `watch_node_ids`). `asks_first` is the hire's "ask me first" rule (built in Dev mode: whether it has an approval gate). `pending_changes` is true when the saved graph's structure differs from the live generation's snapshot |
+| `list_employees` | `{}` | `{employees}`; each summary's `canvas_node_id` is its Canvas board: the one it was hired with, else the graph's first Canvas node, else null. `browser_request` is a browser waiting for the owner (`{node_id, reason, since}`), else null. `talk` is `{state: "on" \| "off" \| "unsupported", agent_node_id}` (the agent that answers the owner; not in `watch_node_ids`). `task` is `{label, text}`, or null when the page already says it (a running employee with Talk on whose only work is the owner's messages). `asks_first` is the hire's "ask me first" rule (built in Dev mode: whether it has an approval gate). `pending_changes` is true when the saved graph's structure differs from the live generation's snapshot |
 | `get_employee` | `{workflow_id}` | the summary plus `description`, `job`, `plan`, `rules`, `choices`, `trigger_text`, `last_run`, `latest_report` |
 | `get_employee_usage` | `{}` | `{tasks_this_month}` (successful runs since the 1st, owner's timezone, whole team) |
 | `generate_employee_setup` | `{job, refine?, history?, draft_token}` | `{draft_token, reply, provider, model, usage, retried, finish_reason, apps}`; `apps` maps each app the reply mentions to its AppRef plus `can_trigger` |

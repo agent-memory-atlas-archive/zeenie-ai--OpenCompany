@@ -69,8 +69,8 @@ message. Elsewhere only identity and the reason travel, because broadcasts
 and employee summaries reach every connected socket:
 
 - **Home:** the employee summary's `browser_request` (`{node_id, reason,
-  since}`) turns the pill to Needs you, the server's task line names the
-  reason, and Watch live becomes Help in browser, which opens the workspace on
+  since}`) turns the employee's status to Needs you, and their page says why
+  above the message box, beside Help in browser, which opens the workspace on
   its Browser tab. The live task overlay stands back meanwhile, since the
   agent's node is still executing while it waits.
 - **Dev:** a `browser_updated` broadcast for the open workflow in

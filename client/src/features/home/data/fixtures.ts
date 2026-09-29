@@ -1,7 +1,7 @@
 /**
  * Design QA only: `?fixture=employees` in a dev build fills the team with
  * the handoff's three sample employees instead of asking the server, so
- * the sidebar and the employee card can be checked against the prototype
+ * the sidebar and the employee page can be checked against the prototype
  * with no workflows set up. Production builds drop this module (the only
  * import sits behind `import.meta.env.DEV`).
  *

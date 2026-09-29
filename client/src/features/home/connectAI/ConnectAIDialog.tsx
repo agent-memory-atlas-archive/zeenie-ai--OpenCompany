@@ -9,7 +9,8 @@
  * this computer, another company) is in Settings > Connectors > AI.
  *
  * Opened through homeStore's openConnectAI: when a setup finds no AI model,
- * after a hire that cannot start without one, and from the employee card.
+ * after a hire that cannot start without one, and from an employee's main
+ * action (on their page, or in the Workspace header).
  */
 
 import { ArrowLeft, Check, ExternalLink, ShieldCheck } from 'lucide-react';

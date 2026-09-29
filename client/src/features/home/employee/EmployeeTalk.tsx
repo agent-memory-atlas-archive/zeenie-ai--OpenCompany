@@ -1,23 +1,26 @@
 /**
- * Talking to an employee, under their card: the conversation, and a message
+ * Talking to an employee, under their name: the conversation, and a message
  * box pinned to the bottom of the page.
  *
  * - The thread keeps every message across restarts, with a divider where
  *   the employee restarted (they start fresh from there). Replies,
- *   questions and routine reports all land in it.
+ *   questions and routine reports all land in it, and `drafts` (the ones
+ *   waiting for the owner's OK) follow the messages.
  * - While the employee runs, a message goes to them at once, and
  *   "Thinking…" holds the box until they answer (useReplyWait); overlapping
  *   runs would each save over the other's conversation. While they are
  *   paused, one message waits for Resume and then the box holds. Otherwise
  *   the box gives way to their main action (Start, or what they are
- *   missing).
+ *   missing). While they wait for the owner in the browser, a line above
+ *   the box says so beside Help in browser.
  * - Without a talk line, TurnOnTalk offers to add one; an employee whose
  *   setup cannot answer gets a note.
  */
 
-import { ArrowUp } from 'lucide-react';
-import { Suspense, lazy, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { ArrowUp, Monitor } from 'lucide-react';
+import { Suspense, lazy, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import { ActionButton } from '@/components/ui/action-button';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
@@ -28,6 +31,7 @@ import { talkMode, talkNoticeText } from '../data/presentation';
 import type { EmployeeSummary } from '../data/schemas';
 import { threadRows, timeLabel, useReplyWait, useSendTalkMessage, useTalkThread, type ThreadMessage } from '../data/talk';
 import { isSendKey } from '../hire/composerKeys';
+import { useHomeStore } from '../state/homeStore';
 import { pillToast } from '../ui/pillToast';
 import { Avatar } from '../ui/primitives';
 import { useAutoGrow } from '../ui/useAutoGrow';
@@ -116,7 +120,29 @@ function TalkBox({
   );
 }
 
-function Conversation({ employee, control }: { employee: EmployeeSummary; control: EmployeeControl }) {
+/** The agent is waiting for the owner in the browser (it called `request_user`). */
+function BrowserNotice({ employee }: { employee: EmployeeSummary }) {
+  const openWorkspace = useHomeStore((s) => s.openWorkspace);
+  const setWorkspaceTab = useHomeStore((s) => s.setWorkspaceTab);
+  return (
+    <div className="flex flex-wrap items-center gap-3">
+      <p className="m-0 min-w-50 flex-1 text-sm text-fg-muted">{employee.task?.text || `${employee.name} needs you in the browser.`}</p>
+      <ActionButton
+        intent="tools"
+        onClick={() => {
+          openWorkspace(employee.workflow_id);
+          setWorkspaceTab('browser');
+        }}
+        className="h-9 gap-2 rounded-row px-3.5"
+      >
+        <Monitor aria-hidden className="size-3.5" />
+        Help in browser
+      </ActionButton>
+    </div>
+  );
+}
+
+function Conversation({ employee, control, drafts }: { employee: EmployeeSummary; control: EmployeeControl; drafts?: ReactNode }) {
   const { workflow_id: workflowId, name } = employee;
   const queryClient = useQueryClient();
   const thread = useTalkThread(workflowId);
@@ -137,7 +163,7 @@ function Conversation({ employee, control }: { employee: EmployeeSummary; contro
   }, [queued, mode, begin]);
 
   // Keep the newest message in view as the conversation grows. Opening the
-  // page leaves the card in view.
+  // page leaves its top (the name) in view.
   const lastId = messages?.at(-1)?.id ?? null;
   const shownLast = useRef<string | null | undefined>(undefined);
   useLayoutEffect(() => {
@@ -198,25 +224,29 @@ function Conversation({ employee, control }: { employee: EmployeeSummary; contro
           </div>
         )
       )}
-      {/* A log: screen readers announce new messages and "Thinking…". */}
-      <div role="log" aria-live="polite" aria-label={`Conversation with ${name}`} className="flex flex-col gap-4">
-        {rows.map((row) =>
-          row.kind === 'restart' ? (
-            <RestartDivider key={row.key} name={name} />
-          ) : (
-            <MessageRow key={row.message.id} message={row.message} employee={employee} now={now} />
-          ),
-        )}
-        {waiting && (
-          <div className="flex items-center gap-3">
-            <Avatar name={name} colorRole={employee.color_role} size="sm" />
-            <span className="text-sm text-fg-muted">Thinking…</span>
-          </div>
-        )}
-        {unanswered && !waiting && <p className={cn('m-0 text-xs text-fg-muted', PAST_AVATAR)}>No answer from {name} yet.</p>}
+      <div className="flex flex-col gap-4">
+        {/* A log: screen readers announce new messages and "Thinking…". */}
+        <div role="log" aria-live="polite" aria-label={`Conversation with ${name}`} className="flex flex-col gap-4">
+          {rows.map((row) =>
+            row.kind === 'restart' ? (
+              <RestartDivider key={row.key} name={name} />
+            ) : (
+              <MessageRow key={row.message.id} message={row.message} employee={employee} now={now} />
+            ),
+          )}
+          {waiting && (
+            <div className="flex items-center gap-3">
+              <Avatar name={name} colorRole={employee.color_role} size="sm" />
+              <span className="text-sm text-fg-muted">Thinking…</span>
+            </div>
+          )}
+          {unanswered && !waiting && <p className={cn('m-0 text-xs text-fg-muted', PAST_AVATAR)}>No answer from {name} yet.</p>}
+        </div>
+        {drafts}
       </div>
       <div className="sticky bottom-0 z-10 mt-auto flex flex-col gap-2.5 bg-bg-app pt-4 pb-3">
         {employee.pending_changes && <PendingChangesNotice employee={employee} />}
+        {employee.browser_request && <BrowserNotice employee={employee} />}
         {notice && (
           <div className="flex flex-wrap items-center gap-3">
             <p className="m-0 min-w-50 flex-1 text-sm text-fg-muted">{notice}</p>
@@ -230,16 +260,29 @@ function Conversation({ employee, control }: { employee: EmployeeSummary; contro
   );
 }
 
-export function EmployeeTalk({ employee, control }: { employee: EmployeeSummary; control: EmployeeControl }) {
-  if (employee.talk.state === 'off') return <TurnOnTalk employee={employee} />;
-  if (employee.talk.state === 'unsupported') {
-    return (
-      <p className="m-0 w-full rounded-card border border-border-default bg-bg-panel px-4 py-3 text-center text-sm text-fg-muted">
-        You can’t message {employee.name} here. Their setup has no way to answer you.
-      </p>
-    );
-  }
-  return <Conversation employee={employee} control={control} />;
+export function EmployeeTalk({
+  employee,
+  control,
+  drafts,
+}: {
+  employee: EmployeeSummary;
+  control: EmployeeControl;
+  /** The drafts waiting for the owner, shown after the messages. */
+  drafts?: ReactNode;
+}) {
+  if (employee.talk.state === 'on') return <Conversation employee={employee} control={control} drafts={drafts} />;
+  return (
+    <div className="flex w-full flex-col gap-4">
+      {drafts}
+      {employee.talk.state === 'off' ? (
+        <TurnOnTalk employee={employee} />
+      ) : (
+        <p className="m-0 w-full rounded-card border border-border-default bg-bg-panel px-4 py-3 text-center text-sm text-fg-muted">
+          You can’t message {employee.name} here. Their setup has no way to answer you.
+        </p>
+      )}
+    </div>
+  );
 }
 
 export default EmployeeTalk;

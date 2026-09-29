@@ -1,7 +1,7 @@
 /**
  * An employee's main action (Pause, Resume, Start, connect what they are
- * missing, or open them in Dev mode), shared by the card and the message
- * box, which offers it while the employee cannot read messages.
+ * missing, or open them in Dev mode): the Workspace header offers it, and
+ * their page's message box while they cannot read messages.
  *
  * Start / Pause / Resume send the summary's control revision. After one
  * returns, the label stays "Pausing…" until the summary has caught up with
@@ -10,13 +10,12 @@
  */
 
 import { useQueryClient } from '@tanstack/react-query';
-import { useEffect, useState, type RefObject } from 'react';
+import { useEffect, useState } from 'react';
 import {
   mergeWorkflowControlStatus,
   useWebSocketActions,
   type WorkflowControlStatus,
 } from '@/contexts/WebSocketContext';
-import { animate } from '@/lib/motion';
 import { useWorkflowControlPending } from '@/stores/workflowControlStore';
 import { enterDev } from '../../../app/useShellActions';
 import { invalidateEmployees } from '../data/employees';
@@ -50,12 +49,7 @@ export interface EmployeeControl {
   act: () => void;
 }
 
-/** `pressRef`: the element that bounces when Start, Pause or Resume is pressed. */
-export function useEmployeeControl(
-  employee: EmployeeSummary,
-  onConnect: (providerId: string) => void,
-  pressRef: RefObject<HTMLElement | null>,
-): EmployeeControl {
+export function useEmployeeControl(employee: EmployeeSummary, onConnect: (providerId: string) => void): EmployeeControl {
   const pending = useWorkflowControlPending(employee.workflow_id);
   const view = presentEmployee(employee, pending);
   const actions = useWebSocketActions();
@@ -101,14 +95,7 @@ export function useEmployeeControl(
     if (primary.kind === 'connect_app') onConnect(primary.app.provider_id);
     else if (primary.kind === 'connect_ai') openConnectAI();
     else if (primary.kind === 'open_workflow') void enterDev({ workflowId: employee.workflow_id });
-    else {
-      animate(pressRef.current, [{ transform: 'scale(1)' }, { transform: 'scale(.97)', offset: 0.3 }, { transform: 'scale(1)' }], {
-        duration: 420,
-        easing: 'spring',
-        fill: 'none',
-      });
-      void control(primary.kind);
-    }
+    else void control(primary.kind);
   };
 
   const inFlight = running ?? (waiting ? awaiting?.kind : null) ?? null;
