@@ -12,6 +12,10 @@
   "airplaneModeControl": {
     "icon": "✈️"
   },
+  "android": {
+    "icon": "lucide:Smartphone",
+    "color": "#22c55e"
+  },
   "android_agent": {
     "icon": "📱"
   },

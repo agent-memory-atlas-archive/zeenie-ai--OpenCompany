@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
+from urllib.parse import urlparse
 
 import pytest
 import yaml
@@ -654,7 +655,10 @@ def test_launcher_never_falls_back_to_npm(root: Path):
     launcher = (root / "bin" / "cli.js").read_text(encoding="utf-8")
     for needle in ("npm.cmd", "'npm'", "npx", "--npmPackages"):
         assert needle not in launcher, f"bin/cli.js still contains {needle!r}"
-    assert "https://bun.sh" in launcher
+    # Compare parsed hosts, not a substring: "https://bun.sh.example" would
+    # pass a substring check (CodeQL py/incomplete-url-substring-sanitization).
+    hosts = [urlparse(url).hostname for url in re.findall(r"https?://[^\s'\"`)]+", launcher)]
+    assert any(host == "bun.sh" for host in hosts), "bin/cli.js no longer points at bun.sh"
 
 
 def test_bunfig_pins_the_isolated_linker(root: Path):
