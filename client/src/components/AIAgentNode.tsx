@@ -21,6 +21,8 @@ const PHASE_CONFIG: Record<string, { icon: string; label: string; color: string 
   building_tools: { icon: '🔧', label: 'Building Tools', color: 'var(--warning)' },
   building_graph: { icon: '🔗', label: 'Building Graph', color: 'var(--warning)' },
   invoking_llm: { icon: '🧠', label: 'Thinking...', color: 'var(--node-trigger)' },
+  llm_step: { icon: '🧠', label: 'Thinking...', color: 'var(--node-trigger)' },
+  retry_wait: { icon: '⏳', label: 'Retrying automatically…', color: 'var(--warning)' },
   executing_tool: { icon: '⚡', label: 'Using Tool', color: 'var(--node-trigger)' },
   tool_completed: { icon: '✓', label: 'Tool Done', color: 'var(--success)' },
   loading_skill: { icon: '📚', label: 'Loading Skill', color: 'var(--node-agent)' },
@@ -75,6 +77,9 @@ const AIAgentNode: React.FC<NodeProps<NodeData>> = ({ id, type, data, isConnecta
   const isExecuting = nodeStatus?.status === 'executing';
   const currentPhase = nodeStatus?.data?.phase as string | undefined;
   const phaseConfig = currentPhase ? PHASE_CONFIG[currentPhase] : null;
+  const retryMessage = isExecuting && currentPhase === 'retry_wait'
+    && typeof nodeStatus?.data?.retry_message === 'string'
+    ? `${nodeStatus.data.retry_message} Retrying automatically…` : undefined;
   const activeSkills = (nodeStatus?.data?.active_skills as Array<{ name: string; state: string }> | undefined) ?? [];
   const lastSkills = (nodeStatus?.data?.last_skills as Array<{ name: string; state: string }> | undefined) ?? [];
   const currentSkill = activeSkills.find((skill) => skill.state === 'loading') ?? activeSkills[activeSkills.length - 1];
@@ -272,8 +277,10 @@ const AIAgentNode: React.FC<NodeProps<NodeData>> = ({ id, type, data, isConnecta
         lineHeight: '1.2', marginBottom: theme.spacing.lg, transition: 'color 0.3s ease',
         overflowWrap: 'break-word', wordBreak: 'break-word', whiteSpace: 'normal',
         textAlign: 'center',
-      }} aria-label={capabilityLabel ? 'Current agent capability' : undefined} title={capabilityLabel}>
-        {capabilityLabel || (isExecuting && phaseConfig ? phaseConfig.label : subtitle)}
+      }} role={retryMessage ? 'status' : undefined}
+        aria-label={!retryMessage && capabilityLabel ? 'Current agent capability' : undefined}
+        title={retryMessage || capabilityLabel}>
+        {retryMessage || capabilityLabel || (isExecuting && phaseConfig ? phaseConfig.label : subtitle)}
       </div>
 
       {/* Left inputs below the main one (Memory / Task / etc.) */}

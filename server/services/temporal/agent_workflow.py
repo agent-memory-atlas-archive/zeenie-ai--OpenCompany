@@ -869,7 +869,10 @@ class AgentWorkflow:
             visible_tools = [t for t in tools if not t.get("llm_hidden")]
             llm_payload = {
                 "node_id": payload["node_id"],
+                "workflow_id": agent_workflow_id,
                 "provider": payload["provider"],
+                "iteration": iteration,
+                "max_iterations": max_iterations,
                 "model": payload["model"],
                 "messages": messages,
                 "tools": [

@@ -13,6 +13,7 @@ from __future__ import annotations
 import base64
 import json
 import math
+import re
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import (
@@ -309,6 +310,7 @@ class LLMErrorCategory(str, Enum):
     AUTHENTICATION = "authentication"
     PERMISSION = "permission"
     BILLING = "billing"
+    QUOTA = "quota"
     RATE_LIMIT = "rate_limit"
     INVALID_REQUEST = "invalid_request"
     NOT_FOUND = "not_found"
@@ -406,6 +408,9 @@ class LLMError(Exception):
             LLMErrorCategory.BILLING.value: (
                 f"{provider} blocked this request because a spending limit or available credits were exhausted."
             ),
+            LLMErrorCategory.QUOTA.value: (
+                f"{provider}'s daily quota is exhausted or this model has no available quota."
+            ),
             LLMErrorCategory.RATE_LIMIT.value: (
                 f"{provider} is rate-limiting requests. "
                 "Retry after a short delay."
@@ -439,6 +444,7 @@ class LLMError(Exception):
         """Fixed recovery advice; never copy the provider's raw response."""
         return {
             LLMErrorCategory.BILLING: "Review the provider project's billing, spending cap, and credits. Resume after access is restored; repeating the request will not fix it.",
+            LLMErrorCategory.QUOTA: "Check the model's quota for your API project. Resume after the quota resets or is increased, or choose a model with available quota.",
             LLMErrorCategory.AUTHENTICATION: "Update the provider credential in Settings > Connectors, then resume.",
             LLMErrorCategory.PERMISSION: "Check the credential's project and model permissions, then resume after access is restored.",
             LLMErrorCategory.NOT_FOUND: "Choose a model available to this provider and credential, then apply the change and resume.",
@@ -450,7 +456,7 @@ class LLMError(Exception):
     @property
     def requires_user_action(self) -> bool:
         return not self.retryable and self.category in {
-            LLMErrorCategory.BILLING, LLMErrorCategory.AUTHENTICATION,
+            LLMErrorCategory.BILLING, LLMErrorCategory.QUOTA, LLMErrorCategory.AUTHENTICATION,
             LLMErrorCategory.PERMISSION, LLMErrorCategory.NOT_FOUND,
             LLMErrorCategory.PROTOCOL,
         }
@@ -488,6 +494,20 @@ class LLMError(Exception):
             getattr(exc, "response", None), "retry-after"
         )
         retry_after = _optional_float(retry_after_value)
+        if retry_after is not None and (not math.isfinite(retry_after) or retry_after < 0):
+            retry_after = None
+        # google-genai stores the REST error envelope in ``details``, not
+        # ``body``. Google sends pacing as google.rpc.RetryInfo there, often
+        # without a Retry-After header. Never retry earlier than either hint.
+        for detail in _google_error_details(exc):
+            if detail.get("@type") != "type.googleapis.com/google.rpc.RetryInfo":
+                continue
+            raw_delay = detail.get("retryDelay")
+            if not isinstance(raw_delay, str) or not re.fullmatch(r"\d+(?:\.\d{1,9})?s", raw_delay):
+                continue
+            delay = _optional_float(raw_delay[:-1])
+            if delay is not None and math.isfinite(delay) and (retry_after is None or delay > retry_after):
+                retry_after, retry_after_value = delay, raw_delay
         category = _classify_error(exc, status)
         return cls(
             message=str(exc),
@@ -727,6 +747,40 @@ def _header(response: Any, name: str) -> Optional[str]:
         return None
 
 
+def _google_error_details(exc: BaseException) -> List[Mapping[str, Any]]:
+    """Read Google's typed details without exposing provider bodies publicly."""
+    body = getattr(exc, "details", None)
+    if not isinstance(body, Mapping):
+        body = getattr(exc, "body", None)
+    if not isinstance(body, Mapping):
+        return []
+    error = body.get("error", body)
+    details = error.get("details") if isinstance(error, Mapping) else None
+    return [item for item in details if isinstance(item, Mapping)] if isinstance(details, list) else []
+
+
+def _google_quota_exhausted(exc: BaseException) -> bool:
+    for detail in _google_error_details(exc):
+        if detail.get("@type") != "type.googleapis.com/google.rpc.QuotaFailure":
+            continue
+        violations = detail.get("violations")
+        if not isinstance(violations, list):
+            continue
+        for violation in violations:
+            if not isinstance(violation, Mapping):
+                continue
+            quota_id = re.sub(r"[^a-z]", "", str(violation.get("quotaId") or "").lower())
+            if "perday" in quota_id or _optional_int(violation.get("quotaValue")) == 0:
+                return True
+    # Some Gemini responses omit quotaValue but name the zero limit in the
+    # message. A bare RESOURCE_EXHAUSTED or "check quota" stays retryable:
+    # Vertex shared-capacity throttling uses exactly that generic response.
+    message = str(getattr(exc, "message", "") or "").lower()
+    return getattr(exc, "status", None) == "RESOURCE_EXHAUSTED" and bool(
+        re.search(r"quota exceeded for metric:[^\r\n]*\blimit:\s*0(?:[,\s]|$)", message)
+    )
+
+
 def _classify_error(
     exc: BaseException, status: Optional[int]
 ) -> LLMErrorCategory:
@@ -738,9 +792,12 @@ def _classify_error(
         status == 402 or any(marker in message for marker in (
             "spend cap breached", "insufficient_quota", "insufficient credits",
             "credit balance is too low", "billing_hard_limit_reached",
+            "prepayment credits are depleted", "prepay credit balance is depleted",
         ))
     ):
         return LLMErrorCategory.BILLING
+    if status == 429 and _google_quota_exhausted(exc):
+        return LLMErrorCategory.QUOTA
     if status == 401 or "authentication" in name or "api key" in message:
         return LLMErrorCategory.AUTHENTICATION
     if status == 403 or "permission" in name:

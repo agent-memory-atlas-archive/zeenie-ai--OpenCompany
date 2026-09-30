@@ -156,7 +156,7 @@ async def _resolve_activity_api_key(payload: Dict[str, Any]) -> str:
     return str(api_key)
 
 
-def _as_temporal_llm_error(error: Any):
+def _as_temporal_llm_error(error: Any, *, attempt: Optional[int] = None):
     """Translate a structured SDK failure at the Temporal boundary.
 
     Raw provider messages can contain payload fragments or internal endpoint
@@ -197,6 +197,14 @@ def _as_temporal_llm_error(error: Any):
         and retry_after > 0
         else None
     )
+    if details["retryable"] and next_retry_delay is None and attempt is not None:
+        from ._retry_policies import LLM_STEP_RETRY
+
+        next_retry_delay = min(
+            LLM_STEP_RETRY.maximum_interval,
+            LLM_STEP_RETRY.initial_interval
+            * LLM_STEP_RETRY.backoff_coefficient ** min(max(attempt - 1, 0), 20),
+        )
     return ApplicationError(
         safe_message,
         details,
@@ -204,6 +212,48 @@ def _as_temporal_llm_error(error: Any):
         non_retryable=not details["retryable"],
         next_retry_delay=next_retry_delay,
     )
+
+
+def _llm_activity_attempt() -> int:
+    try:
+        return activity.info().attempt
+    except RuntimeError:  # direct unit invocation, outside a Temporal activity
+        return 1
+
+
+async def _publish_llm_attempt_status(
+    payload: Dict[str, Any], *, error: Any = None, delay: Optional[timedelta] = None,
+) -> None:
+    """Keep the existing node-status projection honest during activity backoff.
+
+    Retry waits happen inside Temporal, so the workflow cannot emit progress
+    until the activity completes. This is a best-effort UI projection only;
+    failure to broadcast must never repeat an otherwise successful model call.
+    """
+    conversation_key = payload.get("conversation_key")
+    if not isinstance(conversation_key, Mapping):
+        conversation_key = {}
+    workflow_id = payload.get("workflow_id") or conversation_key.get("workflow_id")
+    node_id = payload.get("node_id")
+    if not workflow_id or not node_id:
+        return
+    data = {
+        "agent_type": "temporal",
+        "phase": "retry_wait" if error else "llm_step",
+        **{key: payload[key] for key in ("iteration", "max_iterations") if key in payload},
+    }
+    if error is not None:
+        data.update({
+            "retry_message": error.user_message,
+            "retry_after": delay.total_seconds() if delay is not None else None,
+            "retry_attempt": _llm_activity_attempt() + 1,
+        })
+    try:
+        from services.status_broadcaster import get_status_broadcaster
+
+        await get_status_broadcaster().update_node_status(node_id, "executing", data, workflow_id=str(workflow_id))
+    except Exception:  # noqa: BLE001 - optional status delivery never changes LLM execution
+        logger.warning("Could not publish LLM attempt status for node %s", node_id, exc_info=True)
 
 
 def _native_tool_definition(tool: Any) -> Dict[str, Any]:
@@ -314,8 +364,8 @@ async def _execute_native_llm_step(payload: Dict[str, Any]) -> Dict[str, Any]:
                 thinking=thinking,
                 tools=tool_defs,
                 context_management=payload.get("context_management"),
-                # Temporal owns the one-shot retry contract. SDK retries could
-                # otherwise re-bill a request after an ambiguous transport loss.
+                # Temporal owns retries; nested SDK retries would bypass
+                # quota classification and hide the wait from the UI.
                 sdk_max_retries=0,
                 explicit_max_retries=0,
                 # Keep structured metadata until this activity boundary,
@@ -325,7 +375,17 @@ async def _execute_native_llm_step(payload: Dict[str, Any]) -> Dict[str, Any]:
             detail=f"LLM step waiting: {payload.get('model')}",
         )
     except LLMError as error:
-        raise _as_temporal_llm_error(error) from error
+        attempt = _llm_activity_attempt()
+        failure = _as_temporal_llm_error(error, attempt=attempt)
+        if error.retryable:
+            await _publish_llm_attempt_status(payload, error=error, delay=failure.next_retry_delay)
+            logger.warning(
+                "LLM retry scheduled: provider=%s category=%s attempt=%s delay_seconds=%s",
+                error.provider, error.category.value, attempt, failure.next_retry_delay.total_seconds(),
+            )
+        # The safe category and diagnostic fields are sufficient here. Raw
+        # SDK bodies in chained tracebacks can include prompts or credentials.
+        raise failure from None
 
     assistant = response.assistant_message or Message(
         role="assistant",
@@ -476,6 +536,7 @@ async def execute_llm_step(payload: Dict[str, Any]) -> Dict[str, Any]:
     )
     activity.heartbeat(f"LLM step starting: {payload.get('model')}")
 
+    await _publish_llm_attempt_status(payload)
     result = await _execute_native_llm_step(payload)
     activity.heartbeat("LLM step: model returned")
     return result

@@ -153,9 +153,11 @@ async def run_native_llm_step(
             delay = (
                 error.retry_after
                 if error.retry_after is not None
-                else 0.25 * (2**attempt)
+                else min(0.25 * (2**attempt), 5.0)
             )
-            await asyncio.sleep(max(0.0, min(float(delay), 5.0)))
+            # A provider delay is a minimum, including Gemini RetryInfo.
+            # Cap only our fallback backoff, never the provider's hint.
+            await asyncio.sleep(max(0.0, float(delay)))
 
     raise AssertionError("native LLM retry loop exhausted unexpectedly")
 

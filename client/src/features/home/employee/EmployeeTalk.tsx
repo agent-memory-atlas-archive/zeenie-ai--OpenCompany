@@ -164,7 +164,7 @@ function Conversation({ employee, control, drafts }: { employee: EmployeeSummary
   const thread = useTalkThread(workflowId);
   const messages = thread.data;
   const send = useSendTalkMessage(workflowId);
-  const { waiting, unanswered, failure, begin, cancel } = useReplyWait(workflowId, employee.talk.agent_node_id, messages);
+  const { waiting, unanswered, failure, retryMessage, begin, cancel } = useReplyWait(workflowId, employee.talk.agent_node_id, messages);
   const mode = talkMode(employee.control);
   const [draft, setDraft] = useState('');
   const [queued, setQueued] = useState(false);
@@ -253,13 +253,15 @@ function Conversation({ employee, control, drafts }: { employee: EmployeeSummary
               <MessageRow key={row.message.id} message={row.message} employee={employee} now={now} />
             ),
           )}
-          {waiting && (
+          {(waiting || retryMessage) && (
             <div className="flex items-start gap-3">
               <Avatar name={name} colorRole={employee.color_role} size="sm" />
-              <p className={cn('m-0', BUBBLE, THEIRS, 'text-fg-muted')}>Working…</p>
+              <p role="status" className={cn('m-0', BUBBLE, THEIRS, 'text-fg-muted')}>
+                {retryMessage ? `${retryMessage} Retrying automatically…` : 'Working…'}
+              </p>
             </div>
           )}
-          {unanswered && !waiting && !failureText && <p className={cn('m-0 text-xs text-fg-muted', PAST_AVATAR)}>No answer from {name} yet.</p>}
+          {unanswered && !waiting && !retryMessage && !failureText && <p className={cn('m-0 text-xs text-fg-muted', PAST_AVATAR)}>No answer from {name} yet.</p>}
         </div>
         {drafts}
       </div>

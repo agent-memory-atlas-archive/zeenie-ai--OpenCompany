@@ -129,6 +129,17 @@ describe('the thread', () => {
 });
 
 describe('sending', () => {
+  it('shows a retry on reopening Talk and clears it on the next attempt', async () => {
+    act(() => useNodeStatusStore.getState().setStatus('w1', AGENT, {
+      status: 'executing', data: { phase: 'retry_wait', retry_message: 'Gemini is temporarily unavailable.' },
+    }));
+    renderTalk(employee());
+    expect(await screen.findByRole('status')).toHaveTextContent('Gemini is temporarily unavailable. Retrying automatically…');
+    expect(screen.queryByText('No answer from Maya yet.')).not.toBeInTheDocument();
+    setAgentStatus('executing');
+    expect(screen.queryByText(/Retrying automatically/)).not.toBeInTheDocument();
+  });
+
   it('shows the node failure and hint without waiting for another model answer', async () => {
     renderTalk(employee());
     const box = await screen.findByRole('textbox', { name: 'Message Maya' });
@@ -283,6 +294,36 @@ describe('useReplyWait', () => {
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it('keeps waiting through provider backoff, then allows time for the next attempt', () => {
+    let messages: ThreadMessage[] = [];
+    const { result, rerender } = renderHook(() => useReplyWait('w1', AGENT, messages));
+    act(() => result.current.begin());
+    act(() => useNodeStatusStore.getState().setStatus('w1', AGENT, {
+      status: 'executing', data: { phase: 'retry_wait', retry_message: 'Gemini is rate-limiting requests.' },
+    }));
+    act(() => vi.advanceTimersByTime(REPLY_WAIT_MS * 2));
+    expect(result.current).toMatchObject({ waiting: true, unanswered: false, retryMessage: 'Gemini is rate-limiting requests.' });
+    setAgentStatus('executing');
+    act(() => vi.advanceTimersByTime(REPLY_WAIT_MS - 1));
+    expect(result.current).toMatchObject({ waiting: true, retryMessage: null });
+    messages = [reply];
+    rerender();
+    expect(result.current).toMatchObject({ waiting: false, unanswered: false, retryMessage: null });
+  });
+
+  it('replaces a temporary throttle with actionable quota failure', () => {
+    const { result } = renderHook(() => useReplyWait('w1', AGENT, []));
+    act(() => result.current.begin());
+    act(() => useNodeStatusStore.getState().setStatus('w1', AGENT, {
+      status: 'executing', data: { phase: 'retry_wait', retry_message: 'Waiting for Gemini.' },
+    }));
+    act(() => useNodeStatusStore.getState().setStatus('w1', AGENT, {
+      status: 'error', data: { error: 'Daily quota exhausted.', hint: 'Resume after quota resets.' },
+    }));
+    expect(result.current).toMatchObject({ waiting: false, unanswered: false, retryMessage: null,
+      failure: { error: 'Daily quota exhausted.', hint: 'Resume after quota resets.' } });
   });
 
   it('ignores an old failure when a new message begins', () => {

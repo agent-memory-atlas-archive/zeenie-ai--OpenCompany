@@ -193,6 +193,37 @@ async def test_native_step_never_surfaces_raw_provider_error_text():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("daily_quota", [False, True])
+async def test_native_gemini_retry_info_is_honored_and_hard_quota_never_retries(monkeypatch, daily_quota):
+    from google.genai.errors import ClientError
+
+    details = [{"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "41.5s"}]
+    if daily_quota:
+        details.append({"@type": "type.googleapis.com/google.rpc.QuotaFailure", "violations": [
+            {"quotaId": "GenerateRequestsPerDayPerProjectPerModel"},
+        ]})
+    error = LLMError.from_exception("gemini", ClientError(429, {"error": {
+        "code": 429, "status": "RESOURCE_EXHAUSTED", "message": "Quota exceeded", "details": details,
+    }}))
+    unifier = SimpleNamespace(chat=AsyncMock(side_effect=[error, LLMResponse(content="recovered")]))
+    sleep = AsyncMock()
+    monkeypatch.setattr("services.agent_runtime.asyncio.sleep", sleep)
+    request = dict(provider="gemini", api_key="test", model="test-model",
+                   messages=[Message(role="user", content="go")], temperature=0, max_tokens=100)
+    if daily_quota:
+        with pytest.raises(NodeUserError) as raised:
+            await run_native_llm_step(unifier, **request)
+        assert raised.value.requires_user_action
+        assert unifier.chat.await_count == 1
+        sleep.assert_not_awaited()
+    else:
+        result = await run_native_llm_step(unifier, **request)
+        assert result.content == "recovered"
+        assert unifier.chat.await_count == 2
+        sleep.assert_awaited_once_with(41.5)
+
+
+@pytest.mark.asyncio
 async def test_native_loop_replays_assistant_and_accumulates_usage():
     first_message = Message(
         role="assistant",

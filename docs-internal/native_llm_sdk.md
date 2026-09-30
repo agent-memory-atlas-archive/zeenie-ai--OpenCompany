@@ -262,6 +262,22 @@ also owns error translation: typed SDK exceptions (resolved lazily from
 with a user-correctable message. There is no per-provider branch anywhere
 in `ai.py`.
 
+Agent execution preserves typed `LLMError` metadata until the runtime boundary.
+For Gemini, `google.rpc.RetryInfo.retryDelay` in the SDK exception's `details`
+sets the minimum wait (the larger of it and `Retry-After`); native retries must
+not shorten this to their fallback backoff cap. Minute throttles and generic
+`RESOURCE_EXHAUSTED` capacity responses remain retryable. A `QuotaFailure`
+with a daily quota ID or an explicit zero quota, and depleted billing credits,
+pause for user action with safe recovery guidance. A 500 `INTERNAL` remains
+a transient server failure, not evidence of exhausted quota.
+
+Temporal owns retries for agent LLM steps (SDK and native retries are disabled).
+The activity publishes `retry_wait` with a safe message and scheduled delay to
+the workflow-scoped node status; each new attempt clears it with `llm_step`.
+Canvas and Talk show automatic retries, and Talk does not time out a reply
+while Temporal is waiting to retry. Status delivery is best effort and must
+never cause a successful model request to be repeated.
+
 The legacy `factory.py` (`create_provider` / `is_native_provider` /
 `NATIVE_PROVIDERS`) was **removed** — `ChatUnifier` + `registry.py` is the
 only dispatch layer.

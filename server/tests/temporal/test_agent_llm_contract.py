@@ -89,12 +89,13 @@ def patched_workflow(monkeypatch):
 class TestWorkflowLoopContract:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("from_tool", [False, True])
-    async def test_owner_action_error_stops_before_another_model_or_compaction(self, monkeypatch, patched_workflow, from_tool):
+    @pytest.mark.parametrize("category", ["billing", "quota"])
+    async def test_owner_action_error_stops_before_another_model_or_compaction(self, monkeypatch, patched_workflow, from_tool, category):
         from services.llm.protocol import LLMError, LLMErrorCategory
         from services.temporal.agent_activities import _as_temporal_llm_error
         from services.temporal.agent_workflow import AgentWorkflow
 
-        error = LLMError("secret provider body", "gemini", category=LLMErrorCategory.BILLING)
+        error = LLMError("secret provider body", "gemini", category=LLMErrorCategory(category))
         prepared = _payload()
         prepared["compaction_threshold"] = 1
         calls = []
@@ -178,6 +179,9 @@ class TestWorkflowLoopContract:
         assert "message_wire_version" not in llm_payload
         assert "api_key" not in llm_payload
         assert "tool_data" not in llm_payload
+        assert llm_payload["workflow_id"] == "graph-1"
+        assert llm_payload["iteration"] == 0
+        assert llm_payload["max_iterations"] == 2
         assert llm_payload["tools"] == [_tool()["definition"]]
         assert [m["role"] for m in llm_payload["messages"]] == [
             "system",

@@ -34,7 +34,7 @@ import { parseEmployee, type EmployeeSummary } from './schemas';
 export const THREAD_LIMIT = 200;
 /** How long the talk agent has to pick a message up. */
 export const PICKUP_WAIT_MS = 30_000;
-/** The longest "Working…" lasts, however long the agent works. */
+/** Time without fresh progress before "Working…" expires, excluding retry waits. */
 export const REPLY_WAIT_MS = 180_000;
 /** Once the agent stops, how long its answer has to reach the thread. */
 export const SETTLE_WAIT_MS = 5_000;
@@ -209,6 +209,7 @@ export interface ReplyWait {
   /** The last wait ended with no answer. */
   unanswered: boolean;
   failure: { error: string; hint?: string } | null;
+  retryMessage: string | null;
   /** A message just went to the agent. */
   begin: () => void;
   /** It did not after all (refused, or waiting for Resume). */
@@ -230,6 +231,11 @@ export function useReplyWait(
     ),
   );
   const status = nodeStatus?.status;
+  const retryMessage = status === 'executing'
+    && nodeStatus?.data?.phase === 'retry_wait'
+    && (!wait || nodeStatus !== wait.initialStatus)
+    && typeof nodeStatus.data.retry_message === 'string'
+    ? nodeStatus.data.retry_message : null;
   const replyId = latestReplyId(messages);
 
   // An answer ends the wait. The agent working, then stopping, settles it.
@@ -254,18 +260,19 @@ export function useReplyWait(
     }
   }, [wait, status, nodeStatus, replyId]);
 
-  // Never picked up, never finished, or finished with nothing to say.
+  // A known retry wait is active work. Resume the fallback timer when the
+  // next attempt starts, so backoff cannot consume the time to answer.
   useEffect(() => {
-    if (!wait) return;
+    if (!wait || retryMessage) return;
     const left = wait.settling
       ? SETTLE_WAIT_MS
-      : (wait.working ? REPLY_WAIT_MS : PICKUP_WAIT_MS) - (Date.now() - wait.since);
+      : wait.working ? REPLY_WAIT_MS : PICKUP_WAIT_MS - (Date.now() - wait.since);
     const timer = window.setTimeout(() => {
       setWait(null);
       setUnanswered(true);
     }, Math.max(0, left));
     return () => window.clearTimeout(timer);
-  }, [wait]);
+  }, [wait, nodeStatus, retryMessage]);
 
   const begin = useCallback(() => {
     const initialStatus = agentNodeId ? useNodeStatusStore.getState().allStatuses[workflowId]?.[agentNodeId] : undefined;
@@ -274,7 +281,7 @@ export function useReplyWait(
     setFailure(null);
   }, [messages, workflowId, agentNodeId]);
   const cancel = useCallback(() => setWait(null), []);
-  return { waiting: wait !== null, unanswered, failure, begin, cancel };
+  return { waiting: wait !== null, unanswered, failure, retryMessage, begin, cancel };
 }
 
 // ----- Turn on Talk, Apply -----
