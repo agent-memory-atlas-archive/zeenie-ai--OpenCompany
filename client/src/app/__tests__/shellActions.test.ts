@@ -34,6 +34,9 @@ import { useAppStore } from '../../store/useAppStore';
 import { useWorkflowSettingsStore } from '../../stores/workflowSettingsStore';
 import { defaultSettings } from '../../components/ui/settingsPanel/schema';
 import { enterDev, enterNormal, toggleShellMode } from '../useShellActions';
+import { useHomeStore } from '../../features/home/state/homeStore';
+import { queryClient } from '../../lib/queryClient';
+import { EMPLOYEES_QUERY_KEY } from '../../features/home/data/employees';
 
 const workflow = (id: string, name = `Workflow ${id}`) => ({
   id,
@@ -65,6 +68,8 @@ beforeEach(() => {
   events.length = 0;
   toastError.mockReset();
   useWorkflowSettingsStore.setState({ settings: { ...defaultSettings } });
+  useHomeStore.setState({ view: { kind: 'hire' }, workspaceOpen: false, workspaceFor: null });
+  queryClient.removeQueries({ queryKey: EMPLOYEES_QUERY_KEY });
 });
 
 afterEach(() => {
@@ -72,6 +77,49 @@ afterEach(() => {
 });
 
 describe('enterDev', () => {
+  it('uses the current Home employee when the caller supplies no ID', async () => {
+    setEditor();
+    useHomeStore.getState().showEmployee('b');
+    await enterDev();
+    expect(events).toContain('load:b');
+    expect(useAppStore.getState().currentWorkflow?.id).toBe('b');
+  });
+
+  it('gives an explicit workflow priority over Home selection', async () => {
+    setEditor();
+    useHomeStore.getState().showEmployee('b');
+    await enterDev({ workflowId: 'c' });
+    expect(events).toContain('load:c');
+    expect(events).not.toContain('load:b');
+  });
+
+  it.each([['b', 'b'], [null, 'c'], ['removed', 'c']])(
+    'follows the visible Workspace from Hire (selection %s)', async (workspaceFor, expected) => {
+      setEditor();
+      useHomeStore.setState({ workspaceOpen: true, workspaceFor });
+      queryClient.setQueryData(EMPLOYEES_QUERY_KEY, [{ workflow_id: 'c' }, { workflow_id: 'b' }]);
+      await enterDev();
+      expect(events).toContain(`load:${expected}`);
+    },
+  );
+
+  it('does not change employees because of a closed Workspace', async () => {
+    setEditor();
+    useHomeStore.setState({ workspaceFor: 'b' });
+    await enterDev();
+    expect(events).toEqual(['preload', 'transition:dev']);
+  });
+
+  it('stays in Home when the loader resolves without loading the requested employee', async () => {
+    setEditor();
+    useAppStore.setState({ loadWorkflow: vi.fn(async () => {}) });
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await enterDev({ workflowId: 'b' });
+    expect(events).not.toContain('transition:dev');
+    expect(toastError).toHaveBeenCalledTimes(1);
+    expect(useAppStore.getState().currentWorkflow?.id).toBe('a');
+  });
+
   it('warms the editor and switches, opening nothing new', async () => {
     setEditor();
     await enterDev();
@@ -142,6 +190,14 @@ describe('enterDev', () => {
 });
 
 describe('enterNormal and toggle', () => {
+  it('keyboard switching opens the employee selected in Home', async () => {
+    setEditor();
+    useHomeStore.getState().showEmployee('b');
+    await toggleShellMode();
+    expect(events).toContain('load:b');
+    expect(useAppStore.getState().currentWorkflow?.id).toBe('b');
+  });
+
   it('switches to Normal, keeping unsaved editor work in the store', async () => {
     setEditor({ unsaved: true });
     useAppStore.setState({ shellMode: 'dev' });

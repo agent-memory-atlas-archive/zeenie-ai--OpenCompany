@@ -13,6 +13,10 @@
 import { useMemo } from 'react';
 import { toast } from 'sonner';
 import { SPIKE, spikeOrb } from '../features/home/orb/orb';
+import { useHomeStore } from '../features/home/state/homeStore';
+import { EMPLOYEES_QUERY_KEY } from '../features/home/data/employees';
+import type { EmployeeSummary } from '../features/home/data/schemas';
+import { queryClient } from '../lib/queryClient';
 import { featureFlags } from '../lib/featureFlags';
 import { useAppStore } from '../store/useAppStore';
 import { useWorkflowSettingsStore } from '../stores/workflowSettingsStore';
@@ -22,6 +26,17 @@ import { transitionShell } from './shellTransition';
 export interface EnterDevOptions {
   /** Open this workflow in the editor (an employee's "Open workflow"). */
   workflowId?: string;
+}
+
+/** Match the employee Home actually displays, including its Workspace dock. */
+function homeWorkflowId(): string | undefined {
+  if (useAppStore.getState().shellMode !== 'normal') return undefined;
+  const { view, workspaceOpen, workspaceFor } = useHomeStore.getState();
+  if (view.kind === 'employee') return view.workflowId;
+  if (!workspaceOpen) return undefined;
+  const team = queryClient.getQueryData<EmployeeSummary[]>(EMPLOYEES_QUERY_KEY);
+  return team?.find((employee) => employee.workflow_id === workspaceFor)?.workflow_id
+    ?? team?.[0]?.workflow_id ?? workspaceFor ?? undefined;
 }
 
 /** Keep, save, or refuse the editor's unsaved work before it is replaced.
@@ -48,13 +63,18 @@ async function settleUnsavedWork(nextWorkflowId: string): Promise<boolean> {
 
 export async function enterDev(options: EnterDevOptions = {}): Promise<void> {
   if (!featureFlags.normalMode) return;
-  const { workflowId } = options;
+  const workflowId = options.workflowId ?? homeWorkflowId();
   if (workflowId && !(await settleUnsavedWork(workflowId))) return;
   const opening = workflowId && useAppStore.getState().currentWorkflow?.id !== workflowId
     ? useAppStore.getState().loadWorkflow(workflowId)
     : Promise.resolve();
   try {
     await Promise.all([opening, preloadEditor()]);
+    // The store's loader also resolves on a null API response. Opening the
+    // old employee in that case would make a failed selection look successful.
+    if (workflowId && useAppStore.getState().currentWorkflow?.id !== workflowId) {
+      throw new Error('The requested employee workflow did not load');
+    }
   } catch (error) {
     console.error('[Shell] Could not open the editor:', error);
     toast.error('Could not open the workflow. Check the connection and try again.');

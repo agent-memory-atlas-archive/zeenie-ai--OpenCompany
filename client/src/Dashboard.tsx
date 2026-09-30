@@ -5,8 +5,6 @@ import {
   ReactFlow,
   ReactFlowProvider,
   Controls,
-  useNodesState,
-  useEdgesState,
   useReactFlow,
   ConnectionMode,
   ConnectionLineType,
@@ -58,10 +56,7 @@ import {
   useWebSocket,
   type WorkflowStartResult,
 } from './contexts/WebSocketContext';
-import {
-  sanitizeNodesForComparison,
-  sanitizeEdgesForComparison,
-} from './utils/workflow';
+import { useWorkflowCanvas } from './hooks/useWorkflowCanvas';
 import { importWorkflowFromFile } from './utils/workflowExport';
 import type { ValidationIssue } from './hooks/useWorkflowValidation';
 import { buildCanvasStyles } from './styles/canvasAnimations';
@@ -158,9 +153,6 @@ const moduleEdgeTypes = {
   smoothstep: StepEdge,
 };
 
-const initialNodes: Node[] = [];
-const initialEdges: Edge[] = [];
-
 // Inner component that uses useReactFlow() - must be inside ReactFlowProvider
 const DashboardContent: React.FC = () => {
   const theme = useAppTheme();
@@ -172,7 +164,6 @@ const DashboardContent: React.FC = () => {
   const hasUnsavedChanges = useAppStore((s) => s.hasUnsavedChanges);
   const sidebarVisible = useAppStore((s) => s.sidebarVisible);
   const componentPaletteVisible = useAppStore((s) => s.componentPaletteVisible);
-  const updateWorkflow = useAppStore((s) => s.updateWorkflow);
   const loadWorkflow = useAppStore((s) => s.loadWorkflow);
   const createNewWorkflow = useAppStore((s) => s.createNewWorkflow);
   const deleteWorkflow = useAppStore((s) => s.deleteWorkflow);
@@ -204,8 +195,8 @@ const DashboardContent: React.FC = () => {
   // run in the app shell (app/AppShell), so they hold on either screen.
 
   // ReactFlow state management (local state for performance)
-  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
-  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
+  const { nodes, setNodes, onNodesChange, edges, setEdges, onEdgesChange } =
+    useWorkflowCanvas(theme.constants.debounceDelay.workflowUpdate);
 
   // ReactFlow instance for viewport control (n8n pattern - per-workflow viewport)
   const reactFlowInstance = useReactFlow();
@@ -1006,79 +997,24 @@ const DashboardContent: React.FC = () => {
     }
   }, [queryClient, currentWorkflow, loadWorkflow, createNewWorkflow, migrateCurrentWorkflow]);
 
-  // Sync workflow state → ReactFlow state (when loading workflows or data changes)
-  // Note: Database is the source of truth for parameters - node.data should NOT store parameters
-  // Parameters are loaded from database when parameter panel opens (useParameterPanel hook)
-  // and when backend executes nodes (NodeExecutor._prepare_parameters)
-  useEffect(() => {
-    if (currentWorkflow && currentWorkflow.id) {
-      const workflowNodes = currentWorkflow.nodes || [];
-      setNodes(workflowNodes);
-      setEdges(currentWorkflow.edges || []);
-      // Do NOT sync database parameters to node.data
-      // Database is the single source of truth for parameters
-      // This prevents dual storage issues where node.data could diverge from database
-    }
-  }, [currentWorkflow?.id, currentWorkflow?.lastModified, setNodes, setEdges]);
-  
-  // Sync ReactFlow state → workflow state (debounced for performance)
-  useEffect(() => {
-    if (!currentWorkflow || !currentWorkflow.id) return;
-
-    const timeoutId = setTimeout(() => {
-      try {
-        const currentNodesStr = JSON.stringify(sanitizeNodesForComparison(nodes));
-        const currentEdgesStr = JSON.stringify(sanitizeEdgesForComparison(edges));
-        const workflowNodesStr = JSON.stringify(sanitizeNodesForComparison(currentWorkflow.nodes || []));
-        const workflowEdgesStr = JSON.stringify(sanitizeEdgesForComparison(currentWorkflow.edges || []));
-
-        if (currentNodesStr !== workflowNodesStr || currentEdgesStr !== workflowEdgesStr) {
-          console.log('[Dashboard] Syncing ReactFlow -> Store', {
-            reactFlowEdgeCount: edges.length,
-            storeEdgeCount: (currentWorkflow.edges || []).length,
-            newEdges: edges.filter(e => !(currentWorkflow.edges || []).find(we => we.id === e.id))
-          });
-          updateWorkflow({ nodes, edges });
-        }
-      } catch (error) {
-        console.warn('Failed to sync workflow state:', error);
-      }
-    }, theme.constants.debounceDelay.workflowUpdate);
-
-    return () => clearTimeout(timeoutId);
-  }, [nodes, edges, currentWorkflow?.id, updateWorkflow]);
-
-  // Leaving the editor (switching to Normal mode) unmounts it. The last
-  // canvas edits may still be inside the debounce window above, so flush
-  // them into the store, and keep the viewport for the next visit.
-  const latestCanvasRef = React.useRef({ nodes, edges });
-  useEffect(() => {
-    latestCanvasRef.current = { nodes, edges };
-  }, [nodes, edges]);
-  useEffect(() => () => {
-    const store = useAppStore.getState();
-    const workflow = store.currentWorkflow;
-    if (!workflow?.id) return;
-    const latest = latestCanvasRef.current;
-    try {
-      const changed =
-        JSON.stringify(sanitizeNodesForComparison(latest.nodes)) !== JSON.stringify(sanitizeNodesForComparison(workflow.nodes || []))
-        || JSON.stringify(sanitizeEdgesForComparison(latest.edges)) !== JSON.stringify(sanitizeEdgesForComparison(workflow.edges || []));
-      if (changed) store.updateWorkflow({ nodes: latest.nodes, edges: latest.edges });
-    } catch (error) {
-      console.warn('Failed to flush canvas state on unmount:', error);
-    }
-    try {
-      store.setWorkflowViewport(workflow.id, reactFlowInstance.getViewport());
-    } catch {
-      // The viewport is a convenience; a failed read keeps the last one.
-    }
-  }, []);
-
   // Track previous workflow ID for viewport save/restore (n8n pattern)
   const prevWorkflowIdRef = React.useRef<string | null>(null);
   // Track if we've already restored viewport for current workflow (prevent duplicate restores)
   const viewportRestoredForRef = React.useRef<string | null>(null);
+
+  // Save only the viewport this mounted editor actually restored. The
+  // StrictMode startup cleanup must not replace a saved viewport with the
+  // default origin, nor assign an outgoing viewport to a newly loaded graph.
+  useEffect(() => () => {
+    const id = prevWorkflowIdRef.current;
+    const store = useAppStore.getState();
+    if (!id || store.currentWorkflow?.id !== id || viewportRestoredForRef.current !== id) return;
+    try {
+      store.setWorkflowViewport(id, reactFlowInstance.getViewport());
+    } catch {
+      // Keep the last known viewport if ReactFlow is already disposed.
+    }
+  }, [reactFlowInstance]);
 
   // Save viewport when switching workflows, restore after nodes load (n8n pattern)
   useEffect(() => {

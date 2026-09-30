@@ -4,7 +4,8 @@
  * the agent role's purple, each as the soft chip tint. Switching goes
  * through the shell actions, so the unsaved-work guard and the transition
  * always run. `workflowId`: the workflow Dev opens (Home passes the
- * employee on screen); without one Dev shows what the editor last had.
+ * employee on screen); without one the shell resolves Home's visible employee
+ * or Workspace, then falls back to what the editor last had.
  */
 
 import { Clock, Zap } from 'lucide-react';
