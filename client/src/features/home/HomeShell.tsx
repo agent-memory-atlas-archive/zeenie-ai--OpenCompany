@@ -6,9 +6,9 @@
  *
  * The shell owns what spans views: the employee broadcasts that keep the
  * team current, the orb behind the content, the Workspace dock on the
- * right, the Settings dialog, and the connect dialogs any view can open (an
- * app's, and "Connect an AI model"). Switching views scrolls to the top and
- * plays the view swap.
+ * right, and the Settings dialog. Connection actions open the app shell's
+ * shared credentials dialog. Switching views scrolls to the top and plays
+ * the view swap.
  *
  * The scrolling area is a column the view fills at least, so an employee's
  * page can pin its message box to the bottom however short the conversation.
@@ -17,15 +17,14 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import { animate } from '@/lib/motion';
 import { cn } from '@/lib/utils';
+import { useShellDialogsStore, type CredentialsIntent } from '@/stores/shellDialogsStore';
 import { useApprovalLifecycle } from './approvals/data';
-import { ConnectAIDialog } from './connectAI/ConnectAIDialog';
 import { useEmployeeLifecycle, useEmployeesQuery } from './data/employees';
 import { EmployeeView } from './employee/EmployeeView';
 import { HomeHeader } from './header/HomeHeader';
 import { HireView } from './hire/HireView';
 import { SPIKE, spikeOrb } from './orb/orb';
 import { OrbStage } from './orb/OrbStage';
-import { ConnectDialog } from './settings/ConnectDialog';
 import { HomeSettings } from './settings/HomeSettings';
 import { HomeSidebar } from './sidebar/HomeSidebar';
 import { useHomeStore } from './state/homeStore';
@@ -60,10 +59,10 @@ export default function HomeShell() {
   useApprovalLifecycle();
   const view = useHomeStore((s) => s.view);
   const title = useViewTitle();
-  const [connectId, setConnectId] = useState<string | null>(null);
-  const openConnect = (providerId: string) => {
+  const openCredentials = useShellDialogsStore((s) => s.openCredentials);
+  const openConnect = (providerId: string, intent: CredentialsIntent = 'connect') => {
     spikeOrb(SPIKE.connect);
-    setConnectId(providerId);
+    openCredentials({ providerId, intent });
   };
   const [scrolled, setScrolled] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -117,8 +116,6 @@ export default function HomeShell() {
       </main>
       <WorkspaceDock onConnect={openConnect} />
       <HomeSettings onConnect={openConnect} />
-      <ConnectDialog providerId={connectId} onClose={() => setConnectId(null)} />
-      <ConnectAIDialog />
     </div>
   );
 }

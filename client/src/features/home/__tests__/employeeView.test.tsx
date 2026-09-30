@@ -36,6 +36,7 @@ import { parseEmployee, type EmployeeSummary } from '../data/schemas';
 import { ThemeProvider } from '@/contexts/ThemeContext';
 import { EmployeeView } from '../employee/EmployeeView';
 import { useHomeStore } from '../state/homeStore';
+import { useShellDialogsStore } from '@/stores/shellDialogsStore';
 import { pillToast } from '../ui/pillToast';
 
 const TALK_ON = { state: 'on', agent_node_id: 'w1:talk' };
@@ -138,25 +139,32 @@ describe('EmployeeView', () => {
   });
 
   it('says to connect an AI model, and opens that dialog, when Start is refused for want of one', async () => {
-    useHomeStore.setState({ connectAIOpen: false });
+    useShellDialogsStore.setState({ credentialsOpen: false });
     actions.startEmployee.mockRejectedValue(new Error('needs_ai'));
     renderPage(summary({ status: 'ready', talk: TALK_ON }, { state: 'never_started' }));
     fireEvent.click(screen.getByRole('button', { name: 'Start' }));
     await waitFor(() => expect(pillToast).toHaveBeenCalledWith('Connect an AI model first.', { tone: 'error' }));
-    expect(useHomeStore.getState().connectAIOpen).toBe(true);
+    expect(useShellDialogsStore.getState()).toMatchObject({
+      credentialsOpen: true,
+      credentialsOptions: { categoryId: 'ai', intent: 'connect' },
+    });
   });
 
   it('opens the "Connect an AI model" dialog from the conversation', () => {
-    useHomeStore.setState({ connectAIOpen: false });
+    useShellDialogsStore.setState({ credentialsOpen: false });
     renderPage(summary({ status: 'ready', talk: TALK_ON, needs_ai: true }, { state: 'never_started' }));
     fireEvent.click(screen.getByRole('button', { name: 'Connect an AI model' }));
-    expect(useHomeStore.getState().connectAIOpen).toBe(true);
+    expect(useShellDialogsStore.getState()).toMatchObject({
+      credentialsOpen: true,
+      credentialsOptions: { categoryId: 'ai', intent: 'connect' },
+    });
   });
 
-  it('makes Open in Dev mode the main button when nothing else is possible', () => {
+  it('keeps the stopped notice without offering Open in Dev mode when no normal action is available', () => {
     renderPage(summary({ status: 'attention', talk: TALK_ON }, { state: 'failed', can_resume: false }));
-    fireEvent.click(screen.getByRole('button', { name: 'Open in Dev mode' }));
-    expect(enterDev).toHaveBeenCalledWith({ workflowId: 'w1' });
+    expect(screen.queryByRole('button', { name: 'Open in Dev mode' })).not.toBeInTheDocument();
+    expect(screen.getByText('Maya isn’t running, so they can’t read messages right now.')).toBeInTheDocument();
+    expect(enterDev).not.toHaveBeenCalled();
   });
 
   it('offers Start above the message box while the employee is not running', async () => {

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { useWebSocket } from '../contexts/WebSocketContext';
+import { useWebSocketActions } from '../contexts/WebSocketContext';
 
 interface NodeAllowlistResponse {
   show_all: boolean;
@@ -52,7 +52,7 @@ interface NodeAllowlistResponse {
  * doesn't ship the fields (older deployments).
  */
 export const useNodeAllowlist = () => {
-  const { sendRequest, isConnected } = useWebSocket();
+  const { sendRequest, isConnected } = useWebSocketActions();
   const [config, setConfig] = useState<NodeAllowlistResponse | null>(null);
   const hasFetchedRef = useRef(false);
 
@@ -147,6 +147,8 @@ export const useNodeAllowlist = () => {
   );
 
   return {
+    /** Credentials wait for category visibility before mounting a provider form. */
+    isLoading: config === null,
     isVisible,
     isBlocked,
     isAllowed,

@@ -7,14 +7,25 @@
 
 import { create } from 'zustand';
 
+export type CredentialsIntent = 'connect' | 'manage';
+
+export interface CredentialsOptions {
+  providerId?: string;
+  categoryId?: string;
+  intent?: CredentialsIntent;
+}
+
 interface ShellDialogsState {
   settingsOpen: boolean;
   credentialsOpen: boolean;
+  credentialsOptions: CredentialsOptions & { intent: CredentialsIntent };
+  /** Repeated opens are navigation requests, even when their target matches. */
+  credentialsRequestId: number;
   /** Increments to ask the (editor-only) onboarding wizard to reopen. */
   onboardingReplay: number;
   openSettings: () => void;
   closeSettings: () => void;
-  openCredentials: () => void;
+  openCredentials: (options?: CredentialsOptions) => void;
   closeCredentials: () => void;
   replayOnboarding: () => void;
 }
@@ -22,10 +33,16 @@ interface ShellDialogsState {
 export const useShellDialogsStore = create<ShellDialogsState>((set) => ({
   settingsOpen: false,
   credentialsOpen: false,
+  credentialsOptions: { intent: 'manage' },
+  credentialsRequestId: 0,
   onboardingReplay: 0,
   openSettings: () => set({ settingsOpen: true }),
   closeSettings: () => set({ settingsOpen: false }),
-  openCredentials: () => set({ credentialsOpen: true }),
+  openCredentials: (options) => set((state) => ({
+    credentialsOpen: true,
+    credentialsOptions: { ...options, intent: options?.intent ?? 'manage' },
+    credentialsRequestId: state.credentialsRequestId + 1,
+  })),
   closeCredentials: () => set({ credentialsOpen: false }),
   replayOnboarding: () => set((state) => ({ settingsOpen: false, onboardingReplay: state.onboardingReplay + 1 })),
 }));

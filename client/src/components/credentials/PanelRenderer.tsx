@@ -18,7 +18,7 @@ import type { ProviderConfig, PanelKind } from './types';
 // Vite will emit one chunk per panel under dist/assets/ApiKeyPanel-*.js,
 // OAuthPanel-*.js, etc. Keep the import paths inside the arrow fns so
 // code splitting is preserved.
-const PANEL_LOADERS: Record<PanelKind, () => Promise<{ default: React.ComponentType<PanelProps> }>> = {
+const PANEL_LOADERS: Record<PanelKind, () => Promise<{ default: React.ComponentType<CredentialPanelProps> }>> = {
   apiKey: () => import('./panels/ApiKeyPanel'),
   oauth: () => import('./panels/OAuthPanel'),
   qrPairing: () => import('./panels/QrPairingPanel'),
@@ -30,7 +30,7 @@ const PANEL_LOADERS: Record<PanelKind, () => Promise<{ default: React.ComponentT
 // the same kind doesn't re-trigger Suspense. React.lazy memoizes too
 // internally, but declaring them once makes the intent explicit and
 // avoids any HMR edge cases.
-const LAZY_PANELS: Record<PanelKind, React.LazyExoticComponent<React.ComponentType<PanelProps>>> = {
+const LAZY_PANELS: Record<PanelKind, React.LazyExoticComponent<React.ComponentType<CredentialPanelProps>>> = {
   apiKey: React.lazy(PANEL_LOADERS.apiKey),
   oauth: React.lazy(PANEL_LOADERS.oauth),
   qrPairing: React.lazy(PANEL_LOADERS.qrPairing),
@@ -38,21 +38,15 @@ const LAZY_PANELS: Record<PanelKind, React.LazyExoticComponent<React.ComponentTy
   browserProfiles: React.lazy(PANEL_LOADERS.browserProfiles),
 };
 
-/** `full`: the editor's Credentials modal (usage, provider defaults, rate
- *  limits). `compact`: only what it takes to connect, for Normal mode's
- *  Connect dialog. */
-export type PanelVariant = 'full' | 'compact';
-
-interface PanelProps {
+export interface CredentialPanelProps {
   config: ProviderConfig;
   visible: boolean;
-  variant?: PanelVariant;
+  /** Set by the shared host from shell mode; connection inputs stay available in both modes. */
+  showTechnicalSections?: boolean;
 }
 
-interface Props {
+interface Props extends Omit<CredentialPanelProps, 'config'> {
   config: ProviderConfig | null;
-  visible: boolean;
-  variant?: PanelVariant;
 }
 
 const PanelFallback: React.FC = () => (
@@ -68,7 +62,7 @@ const EmptyState: React.FC<{ icon: React.ReactNode; message: string }> = ({ icon
   </div>
 );
 
-const PanelRenderer: React.FC<Props> = ({ config, visible, variant = 'full' }) => {
+const PanelRenderer: React.FC<Props> = ({ config, visible, showTechnicalSections = false }) => {
   const Lazy = useMemo(() => {
     if (!config) return null;
     return LAZY_PANELS[config.kind] ?? null;
@@ -93,7 +87,9 @@ const PanelRenderer: React.FC<Props> = ({ config, visible, variant = 'full' }) =
 
   return (
     <Suspense fallback={<PanelFallback />}>
-      <Lazy config={config} visible={visible} variant={variant} />
+      {/* Provider identity resets transient errors/reveal state. Mode changes
+          keep the same panel mounted and preserve the active connection draft. */}
+      <Lazy key={config.id} config={config} visible={visible} showTechnicalSections={showTechnicalSections} />
     </Suspense>
   );
 };

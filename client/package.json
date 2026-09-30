@@ -13,7 +13,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "test:credentials": "vitest run src/hooks/__tests__/useApiKeys.test.ts src/components/__tests__/CredentialsModal.test.tsx",
+    "test:credentials": "vitest run src/hooks/__tests__/useApiKeys.test.ts src/components/__tests__/CredentialsModal.test.tsx src/components/credentials src/features/home/__tests__/connectorsTab.test.tsx src/stores/__tests__/shellDialogsStore.test.ts",
     "test:nodepanels": "vitest run src/hooks/__tests__/useDragVariable.test.ts src/hooks/__tests__/useParameterPanel.test.ts src/components/parameterPanel/__tests__ src/components/__tests__/OutputPanel.test.tsx"
   },
   "dependencies": {

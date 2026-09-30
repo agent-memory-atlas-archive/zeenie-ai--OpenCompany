@@ -19,14 +19,13 @@ import { NodeIcon } from '../../../assets/icons';
 import { theme } from '../../../styles/theme';
 import { CREDENTIAL_PROBE_REQUEST_TIMEOUT } from '@/contexts/WebSocketContext';
 import type { ServerEndpointSummary } from '@/hooks/useCatalogueQuery';
-import type { ProviderConfig } from '../types';
-import type { PanelVariant } from '../PanelRenderer';
+import type { CredentialPanelProps } from '../PanelRenderer';
 import EndpointList from './EndpointList';
 
-const ApiKeyPanel: React.FC<{ config: ProviderConfig; visible: boolean; variant?: PanelVariant }> = ({
+const ApiKeyPanel: React.FC<CredentialPanelProps> = ({
   config,
   visible,
-  variant = 'full',
+  showTechnicalSections = false,
 }) => {
   const panel = useCredentialPanel(config, visible);
   // Primary credential field (validate / connect target — bot token,
@@ -186,9 +185,9 @@ const ApiKeyPanel: React.FC<{ config: ProviderConfig; visible: boolean; variant?
         </>
       )}
 
-      {variant === 'full' && config.hasDefaults && <ProviderDefaultsSection providerId={config.id} />}
-      {variant === 'full' && config.hasDefaults && <LlmUsageSection providerId={config.id} providerName={config.name} />}
-      {variant === 'full' && config.usageService && <ApiUsageSection service={config.usageService} serviceName={config.name} />}
+      {showTechnicalSections && config.hasDefaults && <ProviderDefaultsSection providerId={config.id} />}
+      {showTechnicalSections && config.hasDefaults && <LlmUsageSection providerId={config.id} providerName={config.name} />}
+      {showTechnicalSections && config.usageService && <ApiUsageSection service={config.usageService} serviceName={config.name} />}
     </div>
   );
 };

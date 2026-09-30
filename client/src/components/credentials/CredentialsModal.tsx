@@ -1,186 +1,171 @@
-/**
- * CredentialsModal — thin shell.
- *
- * Post-Wave-12: the server-owned catalogue (`get_credential_catalogue`
- * → `useCatalogueQuery`) is the SINGLE source of truth for the
- * provider list. The retired `providers.tsx` static fallback no longer
- * exists — adding a new provider is a backend-only change.
- *
- * Cold-boot UX:
- *   - With IDB hit (return visit): catalogue populated within ~50 ms
- *     via the warm-start path in `useCatalogueQuery`.
- *   - With IDB miss (first visit / cleared storage): a Skeleton
- *     palette renders while the WS catalogue arrives (~200-500 ms).
- *   - Server unreachable: explicit "couldn't reach server" error
- *     state — never a stale fallback list (would mislead the user
- *     about which providers they have configured).
- */
-
-import React, { useMemo } from 'react';
-import { Loader2, ShieldCheck, AlertTriangle } from 'lucide-react';
-
-import Modal from '../ui/Modal';
-import { Badge } from '@/components/ui/badge';
+/** One app-level host for browsing, connecting and managing credentials. */
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowLeft, ExternalLink, ShieldCheck } from 'lucide-react';
+import { toast } from 'sonner';
+import { useShellMode } from '@/app/ShellModeSwitch';
+import { FEATURED_AI_PROVIDERS } from '@/components/onboarding/aiProviderLinks';
+import Modal from '@/components/ui/Modal';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import { useShellDialogsStore, type CredentialsIntent, type CredentialsOptions } from '@/stores/shellDialogsStore';
+import CredentialsBrowser from './CredentialsBrowser';
+import { isConnected, useCredentialsCatalogue } from './catalogue';
+import { rehydrateProvider } from './catalogueAdapter';
 import PanelRenderer from './PanelRenderer';
-import CredentialsPalette from './CredentialsPalette';
-import { rehydrateCatalogue } from './catalogueAdapter';
-import { useCatalogueQuery } from '../../hooks/useCatalogueQuery';
-import { useCredentialRegistry } from '../../store/useCredentialRegistry';
-import { useNodeAllowlist } from '../../hooks/useNodeAllowlist';
 
-interface Props {
-  visible: boolean;
-  onClose: () => void;
+interface Props { visible: boolean; onClose: () => void }
+
+/** Each explicit open starts fresh navigation; switching mode does not. */
+export default function CredentialsModal(props: Props) {
+  const options = useShellDialogsStore((s) => s.credentialsOptions);
+  const requestId = useShellDialogsStore((s) => s.credentialsRequestId);
+  return <CredentialsSession key={requestId} {...props} options={options} />;
 }
 
-const CredentialsModal: React.FC<Props> = ({ visible, onClose }) => {
-  // UI state lives in the Zustand store (no catalogue data ever).
-  const selectedId = useCredentialRegistry((s) => s.selectedId);
-  const setSelectedId = useCredentialRegistry((s) => s.setSelectedId);
-
-  // Server-owned catalogue with IDB warm-start. Single source of truth.
-  const catalogue = useCatalogueQuery();
-
-  // Rehydrate server JSON → runtime ProviderConfig shape. No client
-  // fallback — if the data isn't here yet we render Skeleton, and if
-  // the fetch errored we render an explicit error state.
-  const rehydrated = useMemo(() => {
-    if (!catalogue.data) return null;
-    return rehydrateCatalogue(catalogue.data);
-  }, [catalogue.data]);
-
-  // Apply the absolute blocklist from server/config/node_allowlist.json
-  // (`disabled_credential_categories`). Hides the entire category +
-  // every provider belonging to it. Mode-independent; complements the
-  // node-side `disabled_groups` so disabling Android removes both the
-  // canvas nodes AND the credentials panel in one config edit.
-  const { isCredentialCategoryDisabled } = useNodeAllowlist();
-  const providers = useMemo(
-    () =>
-      (rehydrated?.providers ?? []).filter(
-        (p) => !isCredentialCategoryDisabled(p.category),
-      ),
-    [rehydrated?.providers, isCredentialCategoryDisabled],
+function CredentialsSession({ visible, onClose, options }: Props & { options: CredentialsOptions }) {
+  const view = useCredentialsCatalogue();
+  const showTechnicalSections = useShellMode() === 'dev';
+  const [browsing, setBrowsing] = useState(!options.providerId);
+  const [selection, setSelection] = useState<{ id: string; intent: CredentialsIntent } | null>(
+    options.providerId ? { id: options.providerId, intent: options.intent ?? 'manage' } : null,
   );
-  const categories = useMemo(
-    () =>
-      (rehydrated?.categories ?? []).filter(
-        (c) => !isCredentialCategoryDisabled(c.key),
-      ),
-    [rehydrated?.categories, isCredentialCategoryDisabled],
-  );
+  const browserOpener = useRef<HTMLElement | null>(null);
+  const providerOpener = useRef<HTMLElement | null>(null);
+  const sessionOpener = useRef<HTMLElement | null>(null);
+  const provider = view.providers.find((p) => p.id === selection?.id) ?? null;
+  const config = useMemo(() => provider ? rehydrateProvider(provider) : null, [provider]);
+  const featured = FEATURED_AI_PROVIDERS.find((p) => p.id === provider?.id);
+  const connected = provider ? isConnected(provider) : false;
+  const seen = useRef({ id: selection?.id, known: false, connected: false });
 
-  // Default selection: if nothing is selected yet (or the previous
-  // selection isn't in the current catalogue), pick the first provider.
-  const effectiveSelectedId = useMemo(() => {
-    if (selectedId && providers.some((p) => p.id === selectedId)) return selectedId;
-    return providers[0]?.id ?? null;
-  }, [selectedId, providers]);
+  const closeProvider = useCallback(() => {
+    if (browsing) setSelection(null);
+    else onClose();
+  }, [browsing, onClose]);
 
-  // Keep the store in sync without causing a render loop — only update
-  // when the effective id diverges from the stored one.
-  React.useEffect(() => {
-    if (effectiveSelectedId && effectiveSelectedId !== selectedId) {
-      setSelectedId(effectiveSelectedId);
+  useEffect(() => {
+    const before = seen.current;
+    seen.current = { id: selection?.id, known: visible && provider !== null, connected };
+    if (!visible || !provider || before.id !== selection?.id || !before.known || before.connected || !connected) return;
+    toast.success(`${provider.name} is connected`);
+    if (selection?.intent === 'connect') {
+      if (options.intent === 'connect') onClose();
+      else closeProvider();
     }
-  }, [effectiveSelectedId, selectedId, setSelectedId]);
+  }, [visible, provider, selection, connected, options.intent, onClose, closeProvider]);
 
-  const selected = useMemo(
-    () => providers.find((p) => p.id === effectiveSelectedId) ?? null,
-    [providers, effectiveSelectedId],
-  );
-
-  const isLoadingServer = catalogue.isLoading && !catalogue.data;
-  const hasServerError = catalogue.isError && !catalogue.data;
-
-  const headerActions = (
-    <div className="flex items-center gap-3">
-      <div className="flex items-center gap-2 text-base font-semibold">
-        <ShieldCheck className="h-4 w-4 text-warning" />
-        <span>API Credentials</span>
-      </div>
-      {rehydrated && (
-        <Badge variant="success">{providers.length} providers</Badge>
-      )}
-      {isLoadingServer && (
-        <Badge variant="info" className="gap-1">
-          <Loader2 className="h-3 w-3 animate-spin" />
-          loading
-        </Badge>
-      )}
-      {hasServerError && (
-        <Badge variant="destructive" className="gap-1" title="Server unreachable">
-          <AlertTriangle className="h-3 w-3" />
-          offline
-        </Badge>
-      )}
-    </div>
-  );
-
-  // Body dispatch:
-  //   1. Server error + no cached data → error state, no providers shown.
-  //   2. Loading + no cached data → Skeleton palette + empty detail.
-  //   3. Catalogue available (cached or fresh) → normal UI.
-  let body: React.ReactNode;
-  if (hasServerError) {
-    body = (
-      <div className="flex flex-1 flex-col items-center justify-center p-8">
-        <Alert variant="destructive" className="max-w-md">
-          <AlertTriangle className="h-4 w-4" />
-          <AlertTitle>Couldn't reach the credentials server</AlertTitle>
-          <AlertDescription>
-            The provider list comes from the backend. Check your connection
-            and try again — refreshing the page will retry the fetch.
-          </AlertDescription>
-        </Alert>
-      </div>
-    );
-  } else if (!rehydrated) {
-    body = (
-      <div className="flex h-full overflow-hidden">
-        <div className="flex w-[280px] shrink-0 flex-col gap-2 border-r border-border p-4">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <Skeleton key={i} className="h-9 w-full" />
-          ))}
-        </div>
-        <div className="flex flex-1 flex-col gap-3 bg-background p-6">
-          <Skeleton className="h-6 w-48" />
-          <Skeleton className="h-4 w-72" />
-          <Skeleton className="mt-4 h-32 w-full" />
-        </div>
-      </div>
-    );
-  } else {
-    body = (
-      <div className="flex h-full overflow-hidden">
-        <div className="flex w-[280px] shrink-0 flex-col border-r border-border">
-          <CredentialsPalette
-            providers={providers}
-            categories={categories}
-            selectedId={effectiveSelectedId}
-            onSelect={setSelectedId}
-          />
-        </div>
-        <div className="flex flex-1 flex-col overflow-auto bg-background">
-          <PanelRenderer config={selected} visible={visible} />
-        </div>
-      </div>
-    );
-  }
+  const allProviders = () => { setBrowsing(true); setSelection(null); };
+  const aiSetup = options.categoryId === 'ai' && options.intent === 'connect';
+  const hasData = Boolean(view.catalogue.data) && !view.isLoading;
 
   return (
-    <Modal
-      isOpen={visible}
-      onClose={onClose}
-      maxWidth="95vw"
-      maxHeight="95vh"
-      headerActions={headerActions}
-    >
-      {body}
-    </Modal>
-  );
-};
+    <>
+      <Modal
+        isOpen={visible && browsing}
+        onClose={onClose}
+        title={aiSetup ? 'Connect an AI model' : 'Connectors'}
+        titleIcon={<ShieldCheck className="size-4" />}
+        motion="spring"
+        maxWidth="min(1040px, calc(100vw - 2rem))"
+        maxHeight="min(760px, calc(100dvh - 2rem))"
+        onOpenAutoFocus={() => {
+          browserOpener.current = document.activeElement as HTMLElement | null;
+          sessionOpener.current ??= browserOpener.current;
+        }}
+        onCloseAutoFocus={(event) => {
+          if (sessionOpener.current?.isConnected) {
+            event.preventDefault();
+            sessionOpener.current.focus();
+          }
+        }}
+      >
+        {aiSetup && (
+          <div className="px-5 pt-5 sm:px-8">
+            <p className="text-sm text-fg-muted">
+              Your employees need an AI model to think. Pick a provider, then connect with its API key,
+              or choose a model that runs on this computer.
+            </p>
+          </div>
+        )}
+        <CredentialsBrowser catalogue={view} initialCategory={options.categoryId}
+          onConnect={(id, intent = 'connect') => setSelection({ id, intent })} />
+      </Modal>
 
-export default CredentialsModal;
+      <Modal
+        isOpen={visible && selection !== null}
+        onClose={closeProvider}
+        title={provider ? `${selection?.intent === 'manage' ? 'Manage' : 'Connect'} ${provider.name}` : 'Connector'}
+        titleIcon={null}
+        motion="spring"
+        maxWidth="min(640px, calc(100vw - 2rem))"
+        maxHeight="min(800px, calc(100dvh - 2rem))"
+        autoHeight
+        onOpenAutoFocus={() => {
+          providerOpener.current = document.activeElement as HTMLElement | null;
+          sessionOpener.current ??= providerOpener.current;
+        }}
+        onCloseAutoFocus={(event) => {
+          // Closing both layers returns to the screen, not to a disappearing card.
+          event.preventDefault();
+          if ((!visible && browsing) || (browsing && providerOpener.current === sessionOpener.current)) return;
+          if (providerOpener.current?.isConnected) providerOpener.current.focus();
+        }}
+      >
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-5 pt-4">
+          <Button variant="quiet" size="sm" onClick={allProviders} className="-ml-2 gap-1">
+            <ArrowLeft aria-hidden className="size-4" />
+            {options.categoryId === 'ai' ? 'All AI models' : 'All connectors'}
+          </Button>
+          {featured && (
+            <a href={featured.keyUrl} target="_blank" rel="noopener noreferrer"
+              className="ml-auto inline-flex items-center gap-1 text-sm text-fg-default underline-offset-4 hover:underline">
+              Get a key from {provider?.name}<ExternalLink aria-hidden className="size-3.5" />
+            </a>
+          )}
+        </div>
+        {!hasData ? (
+          view.isError ? <CatalogueError onRetry={() => void view.refetch()} /> : (
+            <div className="space-y-3 p-5" role="status" aria-label="Loading connector">
+              <Skeleton className="h-6 w-48" /><Skeleton className="h-24 w-full" />
+            </div>
+          )
+        ) : !provider ? (
+          <div className="p-5">
+            <Alert>
+              <AlertTitle>Connector unavailable</AlertTitle>
+              <AlertDescription>This connector is missing or disabled. Choose another connector from the catalogue.</AlertDescription>
+            </Alert>
+          </div>
+        ) : (
+          <>
+            <div className="space-y-2 px-5 pt-3 text-sm text-fg-muted">
+              {(provider.description || featured?.hint) && <p>{provider.description || featured?.hint}</p>}
+              <div className="flex flex-wrap items-center gap-2">
+                {provider.publisher && <span>by {provider.publisher}</span>}
+                {provider.verified && <Badge variant="outline">Verified</Badge>}
+                <Badge variant={connected ? 'success' : 'secondary'}>{connected ? 'Connected' : 'Not connected'}</Badge>
+                {connected && provider.account_label && <span>{provider.account_label}</span>}
+                {provider.runs_locally && <span>Runs on this computer</span>}
+              </div>
+            </div>
+            <PanelRenderer config={config} visible={visible} showTechnicalSections={showTechnicalSections} />
+          </>
+        )}
+      </Modal>
+    </>
+  );
+}
+
+function CatalogueError({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div className="p-5">
+      <Alert variant="destructive">
+        <AlertTitle>Couldn't reach the credentials server</AlertTitle>
+        <AlertDescription>Check your connection and try again.</AlertDescription>
+      </Alert>
+      <Button variant="outline" onClick={onRetry} className="mt-3">Try again</Button>
+    </div>
+  );
+}

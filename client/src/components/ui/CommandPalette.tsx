@@ -5,7 +5,7 @@
  * `.cmdk` panel. Keeps a small registered command set in state; the
  * Dashboard wires the actual handlers (`onOpenSettings`, etc.) via the
  * `commands` prop. Composes on top of the cmdk library that ships with
- * the codebase (CredentialsPalette uses the same dependency).
+ * the codebase.
  *
  * Token-driven: chrome reads bg-bg-elevated + border-border-strong;
  * active row reads bg-bg-active + text-accent. Under Renaissance the

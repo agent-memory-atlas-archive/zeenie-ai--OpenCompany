@@ -17,8 +17,8 @@ vi.mock('@/contexts/WebSocketContext', async (importOriginal) => ({
   useWebSocketActions: () => ({ sendRequest, isReady: true, addEventListener: () => () => {} }),
 }));
 vi.mock('../settings/ProfileTab', () => ({ ProfileTab: () => <p>Profile page</p> }));
-vi.mock('../settings/ConnectorsTab', () => ({
-  ConnectorsTab: ({ initialCategory }: { initialCategory?: string }) => <p>Connectors page ({initialCategory})</p>,
+vi.mock('@/components/credentials/CredentialsBrowser', () => ({
+  CredentialsBrowser: ({ initialCategory }: { initialCategory?: string }) => <p>Connectors page ({initialCategory})</p>,
 }));
 vi.mock('../data/employees', () => ({ useEmployeesQuery: () => ({ data: [{}, {}, {}], isPending: false }) }));
 

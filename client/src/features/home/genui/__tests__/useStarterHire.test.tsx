@@ -80,7 +80,7 @@ beforeEach(() => {
   sendRequest.mockClear();
   vi.mocked(pillToast).mockClear();
   resetDraftForTests();
-  useHomeStore.setState({ view: { kind: 'hire' }, hireNotice: null, connectAIOpen: false });
+  useHomeStore.setState({ view: { kind: 'hire' }, hireNotice: null });
   library = [row('write-like-a-person', { is_active: false })];
   builtIns = receptionist.skills.map((name) => ({ name, description: `Use for ${name}.`, metadata: { title: name } }));
   hireResponse = {

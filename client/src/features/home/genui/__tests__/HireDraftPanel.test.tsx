@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { setReducedMotion } from '@/test/waapi';
+import { useShellDialogsStore } from '@/stores/shellDialogsStore';
 
 const sendRequest = vi.fn();
 
@@ -90,7 +91,8 @@ beforeEach(() => {
   vi.mocked(pillToast).mockClear();
   resetDraftForTests();
   seedReadyDraft();
-  useHomeStore.setState({ view: { kind: 'hire' }, hireNotice: null, connectAIOpen: false });
+  useHomeStore.setState({ view: { kind: 'hire' }, hireNotice: null });
+  useShellDialogsStore.setState({ credentialsOpen: false });
 });
 
 afterEach(() => {
@@ -142,7 +144,10 @@ describe('HireDraftPanel', () => {
     const home = useHomeStore.getState();
     expect(home.view).toEqual({ kind: 'employee', workflowId: 'w1' });
     expect(home.hireNotice).toEqual({ workflowId: 'w1', name: 'Maya', warnings });
-    expect(home.connectAIOpen).toBe(true);
+    expect(useShellDialogsStore.getState()).toMatchObject({
+      credentialsOpen: true,
+      credentialsOptions: { categoryId: 'ai', intent: 'connect' },
+    });
   });
 
   it('tells the owner in plain words when the same hire is still going through', async () => {
@@ -190,7 +195,10 @@ describe('HireDraftPanel', () => {
     useDraftStore.setState({ status: 'failed', failure: { code: 'no_ai_provider', text: 'Answer WhatsApp', refine: false } });
     renderPanel();
     fireEvent.click(screen.getByRole('button', { name: 'Connect an AI model' }));
-    expect(useHomeStore.getState().connectAIOpen).toBe(true);
+    expect(useShellDialogsStore.getState()).toMatchObject({
+      credentialsOpen: true,
+      credentialsOptions: { categoryId: 'ai', intent: 'connect' },
+    });
   });
 
   it('shows how long the setup has taken, and Cancel hands the words back', () => {

@@ -3,8 +3,8 @@
  * behind a left nav, in the shared Modal with its spring entrance. One
  * `PAGES` list drives both the nav and the panels. The nav's search keeps
  * the pages whose label or keywords match, and drops a group with none.
- * Connect dialogs open on top from Connectors (and from an employee's
- * "Connect {App}"); HomeShell owns them.
+ * Connectors opens the app shell's shared credentials dialog on top, so
+ * closing it returns to the same Settings page.
  */
 
 import { useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
@@ -12,11 +12,12 @@ import { CircleUserRound, CreditCard, Grid2x2Plus, Plug, Star, X, type LucideIco
 import { Tabs as TabsPrimitive } from 'radix-ui';
 import { OcLogo } from '@/components/brand/Logo';
 import { Button } from '@/components/ui/button';
+import { CredentialsBrowser } from '@/components/credentials/CredentialsBrowser';
 import Modal from '@/components/ui/Modal';
+import type { CredentialsIntent } from '@/stores/shellDialogsStore';
 import { useHomeStore, type SettingsTab } from '../state/homeStore';
 import { MicroLabel, SearchField } from '../ui/primitives';
 import { BillingTab } from './BillingTab';
-import { ConnectorsTab } from './ConnectorsTab';
 import { PluginsTab } from './PluginsTab';
 import { ProfileTab } from './ProfileTab';
 import { SkillsTab } from './SkillsTab';
@@ -27,7 +28,7 @@ const NAV_ITEM =
 
 interface PageContext {
   close: () => void;
-  onConnect: (providerId: string) => void;
+  onConnect: (providerId: string, intent?: CredentialsIntent) => void;
   /** The category the page was opened on ('all' when none). */
   initialCategory: string;
 }
@@ -78,7 +79,7 @@ const PAGES: Page[] = [
     label: 'Connectors',
     icon: Grid2x2Plus,
     keywords: 'apps',
-    render: ({ onConnect, initialCategory }) => <ConnectorsTab onConnect={onConnect} initialCategory={initialCategory} />,
+    render: ({ onConnect, initialCategory }) => <CredentialsBrowser onConnect={onConnect} initialCategory={initialCategory} />,
   },
   {
     tab: 'plugins',
@@ -128,7 +129,7 @@ function SettingsNav() {
   );
 }
 
-export function HomeSettings({ onConnect }: { onConnect: (providerId: string) => void }) {
+export function HomeSettings({ onConnect }: { onConnect: (providerId: string, intent?: CredentialsIntent) => void }) {
   const open = useHomeStore((s) => s.settingsOpen);
   const tab = useHomeStore((s) => s.settingsTab);
   const category = useHomeStore((s) => s.settingsCategory);

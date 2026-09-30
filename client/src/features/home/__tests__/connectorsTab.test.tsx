@@ -1,8 +1,7 @@
 /**
  * Settings > Connectors: Disconnect removes what the provider's own panel
  * would (an API key, a sign-in), and hands QR and email accounts to their
- * panel; a card glows and confirms only when a provider flips to connected
- * while the page is open; the page opens on the category it was asked for,
+ * panel; connection feedback belongs to the shared host; the page opens on the category it was asked for,
  * and search also matches who makes the app.
  */
 
@@ -18,11 +17,11 @@ vi.mock('@/contexts/WebSocketContext', async (importOriginal) => ({
   useWebSocketActions: () => ({ sendRequest, isReady: true }),
 }));
 
-vi.mock('../data/connectors', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../data/connectors')>();
+vi.mock('@/components/credentials/catalogue', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/components/credentials/catalogue')>();
   return {
     ...actual,
-    useConnectors: () => ({
+    useCredentialsCatalogue: () => ({
       providers,
       categories: [{ key: 'ai', label: 'AI' }, { key: 'messages', label: 'Messages' }],
       connectedApps: providers.filter(actual.isConnected).filter((p) => p.consumer_category !== 'ai'),
@@ -32,7 +31,7 @@ vi.mock('../data/connectors', async (importOriginal) => {
   };
 });
 
-vi.mock('../ui/pillToast', () => ({ pillToast: vi.fn() }));
+vi.mock('sonner', () => ({ toast: { success: vi.fn(), info: vi.fn(), error: vi.fn() } }));
 
 import { ThemeProvider } from '@/contexts/ThemeContext';
 import { ConnectorsTab } from '../settings/ConnectorsTab';
@@ -44,7 +43,7 @@ function ui(onConnect = vi.fn(), initialCategory?: string) {
     </ThemeProvider>
   );
 }
-import { pillToast } from '../ui/pillToast';
+import { toast } from 'sonner';
 
 function provider(patch: Partial<ServerProviderConfig> & { id: string; kind: ServerProviderConfig['kind'] }) {
   return {
@@ -58,14 +57,15 @@ function provider(patch: Partial<ServerProviderConfig> & { id: string; kind: Ser
 }
 
 async function disconnect(name: string) {
-  const card = screen.getByText(name).closest('[data-catalog-item]') as HTMLElement;
-  fireEvent.click(card.querySelector('button')!);
+  fireEvent.click(screen.getByRole('button', { name: `Disconnect ${name}` }));
   fireEvent.click(await screen.findByRole('button', { name: 'Disconnect' }));
 }
 
 beforeEach(() => {
   sendRequest.mockReset().mockResolvedValue({ success: true });
-  vi.mocked(pillToast).mockClear();
+  vi.mocked(toast.success).mockClear();
+  vi.mocked(toast.info).mockClear();
+  vi.mocked(toast.error).mockClear();
   providers = [
     provider({ id: 'openai', name: 'OpenAI', kind: 'apiKey', connected: true, fields: [{ key: 'apiKey' }] }),
     provider({ id: 'ollama', name: 'Ollama', kind: 'apiKey', connected: true, fields: [{ key: 'ollama_proxy' }], runs_locally: true }),
@@ -99,21 +99,32 @@ describe('ConnectorsTab', () => {
     const onConnect = vi.fn();
     render(ui(onConnect));
     await disconnect('WhatsApp');
-    await waitFor(() => expect(onConnect).toHaveBeenCalledWith('whatsapp'));
+    await waitFor(() => expect(onConnect).toHaveBeenCalledWith('whatsapp', 'manage'));
     expect(sendRequest).not.toHaveBeenCalled();
   });
 
-  it('confirms a connection only when it happens while the tab is open', () => {
+  it('leaves connection-success feedback to the shared host', () => {
     providers = [provider({ id: 'openai', name: 'OpenAI', kind: 'apiKey', connected: true })];
     const { rerender } = render(ui());
-    expect(pillToast).not.toHaveBeenCalled();
+    expect(toast.success).not.toHaveBeenCalled();
 
     providers = [provider({ id: 'openai', name: 'OpenAI', kind: 'apiKey', connected: false })];
     rerender(ui());
     providers = [provider({ id: 'openai', name: 'OpenAI', kind: 'apiKey', connected: true })];
     rerender(ui());
-    expect(pillToast).toHaveBeenCalledTimes(1);
-    expect(pillToast).toHaveBeenCalledWith('OpenAI is connected');
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Manage OpenAI' })).toBeInTheDocument();
+  });
+
+  it('opens existing connections for management and new providers for connection', () => {
+    providers.push(provider({ id: 'gemini', name: 'Gemini', kind: 'apiKey', connected: false }));
+    const onConnect = vi.fn();
+    render(ui(onConnect));
+    fireEvent.click(screen.getByRole('button', { name: 'Manage OpenAI' }));
+    expect(onConnect).toHaveBeenLastCalledWith('openai', 'manage');
+    fireEvent.click(screen.getByRole('button', { name: 'Connect Gemini' }));
+    expect(onConnect).toHaveBeenLastCalledWith('gemini', 'connect');
+    expect(sendRequest).not.toHaveBeenCalled();
   });
 
   it('filters by category and search', () => {

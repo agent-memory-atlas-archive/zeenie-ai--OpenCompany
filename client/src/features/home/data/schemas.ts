@@ -11,8 +11,8 @@
 import { z } from 'zod';
 import { normalizeWorkflowControlStatus, type WorkflowControlStatus } from '@/contexts/WebSocketContext';
 
-export const COLOR_ROLES = ['agent', 'model', 'tool', 'trigger', 'workflow'] as const;
-export type ColorRole = (typeof COLOR_ROLES)[number];
+import { COLOR_ROLES } from '@/components/catalog/presentation';
+export { COLOR_ROLES, type ColorRole } from '@/components/catalog/presentation';
 
 export const EMPLOYEE_STATUSES = ['working', 'ready', 'paused', 'attention'] as const;
 export type EmployeeStatus = (typeof EMPLOYEE_STATUSES)[number];

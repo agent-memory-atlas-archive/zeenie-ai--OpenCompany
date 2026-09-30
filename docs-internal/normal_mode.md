@@ -71,7 +71,7 @@ is the reference.
 | `employee/` | One employee's page, which is the conversation with them: only their name under a small orb, then Talk (below). What to act on shows in the conversation only while there is something to do: the drafts waiting for the owner after the messages, and above the message box their main action while they can't read messages (Resume, Start, or connect what is missing; `useEmployeeControl`, `PrimaryActionButton`) or Help in browser while they wait there. It never says why they stopped. Pausing them, and watching them work, is the Workspace's: the header's Workspace pill opens it on the employee on screen, and its header carries the same main action |
 | `connectAI/` | The guided Connect an AI model dialog (below) |
 | `workspace/` | The Workspace dock (below), its header pill, and its Canvas tab, which loads in its own chunk |
-| `settings/` | The Settings pages (Profile, Billing, Skills, Connectors, Plugins), the shared catalog page the last three build on, and `ConnectDialog` (the editor's credential panel for one provider, in its compact variant) |
+| `settings/` | Settings pages (Profile, Billing, Skills, Connectors, Plugins). Catalog primitives live in `components/catalog`; Connectors embeds the shared `components/credentials/CredentialsBrowser`. Provider dialogs belong to AppShell. |
 | `approvals/` | The drafts query, the decide mutation (optimistic), the approval broadcast listener |
 | `data/` | zod-parsed queries for employees, connectors and the profile; `talk.ts`, the thread and its mutations; `presentation.ts` maps server state to pills, actions and the message box's mode without deriving new rules |
 | `orb/` | The 3D orb (below) |
@@ -337,18 +337,14 @@ that way and fails when one loses an app it names or the way it starts.
 
 ### Connecting an AI model
 
-[connectAI/ConnectAIDialog.tsx](../client/src/features/home/connectAI/ConnectAIDialog.tsx)
-is the guided dialog for an owner who has never made an API key. It lists the
-featured providers of onboarding's Connect your AI step
-(`components/onboarding/aiProviderLinks.ts`: a hint and the page where the key
-is made), with names, marks and connected state from the credential
-catalogue. Picking one opens that provider's own panel, compact, with a link
-to its key page, and the dialog closes once the provider connects; "See all
-AI models" opens Settings > Connectors on AI. `homeStore.openConnectAI()`
-opens it when a setup answers `no_ai_provider`, after a hire that answers
-`needs_ai`, from the page's Connect an AI model, and when Start is refused
-with `needs_ai`. The key-page links live in `aiProviderLinks.ts`, not in the
-credential catalogue.
+`homeStore.openConnectAI()` delegates to the shared app-level credentials
+host with `{ categoryId: 'ai', intent: 'connect' }`. The connector browser
+starts on AI with beginner guidance; selecting a provider opens the same
+connection form used in Dev. Featured providers retain the key-page links
+and hints from `components/onboarding/aiProviderLinks.ts`. Successful guided
+connection closes the flow; Manage stays open after saving. These actions
+serve setup's `no_ai_provider`, hire/start's `needs_ai`, and the employee's
+Connect an AI model action.
 
 ## Talk
 
@@ -637,6 +633,12 @@ changing page clears it.
   browser, whose panel manages optional login profiles).
 
 **The catalog page** ([settings/CatalogLayout.tsx](../client/src/features/home/settings/CatalogLayout.tsx)).
+The implementation is shared in `components/catalog/`; Home paths are compatibility exports.
+Connectors uses `components/credentials/CredentialsBrowser` in both modes.
+Connected cards offer Manage and Disconnect; connection dialogs are owned by
+AppShell. Normal mode omits provider defaults, detailed usage and rate limits,
+while preserving all setup fields. Disabled credential categories are filtered
+from both browsing and directly requested providers.
 Skills, Connectors and Plugins are built on a shared page:
 - a title with Yours / Discover, search, and a category filter behind a
   button;

@@ -21,7 +21,7 @@
  * and cannot be sent otherwise.
  */
 
-import type { AppRef, ColorRole, EmployeeSummary } from './schemas';
+import type { AppRef, EmployeeSummary } from './schemas';
 import type {
   WorkflowControlPendingMutation,
   WorkflowControlState,
@@ -186,14 +186,7 @@ export const STATUS_DOT_CLASS: Record<StatusTone, string> = {
   live: 'bg-node-trigger opencompany-pip-pulse',
 };
 
-/** Avatar: the employee's role colour at the soft-button tint. */
-export const AVATAR_CLASS: Record<ColorRole, string> = {
-  agent: 'bg-node-agent-fill border-node-agent-edge text-node-agent-ink',
-  model: 'bg-node-model-fill border-node-model-edge text-node-model-ink',
-  tool: 'bg-node-tool-fill border-node-tool-edge text-node-tool-ink',
-  trigger: 'bg-node-trigger-fill border-node-trigger-edge text-node-trigger-ink',
-  workflow: 'bg-node-workflow-fill border-node-workflow-edge text-node-workflow-ink',
-};
+export { AVATAR_CLASS } from '@/components/catalog/presentation';
 
 /** The avatar's letter: the first letter of the name, "?" when empty. */
 export function initialOf(name: string): string {

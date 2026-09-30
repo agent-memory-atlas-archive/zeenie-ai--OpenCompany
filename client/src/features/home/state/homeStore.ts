@@ -1,6 +1,6 @@
 /**
  * Normal mode's UI state: which view is showing, the sidebar, the Settings
- * dialog, the guided "Connect an AI model" dialog, the Workspace dock, and
+ * dialog, the Workspace dock, and
  * the one-shot signals the hire choreography fires (a sidebar row's glow,
  * the logo pulse, what a hire could not set up as asked). Server data lives
  * in TanStack Query (features/home/data), never here.
@@ -8,6 +8,7 @@
 
 import { z } from 'zod';
 import { create } from 'zustand';
+import { useShellDialogsStore } from '@/stores/shellDialogsStore';
 import { SPIKE, spikeOrb } from '../orb/orb';
 
 export type HomeView = { kind: 'hire' } | { kind: 'employee'; workflowId: string };
@@ -85,8 +86,6 @@ interface HomeState {
   logoPulse: number;
   /** Bumped to ask the composer to take focus. */
   composerFocus: number;
-  /** The guided "Connect an AI model" dialog (connectAI/ConnectAIDialog). */
-  connectAIOpen: boolean;
   /** What the last hire said, for its employee's page (hire/HireNotice). */
   hireNotice: HireNotice | null;
   /** The Workspace dock. Open, width and tab persist; the rest is this
@@ -107,7 +106,6 @@ interface HomeState {
   glowRow: (workflowId: string) => void;
   pulseLogo: () => void;
   openConnectAI: () => void;
-  closeConnectAI: () => void;
   setHireNotice: (notice: HireNotice | null) => void;
   /** The composer took the focus it was asked for; a remount must not
    *  take it again. */
@@ -131,7 +129,6 @@ export const useHomeStore = create<HomeState>((set, get) => ({
   glow: null,
   logoPulse: 0,
   composerFocus: 0,
-  connectAIOpen: false,
   hireNotice: null,
   workspaceOpen: workspace.open,
   workspaceWidth: workspace.widthPx,
@@ -171,10 +168,9 @@ export const useHomeStore = create<HomeState>((set, get) => ({
     set((state) => ({ glow: { workflowId, nonce: (state.glow?.nonce ?? 0) + 1 } })),
   pulseLogo: () => set((state) => ({ logoPulse: state.logoPulse + 1 })),
   openConnectAI: () => {
-    if (!get().connectAIOpen) spikeOrb(SPIKE.connect);
-    set({ connectAIOpen: true });
+    spikeOrb(SPIKE.connect);
+    useShellDialogsStore.getState().openCredentials({ categoryId: 'ai', intent: 'connect' });
   },
-  closeConnectAI: () => set({ connectAIOpen: false }),
   setHireNotice: (notice) => set({ hireNotice: notice }),
   consumeComposerFocus: () => set((state) => (state.composerFocus === 0 ? state : { composerFocus: 0 })),
   openWorkspace: (workflowId) => {

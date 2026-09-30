@@ -37,10 +37,9 @@ Post-migration (2026-04-14). Single source of truth for the current frontend.
 | Forms | `react-hook-form@7` + `zod@4` + `@hookform/resolvers` | Credential panels + sections |
 | Toasts | `sonner` | Direct imports; shadcn `<Toaster />` wrapper mounted in `App.tsx` |
 | Server state | `@tanstack/react-query@5` | `useCatalogueQuery`, `useProviderStatus`, etc. |
-| UI state | `zustand@5` | `useAppStore`, `useCredentialRegistry` (UI-only, never holds catalogue data) |
+| UI state | `zustand@5` | `useAppStore`, `shellDialogsStore` (UI-only, never holds catalogue data) |
 | Realtime | native WebSocket wrapped by `WebSocketContext` | `contexts/WebSocketContext.tsx` |
-| Search palette | `cmdk@1` + `fuzzysort@3` | `CredentialsPalette` |
-| Virtualization | `react-virtuoso@4` | `GroupedVirtuoso` in `CredentialsPalette` (grouped, variable-height) |
+| Search palette | `cmdk@1` | App command palette; credentials use shared searchable catalog cards |
 | IndexedDB | `idb-keyval@6` | Warm-start cache for the credentials catalogue |
 | Canvas | `reactflow@11` | Workflow editor |
 | Code editor | `react-simple-code-editor` + `prismjs` | Python/JS/TS node editors |
@@ -97,8 +96,9 @@ client/src/
 │   │                        # headerActions) so call sites didn't churn.
 │   │
 │   ├── credentials/         # EXEMPLAR SUBSYSTEM — see "Credentials" section below
-│   │   ├── CredentialsModal.tsx    # Shell — palette + PanelRenderer
-│   │   ├── CredentialsPalette.tsx  # cmdk + fuzzysort + GroupedVirtuoso
+│   │   ├── CredentialsModal.tsx    # Shared app-level browser + provider dialogs
+│   │   ├── CredentialsBrowser.tsx  # Connector cards; also embedded in Home Settings
+│   │   ├── catalogue.ts           # Shared catalogue ordering + category visibility
 │   │   ├── PanelRenderer.tsx       # Lazy-loads panel by kind
 │   │   ├── catalogueAdapter.ts     # Server JSON -> ProviderConfig
 │   │   ├── types.ts                # ProviderConfig, FieldDef, PanelKind, etc.
@@ -172,7 +172,6 @@ client/src/
 │
 ├── store/
 │   ├── useAppStore.ts              # UI state (sidebar, palette, shellMode, pro mode, persisted)
-│   └── useCredentialRegistry.ts    # UI-only: selectedId + paletteOpen + query
 │
 ├── styles/
 │   └── theme.ts                    # `lightColors` / `darkColors` base packs,
@@ -384,13 +383,13 @@ hooks/useCatalogueQuery.ts  (TanStack Query + idb-keyval warm-start)
 components/credentials/catalogueAdapter.ts  (hydrate JSON -> ProviderConfig)
             │
             ▼
-components/credentials/CredentialsModal.tsx
-   ├─ CredentialsPalette.tsx   (cmdk + fuzzysort + GroupedVirtuoso)
+components/credentials/CredentialsModal.tsx (one AppShell host)
+   ├─ CredentialsBrowser.tsx   (shared cards, also embedded in Home Settings)
    └─ PanelRenderer.tsx        (lazy: ApiKey/OAuth/QrPairing/Email/BrowserProfiles)
 ```
 
 **State rules:**
-- **Zustand** (`useCredentialRegistry`) holds ONLY UI state: `selectedId`, `paletteOpen`, `query`. Never catalogue data. Prevents the closure-retention bug where selectors keep the whole 5000-entry catalogue in memory.
+- **Zustand** (`shellDialogsStore`) holds only dialog navigation: optional provider/category target, `connect` or `manage` intent, and a request counter. Search/category state is local to shared `components/catalog/CatalogLayout`; neither owns catalogue or credential data.
 - **TanStack Query** owns the server state (catalogue, usage summaries, etc).
 - **idb-keyval** cache seeds first paint — opened modal renders from IndexedDB in <50 ms before the WS roundtrip completes.
 - **`requestIdleCallback`** writes back to IDB so saves don't block first paint.
@@ -406,6 +405,9 @@ components/credentials/CredentialsModal.tsx
 **Anchor cache contracts at the prefix root via `setQueryDefaults`, not per-call options.** `PersistQueryClientProvider` hydrates entries from localStorage with the QueryClient's *default* options, so per-call `staleTime: FOREVER` does not stop `gcTime: 5min` eviction on hydration. Every persisted prefix must have a matching `queryClient.setQueryDefaults(['<prefix>'], { staleTime: FOREVER, gcTime: FOREVER })` declaration in [client/src/lib/queryClient.ts](../client/src/lib/queryClient.ts). The persisted set is `['nodeSpec']`, `['nodeGroups']`; both carry `setQueryDefaults`. `['skillContent']` and `['credentialValues']` carry `setQueryDefaults` for in-memory longevity only and are intentionally absent from the persistor whitelist. The persistor whitelist in [client/src/lib/queryPersist.ts](../client/src/lib/queryPersist.ts) must mirror it; a string in the whitelist that doesn't match a real query key (the prior `'pluginCatalogue'` typo) is silently dead. `credentialCatalogue` is intentionally NOT in either list — it has its own `idb-keyval` warm-start. `credentialValues` keeps `gcTime: FOREVER` for the in-memory cache so the credentials form survives idle, but it is intentionally NOT persisted (OWASP — see "Persistence layers" above).
 
 **Component rules:**
+- Normal and Dev use the same connector cards and provider dialogs. `openCredentials({ providerId?, categoryId?, intent? })` defaults to management; guided connection intent closes on a selected provider's disconnected-to-connected transition. Connected cards expose Manage and Disconnect. All entry points use the app-level host, including Home's AI setup action.
+- The host derives `showTechnicalSections` from effective `useShellMode()` (including the Home-disabled fallback). Provider defaults, usage and rate limits mount only in Dev. Required authentication fields, callback URLs and setup help remain available in both modes; normal-mode saves never clear advanced values.
+- The shared catalogue waits for credential-category visibility before mounting a provider form, including direct targets. Missing or disabled targets show an unavailable state. The credential panel is keyed by provider ID, never mode: switching mode preserves connection drafts, while switching providers resets transient errors and secret reveal state.
 - `PanelRenderer` lazy-loads each panel type so the initial JS payload doesn't grow linearly with provider count.
 - Panels are config-driven: `StatusCard`, `ActionBar`, `FieldRenderer`, `OAuthConnect` consume `ProviderConfig` fields rather than hand-coding per-provider JSX.
 - Exception: EmailPanel has conditional `custom` IMAP/SMTP fields that the simple schema can't express — it gets a dedicated zod schema and RHF form. That's the boundary where config-driven hands off to hand-written.
@@ -528,7 +530,7 @@ This is the rule that keeps the data layer schema-driven instead of imperatively
 | Owns | What goes here | Examples |
 |---|---|---|
 | **TanStack Query** | Anything the server has authoritative state for. List / single-record / settings reads. Mutations that change server state. | `useWorkflowsQuery`, `useNodeParamsQuery`, `useUserSettingsQuery`, `useCatalogueQuery`, `useSaveWorkflowMutation`, `useSaveNodeParamsMutation`, `useSaveUserSettingsMutation` |
-| **Zustand** | UI-only state that survives navigation. The active edit buffer for the current workflow. Sidebar/panel visibility flags. | `useAppStore.currentWorkflow` (mutable buffer), `sidebarVisible`, `shellMode`, `proMode`, `renamingNodeId`, `useCredentialRegistry.selectedId`, Home's `useHomeStore` |
+| **Zustand** | UI-only state that survives navigation. The active edit buffer for the current workflow. Sidebar/panel visibility flags. | `useAppStore.currentWorkflow` (mutable buffer), `sidebarVisible`, `shellMode`, `proMode`, `renamingNodeId`, `shellDialogsStore.credentialsOptions`, Home's `useHomeStore` |
 | **`useState` / `useReducer`** | Per-component transient state. Form-field drafts. Hover/focus. | text-input drafts, dropdown-open, inline-edit toggles |
 | **`WebSocketContext`** | Raw WS connection, `sendRequest`, push-only broadcast slices (workflow progress, android/whatsapp/twitter status, console/terminal logs). The provider value is `useMemo`'d so unrelated state changes do not re-render every consumer. Exposes `isConnected` (socket open) and `isReady` (open + pending-send queue drained); gate catalogue/spec queries on `isReady`. `drainPendingSends(ws)` runs synchronously, then `setIsReady(true)` fires immediately; terminal/chat/console history restore is fire-and-forget in the background (Wave 32 removed the init-burst gate and the hardcoded `probeApiKey` loop). Catalogue invalidation routes through `invalidateCatalogue(queryClient)` ([`hooks/useCatalogueQuery.ts`](../client/src/hooks/useCatalogueQuery.ts)) which debounces the refetch on a 300 ms trailing edge, so an oauth burst or multi-service reconnect collapses to one refetch instead of N. | `androidStatus`, `consoleLogs`, broadcast streams |
 | **`stores/nodeStatusStore.ts`** (Zustand) | Per-workflow node-execution statuses -- moved out of WebSocketContext so a status tick does not cascade through the React tree. `useNodeStatus(id)` is a slice selector; only the affected node's consumers re-render. Mirror this pattern for any new high-frequency push state. | `allStatuses[workflowId][nodeId]`, `currentWorkflowId` |

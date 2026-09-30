@@ -22,6 +22,7 @@ vi.mock('../../data/connectors', () => ({
 
 import corpus from '../__fixtures__/replies.json';
 import { useHomeStore } from '../../state/homeStore';
+import { useShellDialogsStore } from '@/stores/shellDialogsStore';
 import { resetDraftForTests, useDraftStore } from '../draftStore';
 import { useHireComposer } from '../useHireComposer';
 
@@ -32,7 +33,8 @@ beforeEach(() => {
   resetDraftForTests();
   connectors.hasAi = false;
   connectors.isLoading = false;
-  useHomeStore.setState({ connectAIOpen: false, composerFocus: 0, view: { kind: 'hire' } });
+  useHomeStore.setState({ composerFocus: 0, view: { kind: 'hire' } });
+  useShellDialogsStore.setState({ credentialsOpen: false });
 });
 
 async function submit(result: { current: ReturnType<typeof useHireComposer> }, job: string) {
@@ -54,7 +56,10 @@ describe('useHireComposer', () => {
     const { result, rerender } = renderHook(() => useHireComposer());
     await submit(result, 'Answer my WhatsApp');
     expect(useDraftStore.getState().failure?.code).toBe('no_ai_provider');
-    expect(useHomeStore.getState().connectAIOpen).toBe(true);
+    expect(useShellDialogsStore.getState()).toMatchObject({
+      credentialsOpen: true,
+      credentialsOptions: { categoryId: 'ai', intent: 'connect' },
+    });
 
     sendRequest.mockResolvedValue({ success: true, reply: GOOD_REPLY });
     connectors.hasAi = true;

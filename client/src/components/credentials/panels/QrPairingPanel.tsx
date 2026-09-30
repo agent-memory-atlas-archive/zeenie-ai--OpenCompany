@@ -17,13 +17,12 @@ import { RateLimitSection } from '../sections';
 import { NodeIcon } from '../../../assets/icons';
 import { theme } from '../../../styles/theme';
 import type { ActionDef } from '../primitives/ActionBar';
-import type { ProviderConfig } from '../types';
-import type { PanelVariant } from '../PanelRenderer';
+import type { CredentialPanelProps } from '../PanelRenderer';
 
-const QrPairingPanel: React.FC<{ config: ProviderConfig; visible: boolean; variant?: PanelVariant }> = ({
+const QrPairingPanel: React.FC<CredentialPanelProps> = ({
   config,
   visible,
-  variant = 'full',
+  showTechnicalSections = false,
 }) => {
   const panel = useCredentialPanel(config, visible);
   const status = useProviderStatus(config.statusHook);
@@ -81,7 +80,7 @@ const QrPairingPanel: React.FC<{ config: ProviderConfig; visible: boolean; varia
           loading={qr.isLoading(status)} emptyText={qr.emptyText(status, panel.stored)} />
         {!connected && qrData && <div className="mt-3 text-sm text-muted-foreground">{qr.scanText}</div>}
       </div>
-      {variant === 'full' && config.hasRateLimits && connected && <RateLimitSection />}
+      {showTechnicalSections && config.hasRateLimits && connected && <RateLimitSection />}
       {panel.error && (
         <Alert variant="destructive">
           <AlertDescription>{panel.error}</AlertDescription>

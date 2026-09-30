@@ -13,9 +13,9 @@
  *      `since` fetches — if the catalogue is unchanged, the server returns
  *      `{unchanged: true}` and we keep using the cached data.
  *
- * The store (`useCredentialRegistry`) holds only UI state. Derived data
- * like the `byId` Map, the fuzzysort-prepared index, and the filtered
- * result set all live in `useMemo` inside `CredentialsPalette.tsx`.
+ * The shell dialog store holds navigation intent only. The shared
+ * CredentialsBrowser derives its filtered provider list from this cache;
+ * search/category state stays local to its reusable CatalogLayout.
  *
  * See: `docs-internal/credentials_scaling/research_react_stack.md` for the
  * store-shape decision and runtime/memory traps this design avoids.
@@ -136,7 +136,7 @@ export interface ServerProviderConfig {
    *  unless the provider declares a live check (WhatsApp's pairing, the
    *  IMAP/SMTP account's keys). */
   connected?: boolean;
-  /** Normal-mode Connectors category; providers without one are editor-only. */
+  /** Shared Connectors category; declared by every shipped provider. */
   consumer_category?: string | null;
   /** One short line for the Normal-mode Connectors card. */
   description?: string;

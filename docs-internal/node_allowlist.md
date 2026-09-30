@@ -111,7 +111,7 @@ Read via `services.node_allowlist.get_node_allowlist_service().get_config()` —
 | `client/src/components/ui/ComponentPalette.tsx` | `if (isBlocked(name, groups)) return false; if (!showAll && !isAllowed(name)) return false;` where `showAll = featureFlags.normalMode \|\| proMode` |
 | `server/services/employees/builder.py` | every node Hire builds must pass `is_hire_allowed(node_type)` |
 | `server/nodes/tool/agent_builder/__init__.py` | the blocklists in an editor-built workflow; `policy.check_tool` (`is_hire_allowed` and the rest of Hire's rule) on a hired employee |
-| `client/src/components/credentials/CredentialsModal.tsx` | `providers.filter(p => !isCredentialCategoryDisabled(p.category))` + same for `categories` |
+| `client/src/components/credentials/catalogue.ts` | Shared Normal/Dev browser and direct targets wait for category visibility, filter disabled provider categories, then derive visible consumer categories |
 | `client/src/components/parameterPanel/MasterSkillEditor.tsx` | `(foldersQuery.data ?? []).filter(f => !isSkillFolderDisabled(f.name))` |
 
 ## Backend service

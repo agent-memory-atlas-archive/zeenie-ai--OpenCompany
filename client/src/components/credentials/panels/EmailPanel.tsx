@@ -273,24 +273,24 @@ const EmailPanel: React.FC<{ config: ProviderConfig; visible: boolean }> = ({ co
                     </span>
                   )}
                 </FormLabel>
-                <FormControl>
-                  <div className="relative">
+                <div className="relative">
+                  <FormControl>
                     <Input
                       type={revealPassword ? 'text' : 'password'}
                       placeholder={stored ? '••••••••' : 'App password or account password'}
                       className="font-mono pr-9"
                       {...field}
                     />
-                    <button
-                      type="button"
-                      onClick={() => setRevealPassword((v) => !v)}
-                      className="absolute top-1/2 right-2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                      aria-label={revealPassword ? 'Hide password' : 'Show password'}
-                    >
-                      {revealPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                    </button>
-                  </div>
-                </FormControl>
+                  </FormControl>
+                  <button
+                    type="button"
+                    onClick={() => setRevealPassword((v) => !v)}
+                    className="absolute top-1/2 right-2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    aria-label={revealPassword ? 'Hide password' : 'Show password'}
+                  >
+                    {revealPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
                 <FormDescription>{AUTH_NOTES[provider]}</FormDescription>
                 <FormMessage />
               </FormItem>

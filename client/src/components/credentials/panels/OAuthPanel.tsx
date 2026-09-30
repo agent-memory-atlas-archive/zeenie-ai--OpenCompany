@@ -10,13 +10,12 @@ import { OAuthConnect } from '../primitives';
 import { ApiUsageSection } from '../sections';
 import { NodeIcon } from '../../../assets/icons';
 import { theme } from '../../../styles/theme';
-import type { ProviderConfig } from '../types';
-import type { PanelVariant } from '../PanelRenderer';
+import type { CredentialPanelProps } from '../PanelRenderer';
 
-const OAuthPanel: React.FC<{ config: ProviderConfig; visible: boolean; variant?: PanelVariant }> = ({
+const OAuthPanel: React.FC<CredentialPanelProps> = ({
   config,
   visible,
-  variant = 'full',
+  showTechnicalSections = false,
 }) => {
   const panel = useCredentialPanel(config, visible);
   const status = useProviderStatus(config.statusHook);
@@ -60,7 +59,7 @@ const OAuthPanel: React.FC<{ config: ProviderConfig; visible: boolean; variant?:
         onLogout={() => panel.actions.oauthLogout()}
         onRefresh={() => panel.actions.oauthRefresh()}
         extraSection={
-          variant === 'full' && config.usageService && <ApiUsageSection service={config.usageService} serviceName={config.name} />
+          showTechnicalSections && config.usageService && <ApiUsageSection service={config.usageService} serviceName={config.name} />
         }
       />
     </div>

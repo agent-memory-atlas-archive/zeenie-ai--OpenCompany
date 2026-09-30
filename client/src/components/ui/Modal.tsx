@@ -64,6 +64,9 @@ interface ModalProps {
    * specific than a bare `motion-reduce:` utility).
    */
   motion?: 'default' | 'spring';
+  /** Focus lifecycle for programmatically opened dialogs without a DialogTrigger. */
+  onOpenAutoFocus?: React.ComponentProps<typeof DialogPrimitive.Content>['onOpenAutoFocus'];
+  onCloseAutoFocus?: React.ComponentProps<typeof DialogPrimitive.Content>['onCloseAutoFocus'];
 }
 
 const DEFAULT_TITLE_ICON = <Settings className="h-4 w-4 opacity-70" />;
@@ -95,6 +98,8 @@ const Modal: React.FC<ModalProps> = ({
   hideHeader = false,
   titleIcon = DEFAULT_TITLE_ICON,
   motion = 'default',
+  onOpenAutoFocus,
+  onCloseAutoFocus,
 }) => {
   const showHeader = !hideHeader && Boolean(title || headerActions);
 
@@ -118,6 +123,8 @@ const Modal: React.FC<ModalProps> = ({
             void-near-black, light/dark use plain blacks). */}
         <DialogOverlay className={cn('bg-bg-overlay supports-backdrop-filter:backdrop-blur-xs', OVERLAY_MOTION[motion])} />
         <DialogPrimitive.Content
+          onOpenAutoFocus={onOpenAutoFocus}
+          onCloseAutoFocus={onCloseAutoFocus}
           data-slot="dialog-content"
           className={cn(
             // bg-bg-app + border-border-default consume the new-contract
@@ -151,10 +158,10 @@ const Modal: React.FC<ModalProps> = ({
             // + text-transform are theme-driven so titles read as Cinzel
             // uppercase under Renaissance and Space Mono under
             // Cyber, while staying clean sans-serif under light/dark.
-            <div className="modal-head relative flex w-full items-center border-b border-border-default bg-bg-panel px-5 py-3">
-              <DialogTitle className="absolute left-5 flex items-center gap-2 font-display text-base font-semibold tracking-[var(--type-tracking-display)] text-fg-default [text-transform:var(--type-uppercase)]">
+            <div className="modal-head relative flex min-h-14 w-full shrink-0 items-center border-b border-border-default bg-bg-panel px-5 py-3">
+              <DialogTitle className="absolute left-5 flex max-w-[calc(100%_-_5rem)] items-center gap-2 font-display text-base font-semibold tracking-[var(--type-tracking-display)] text-fg-default [text-transform:var(--type-uppercase)]">
                 {titleIcon}
-                {title}
+                <span className="truncate">{title}</span>
               </DialogTitle>
               <div className="flex flex-1 items-center justify-center">{headerActions}</div>
               {/* No onClick: DialogClose already routes through onOpenChange,
