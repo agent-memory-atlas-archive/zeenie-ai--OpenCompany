@@ -1,7 +1,7 @@
 """Where the agent's browser may go. Pure functions, no I/O.
 
 A page the agent opens is untrusted, and the agent itself follows untrusted
-instructions (prompt injection). From the agent's Chrome, three kinds of
+instructions (prompt injection). From the agent's Chrome, these kinds of
 address must stay out of reach:
 
 - **OpenCompany itself**: its ports on this machine (the app, the code
@@ -9,8 +9,9 @@ address must stay out of reach:
   ports. These are refused on every address of this host, always.
 - **Cloud metadata** (``169.254.169.254`` and friends), which hands out the
   VM's credentials. Link-local is refused always.
-- **Loopback and the private network**, refused unless the operator ticked
-  "Allow local network" on the Browser node (e.g. to test a local app).
+- **The private network**, refused unless the operator ticked "Allow local
+  network" on the Browser node. Loopback is allowed by default so the
+  browser can test local apps, except on the protected ports above.
 
 The egress proxy (``_egress.py``) applies :func:`address_block_reason` to the
 addresses it resolved itself, so DNS rebinding cannot swap in a private
@@ -107,14 +108,14 @@ def address_block_reason(address: IPAddress, port: int, policy: NetPolicy) -> Op
         address = address.ipv4_mapped
     if address in _METADATA_ADDRESSES or address.is_link_local:
         return "cloud metadata and link-local addresses are never reachable"
-    if address.is_unspecified or address.is_multicast or address.is_reserved:
+    if address.is_unspecified or address.is_multicast or (address.is_reserved and not address.is_loopback):
         return "this address is not reachable from the browser"
     is_local = address.is_loopback or address in policy.local_addresses
     if is_local and port in policy.blocked_local_ports:
         return "OpenCompany's own services are never reachable from the browser"
-    if is_local:
-        return None if policy.allow_private_network else "localhost is blocked; allow local network on the Browser node to use it"
-    if address.is_private or address in _CGNAT:
+    if address.is_loopback:
+        return None
+    if is_local or address.is_private or address in _CGNAT:
         return None if policy.allow_private_network else "the private network is blocked; allow local network on the Browser node to use it"
     return None
 
@@ -128,9 +129,6 @@ def host_block_reason(host: str, policy: NetPolicy) -> Optional[str]:
         return "cloud metadata addresses are never reachable"
     if not domain_allowed(host, policy.allowed_domains):
         return f"{host} is not in this Browser node's allowed domains"
-    if host == "localhost" or host.endswith(".localhost"):
-        if not policy.allow_private_network:
-            return "localhost is blocked; allow local network on the Browser node to use it"
     return None
 
 

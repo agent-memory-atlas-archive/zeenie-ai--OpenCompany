@@ -126,7 +126,16 @@ async def test_navigate_runs_the_script_and_reports_the_page(runtime):
     assert runtime.controller.state == ControlState.IDLE  # the step released control
 
 
-@pytest.mark.parametrize("url", ["file:///etc/passwd", "http://localhost:3000", "http://169.254.169.254/", "javascript:alert(1)"])
+@pytest.mark.parametrize("url", ["http://localhost:3000", "http://127.0.0.1:3000", "http://[::1]:3000"])
+@pytest.mark.parametrize("operation", ["navigate", "tabs"])
+async def test_local_apps_open_without_enabling_private_network(runtime, url, operation):
+    result = await _run({"operation": operation, "url": url, "tab_action": "new"})
+    assert result.get("success") is not False, result
+    op, args = runtime.cli.calls[-1]
+    assert op == operation and args["url"] == url
+
+
+@pytest.mark.parametrize("url", ["file:///etc/passwd", "http://192.168.1.10:3000", "http://127.0.0.1:5678", "http://169.254.169.254/", "javascript:alert(1)"])
 async def test_refused_urls_never_reach_the_browser(runtime, url):
     result = await _run({"operation": "navigate", "url": url})
     assert result.get("success") is False

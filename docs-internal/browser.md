@@ -141,9 +141,12 @@ command has an unknown outcome, safe hand-back retires the managed Chrome; if
 that fails, control remains held rather than resuming the agent prematurely.
 
 The policy proxy in `_egress.py` enforces allowed destinations for browser
-traffic. `allow_private_network` does not permit OpenCompany's protected ports
-or cloud metadata endpoints. This network enforcement is separate from the
-control lease and from agent read-only behavior.
+traffic. Localhost and loopback addresses (`127.0.0.1`, `::1`) are allowed by
+default for local apps. Private LAN addresses still require
+`allow_private_network`. Domain allowlists apply to local apps too, and neither
+setting permits OpenCompany's protected ports or cloud metadata endpoints.
+This network enforcement is separate from the control lease and from agent
+read-only behavior.
 
 ## Normal mode
 

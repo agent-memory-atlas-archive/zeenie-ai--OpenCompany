@@ -146,7 +146,7 @@ class EgressProxy:
 
     # -- connection handling (proxy thread) ---------------------------------
 
-    async def _resolve_allowed(self, host: str, port: int, policy: NetPolicy) -> str:
+    async def _resolve_allowed(self, host: str, port: int, policy: NetPolicy) -> list[str]:
         reason = host_block_reason(host, policy)
         if reason:
             raise _Blocked(reason)
@@ -164,17 +164,31 @@ class EgressProxy:
                 raise _Blocked(f"{host} could not be resolved") from None
             candidates = list(dict.fromkeys(ipaddress.ip_address(info[4][0].split("%", 1)[0]) for info in infos))
         last_reason = "no address"
+        allowed = []
         for address in candidates:
             reason = address_block_reason(address, port, policy)
             if reason is None:
-                return str(address)
-            last_reason = reason
+                allowed.append(str(address))
+            else:
+                last_reason = reason
+        if allowed:
+            return allowed
         raise _Blocked(last_reason)
 
     async def _open(self, host: str, port: int, policy: NetPolicy) -> Tuple[asyncio.StreamReader, asyncio.StreamWriter]:
-        address = await self._resolve_allowed(host, port, policy)
+        addresses = await self._resolve_allowed(host, port, policy)
         try:
-            return await asyncio.wait_for(asyncio.open_connection(address, port), timeout=_CONNECT_TIMEOUT)
+            async with asyncio.timeout(_CONNECT_TIMEOUT):
+                last_error = OSError("no reachable address")
+                for address in addresses:
+                    try:
+                        # localhost may resolve to IPv6 first while the app
+                        # listens only on IPv4. Try only addresses already
+                        # checked above; never resolve the hostname again.
+                        return await asyncio.open_connection(address, port)
+                    except OSError as exc:
+                        last_error = exc
+                raise last_error
         except (OSError, asyncio.TimeoutError) as exc:
             raise ConnectionError(f"could not connect to {host}:{port}: {exc}") from exc
 

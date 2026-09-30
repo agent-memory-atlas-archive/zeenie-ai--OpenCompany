@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
+import socket
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -35,12 +37,20 @@ def _policy(**kw):
         ("100.100.100.200", 80, True, True),
         ("fd00:ec2::254", 80, True, True),
         ("fe80::1", 80, True, True),
-        ("127.0.0.1", 3000, False, True),
+        ("127.0.0.1", 3000, False, False),
+        ("127.0.0.2", 3000, False, False),
+        ("::1", 3000, False, False),
+        ("::ffff:127.0.0.1", 3000, False, False),
         ("127.0.0.1", 3000, True, False),
+        ("127.0.0.1", APP_PORT, False, True),
+        ("::1", APP_PORT, False, True),
+        ("::ffff:127.0.0.1", APP_PORT, False, True),
         ("127.0.0.1", APP_PORT, True, True),  # OpenCompany itself, always
         ("::1", APP_PORT, True, True),
         ("::ffff:127.0.0.1", APP_PORT, True, True),  # IPv4-mapped loopback
         ("10.1.2.3", APP_PORT, True, True),  # this host's LAN address, app port
+        ("10.1.2.3", 3000, False, True),
+        ("10.1.2.3", 3000, True, False),
         ("192.168.1.10", 80, False, True),
         ("192.168.1.10", 80, True, False),
         ("100.64.0.1", 80, False, True),
@@ -63,7 +73,13 @@ def test_address_rules(address, port, allow_private, blocked):
         ("javascript:alert(1)", True),
         ("view-source:https://example.com", True),
         ("data:text/html,<script>1</script>", True),
-        ("http://localhost:3000", True),
+        ("http://localhost:3000", False),
+        ("http://LOCALHOST.:3000", False),
+        ("http://app.localhost:3000", False),
+        ("http://127.0.0.1:3000", False),
+        ("http://[::1]:3000", False),
+        ("http://[::ffff:127.0.0.1]:3000", False),
+        ("http://192.168.1.10:3000", True),
         ("http://metadata.google.internal/computeMetadata/v1/", True),
         ("http://169.254.169.254/latest/meta-data/", True),
         ("http://127.0.0.1:5678/ws/internal", True),
@@ -84,8 +100,8 @@ def test_allowed_domains_match_on_label_boundaries():
     assert url_block_reason("https://a.docs.io/", _policy(allowed_domains=allowed)) is None
 
 
-@pytest.mark.parametrize("host", ["8.8.8.8", "2001:4860:4860::8888"])
-def test_public_literal_ips_do_not_bypass_the_domain_allowlist(host):
+@pytest.mark.parametrize("host", ["8.8.8.8", "2001:4860:4860::8888", "localhost", "app.localhost", "127.0.0.1", "::1"])
+def test_navigation_hosts_do_not_bypass_the_domain_allowlist(host):
     policy = _policy(allowed_domains=("example.com",))
     url_host = f"[{host}]" if ":" in host else host
     assert "allowed domains" in host_block_reason(host, policy)
@@ -102,14 +118,37 @@ def test_ip_allowlist_entries_match_only_the_exact_address():
 
 
 def test_an_explicit_ip_allowlist_cannot_override_private_or_metadata_rules():
-    assert url_block_reason("http://127.0.0.1:3000/", _policy(allowed_domains=("127.0.0.1",))) is not None
-    assert url_block_reason("http://127.0.0.1:3000/", _policy(allowed_domains=("127.0.0.1",), allow_private_network=True)) is None
+    assert url_block_reason("http://127.0.0.1:3000/", _policy(allowed_domains=("127.0.0.1",))) is None
+    assert url_block_reason(f"http://127.0.0.1:{APP_PORT}/", _policy(allowed_domains=("127.0.0.1",))) is not None
+    assert url_block_reason("http://192.168.1.10:3000/", _policy(allowed_domains=("192.168.1.10",))) is not None
+    assert url_block_reason("http://192.168.1.10:3000/", _policy(allowed_domains=("192.168.1.10",), allow_private_network=True)) is None
     assert url_block_reason("http://169.254.169.254/", _policy(allowed_domains=("169.254.169.254",), allow_private_network=True)) is not None
 
 
 def test_own_ports_come_from_every_port_variable():
     env = {"PORT": "5678", "PYTHON_BACKEND_PORT": "5679", "TEMPORAL_UI_PORT": "8233", "NOT_A_PORT_VALUE": "x", "WHATSAPP_RPC_PORT": "junk"}
     assert own_ports_from_env(env) == frozenset({5678, 5679, 8233})
+
+
+@pytest.mark.asyncio
+async def test_egress_falls_back_only_to_policy_checked_addresses(monkeypatch):
+    from nodes.browser._egress import EgressProxy
+
+    resolver = AsyncMock(return_value=[
+        (socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("::1", 3000, 0, 0)),
+        (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("192.168.1.10", 3000)),
+        (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("169.254.169.254", 3000)),
+        (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 3000)),
+    ])
+    monkeypatch.setattr(asyncio.get_running_loop(), "getaddrinfo", resolver)
+    connection = (object(), object())
+    connect = AsyncMock(side_effect=[ConnectionRefusedError("IPv6 is not listening"), connection])
+    monkeypatch.setattr(asyncio, "open_connection", connect)
+
+    proxy = EgressProxy(_policy)
+    assert await proxy._open("localhost", 3000, _policy()) == connection
+    resolver.assert_awaited_once_with("localhost", 3000, type=socket.SOCK_STREAM)
+    assert [call.args for call in connect.await_args_list] == [("::1", 3000), ("127.0.0.1", 3000)]
 
 
 async def _serve_http(body: bytes):
@@ -141,14 +180,24 @@ async def test_egress_proxy_enforces_the_policy_by_resolved_address():
     proxy = EgressProxy(lambda: state["policy"])
     port = proxy.start()
     try:
-        # Loopback refused without the opt-in, by the resolved address of a name too.
-        refused = await _through_proxy(port, f"GET http://localhost:{target_port}/ HTTP/1.1\r\nHost: x\r\n\r\n".encode())
-        assert refused.startswith(b"HTTP/1.1 403")
-        assert b"Blocked by OpenCompany" in refused
+        # Both the hostname and literal loopback work without the LAN opt-in.
+        for host in ("localhost", "127.0.0.1"):
+            allowed = await _through_proxy(port, f"GET http://{host}:{target_port}/x HTTP/1.1\r\nHost: x\r\n\r\n".encode())
+            assert allowed.startswith(b"HTTP/1.1 200") and allowed.endswith(b"hello"), allowed
 
-        state["policy"] = NetPolicy(allow_private_network=True, blocked_local_ports=frozenset({APP_PORT}))
-        allowed = await _through_proxy(port, f"GET http://127.0.0.1:{target_port}/x HTTP/1.1\r\nHost: x\r\n\r\n".encode())
-        assert allowed.startswith(b"HTTP/1.1 200") and allowed.endswith(b"hello")
+        tunneled = await _through_proxy(port, (
+            f"CONNECT localhost:{target_port} HTTP/1.1\r\nHost: x\r\n\r\n"
+            "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n"
+        ).encode())
+        assert tunneled.startswith(b"HTTP/1.1 200 Connection Established") and tunneled.endswith(b"hello"), tunneled
+
+        private = await _through_proxy(port, b"CONNECT 192.168.1.10:3000 HTTP/1.1\r\nHost: x\r\n\r\n")
+        assert private.startswith(b"HTTP/1.1 403")
+
+        # Policy changes still take effect, and localhost cannot reach protected ports.
+        state["policy"] = NetPolicy(allow_private_network=True, blocked_local_ports=frozenset({APP_PORT, target_port}))
+        refused = await _through_proxy(port, f"GET http://localhost:{target_port}/ HTTP/1.1\r\nHost: x\r\n\r\n".encode())
+        assert refused.startswith(b"HTTP/1.1 403") and b"own services" in refused
 
         tunnel = await _through_proxy(port, f"CONNECT 127.0.0.1:{APP_PORT} HTTP/1.1\r\nHost: x\r\n\r\n".encode())
         assert tunnel.startswith(b"HTTP/1.1 403")

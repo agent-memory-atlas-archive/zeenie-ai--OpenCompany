@@ -191,10 +191,10 @@ class BrowserParams(BrowserToolInput):
     webmcp_mode: Literal["disabled", "read_only", "all"] = Field(
         default="read_only", description="Which tools a web page offers (WebMCP) the agent may call."
     )
-    allowed_domains: str = Field(default="", description="Comma-separated sites the browser may open. Empty allows every public site.")
+    allowed_domains: str = Field(default="", description="Comma-separated sites the browser may open. Empty allows every public site and localhost.")
     allow_private_network: bool = Field(
         default=False,
-        description="Allow localhost and your local network (e.g. to test a local app). OpenCompany's own ports and cloud metadata stay blocked.",
+        description="Allow your private local network. Localhost is already allowed. OpenCompany's own ports and cloud metadata stay blocked.",
     )
     op_timeout_s: int = Field(default=45, ge=5, le=300, description="Seconds one browser step may take.")
     request_user_timeout_s: int = Field(default=600, ge=60, le=1800, description="How long to wait for you when the agent asks for help.")

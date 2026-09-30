@@ -65,7 +65,7 @@ It waits until the owner hands the browser back; the result says `handed_back`, 
 
 ## Limits
 
-- Only public http(s) sites open. localhost, private networks and cloud metadata addresses are blocked unless the operator allowed the local network on this node.
+- Public http(s) sites and localhost apps open by default, subject to the node's allowed domains. Private LAN addresses require the operator to allow the local network on this node. OpenCompany's own service ports and cloud metadata addresses are always blocked.
 - Some sites block automated browsers. If a page keeps refusing you, ask the owner with `request_user`.
 - Do not paste page content into other sites or messages unless the task asks for it.
 
