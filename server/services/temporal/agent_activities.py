@@ -113,7 +113,12 @@ def _unsaved_endpoint_error(provider: str) -> Optional[ApplicationError]:
     message = unconfigured_endpoint_message(provider)
     if not message:
         return None
-    return ApplicationError(message, type="MissingAgentProviderCredential", non_retryable=True)
+    return ApplicationError(
+        message,
+        {"hint": "Choose and save a provider credential in Settings > Connectors, then resume.",
+         "requires_user_action": True, "retryable": False},
+        type="MissingAgentProviderCredential", non_retryable=True,
+    )
 
 
 async def _resolve_activity_api_key(payload: Dict[str, Any]) -> str:
@@ -150,6 +155,8 @@ async def _resolve_activity_api_key(payload: Dict[str, Any]) -> str:
     if not api_key:
         raise _unsaved_endpoint_error(provider) or ApplicationError(
             f"API key for provider {provider!r} is not configured",
+            {"hint": "Connect the provider in Settings > Connectors, then resume.",
+             "requires_user_action": True, "retryable": False},
             type="MissingAgentProviderCredential",
             non_retryable=True,
         )
@@ -375,6 +382,8 @@ async def _execute_native_llm_step(payload: Dict[str, Any]) -> Dict[str, Any]:
             detail=f"LLM step waiting: {payload.get('model')}",
         )
     except LLMError as error:
+        if not error.retryable:
+            await _save_failed_tool_results(payload, payload.get("messages") or [])
         attempt = _llm_activity_attempt()
         failure = _as_temporal_llm_error(error, attempt=attempt)
         if error.retryable:
@@ -542,9 +551,30 @@ async def execute_llm_step(payload: Dict[str, Any]) -> Dict[str, Any]:
     return result
 
 
+async def _save_failed_tool_results(payload: Dict[str, Any], results: List[Dict[str, Any]]) -> bool:
+    key = payload.get("conversation_key")
+    if not isinstance(key, dict) or not any(m.get("role") == "tool" for m in results):
+        return False
+    from core.container import container
+    from services.agent_context.conversation import append_tool_results
+
+    try:
+        return await append_tool_results(
+            container.database(), workflow_id=str(key.get("workflow_id") or ""),
+            generation=int(key.get("generation") or 0),
+            agent_node_id=str(key.get("agent_node_id") or ""), results=results,
+        )
+    except Exception:
+        activity.logger.warning("Could not save failed tool turn", exc_info=True)
+        return False
+
+
 @activity.defn(name="agent.persist_turn")
 async def persist_agent_turn(payload: Dict[str, Any]) -> Dict[str, Any]:
     """Append one ``(human, assistant)`` pair to the connected memory.
+
+    A blocked tool turn supplies ``conversation_key`` and ``tool_results``
+    instead: finish the already-saved Context turn without another LLM call.
 
     Per user decision in plan §15 (F4.B), memory appends per turn so
     failure mid-loop doesn't lose progress. Uses the same markdown
@@ -565,6 +595,8 @@ async def persist_agent_turn(payload: Dict[str, Any]) -> Dict[str, Any]:
     No-op when ``memory_node_id`` is empty (the agent has no memory
     connected).
     """
+    if "tool_results" in payload:
+        return {"appended": await _save_failed_tool_results(payload, payload["tool_results"]), "trimmed_count": 0}
     memory_node_id = payload.get("memory_node_id") or ""
     if not memory_node_id:
         return {"appended": False, "trimmed_count": 0}
@@ -929,8 +961,11 @@ async def prepare_agent_payload(context: Dict[str, Any]) -> Dict[str, Any]:
         endpoint_error = _unsaved_endpoint_error(provider)
         if endpoint_error:
             raise endpoint_error
-        raise RuntimeError(
-            f"API key for provider {provider!r} required for AgentWorkflow " f"node {node_id!r}; configure it in the Credentials Modal."
+        raise ApplicationError(
+            f"API key for provider {provider!r} is not configured",
+            {"hint": "Connect the provider in Settings > Connectors, then resume.",
+             "requires_user_action": True, "retryable": False},
+            type="MissingAgentProviderCredential", non_retryable=True,
         )
 
     max_tokens = resolve_max_tokens(flattened, model, provider)

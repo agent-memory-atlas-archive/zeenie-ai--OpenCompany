@@ -100,6 +100,9 @@ class TestWorkflowLoopContract:
         prepared["compaction_threshold"] = 1
         calls = []
         phases = []
+        checkpoints = []
+        if from_tool:
+            prepared["conversation_key"] = {"workflow_id": "graph-1", "generation": 1, "agent_node_id": "agent-1"}
 
         async def execute(name, *, args, **_kwargs):
             calls.append(name)
@@ -117,6 +120,9 @@ class TestWorkflowLoopContract:
             if name == "agent.broadcast_progress":
                 phases.append(args[0])
                 return {}
+            if name == "agent.persist_turn":
+                checkpoints.append(args[0])
+                return {}
             if name in {"agent.skill.clear", "agent.persist_turn"}:
                 return {}
             raise AssertionError(f"Unexpected activity: {name}")
@@ -131,6 +137,9 @@ class TestWorkflowLoopContract:
         failure = next(p for p in phases if p.get("status") == "error")
         assert failure["hint"] == error.hint
         assert "secret" not in str(failure)
+        if from_tool:
+            assert len(checkpoints) == 1
+            assert checkpoints[0]["tool_results"][0]["tool_call_id"] == "call-1"
 
     @pytest.mark.asyncio
     async def test_llm_step_payload_shape_and_heartbeat(

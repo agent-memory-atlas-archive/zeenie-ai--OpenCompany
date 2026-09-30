@@ -8,6 +8,8 @@ The whole contract:
   turn, serialized per key by an in-process lock. Best-effort callers
   (the LLM-step activity) must catch — persistence never fails a run.
 - ``clear_conversation`` — delete rows (panel clear, workflow cleanup).
+- ``append_tool_results`` — close unanswered calls when a blocked run stops
+  before another model request; retries do not append duplicates.
 - ``list_conversations`` — metadata for the Context panel.
 
 Key = ``(workflow_id, generation, agent_node_id)``. Generation is part of
@@ -138,6 +140,50 @@ async def save_conversation(
         agent_node_id=agent_node_id,
         message_count=len(messages),
     )
+
+
+async def append_tool_results(
+    database: Any, *, workflow_id: str, generation: int, agent_node_id: str,
+    results: List[Dict[str, Any]],
+) -> bool:
+    """Close a saved tool turn without paying for another model request.
+
+    Only unanswered calls in the latest assistant turn are eligible. Activity
+    retries are idempotent; a stale result cannot attach to a different turn.
+    """
+    async with _lock(workflow_id, generation, agent_node_id):
+        async with database.get_session() as session:
+            result = await session.execute(select(AgentConversation).where(
+                AgentConversation.workflow_id == workflow_id,
+                AgentConversation.generation == generation,
+                AgentConversation.agent_node_id == agent_node_id,
+            ))
+            row = result.scalar_one_or_none()
+            if row is None:
+                return False
+            messages = list(row.messages or [])
+            latest = next((i for i in range(len(messages) - 1, -1, -1) if messages[i].get("role") == "assistant"), None)
+            if latest is None:
+                return False
+            pending = {call.get("id") for call in (messages[latest].get("tool_calls") or []) if call.get("id")}
+            pending -= {m.get("tool_call_id") for m in messages[latest + 1:] if m.get("role") == "tool"}
+            additions = []
+            for item in results:
+                call_id = item.get("tool_call_id")
+                if item.get("role") == "tool" and call_id in pending:
+                    additions.append(dict(item))
+                    pending.remove(call_id)
+            if not additions:
+                return False
+            row.messages = _stamp_messages(messages + additions, messages, datetime.now(timezone.utc).isoformat())
+            row.updated_at = datetime.now(timezone.utc)
+            session.add(row)
+            await session.commit()
+    await notify_conversation_saved(
+        workflow_id=workflow_id, generation=generation, agent_node_id=agent_node_id,
+        message_count=len(messages) + len(additions),
+    )
+    return True
 
 
 async def clear_conversation(

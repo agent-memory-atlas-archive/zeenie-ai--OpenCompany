@@ -115,6 +115,8 @@ Defense in depth below the plugin layer: the SQLAlchemy engine in `core/database
 
 **Error convention — `NodeUserError` vs bare `Exception`.** For any failure the user (or the calling LLM) can correct — missing required field, unknown enum value, bad path, service not running — raise `NodeUserError("...")` (exported from `services.plugin`). `BaseNode.execute()` catches it specially: one WARN line in the operator log (no traceback) plus a structured `{success: False, error_type: "NodeUserError", error: ...}` envelope, and the shared Temporal retry policy treats it as **non-retryable** (`services/plugin/scaling.py`) so a bad input doesn't burn three activity attempts. Reserve bare `Exception` / `RuntimeError` for genuine server bugs — those keep the full `logger.exception` traceback.
 
+Use `NodeUserError(message, hint="How to recover", requires_user_action=True)` for an owner-only blocker such as exhausted billing or an unusable provider credential. Keep both texts safe for public display. The framework preserves `hint`, `requires_user_action`, and `retryable: false` through tool results. Both agent loops stop before another model turn or compaction, and a controlled trigger deployment pauses on its first blocked run. Ordinary input errors leave `requires_user_action` false so the model can correct them; other run failures retain the configured circuit-breaker threshold. Temporal saves outstanding tool results before stopping so Resume has a complete tool turn. Home and the node output panel display the recovery hint.
+
 ### Auto-derived uiHints
 
 `BaseNode._metadata_dict` (`server/services/plugin/base.py`) calls

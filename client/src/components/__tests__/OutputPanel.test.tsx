@@ -104,6 +104,15 @@ describe('OutputPanel response routing', () => {
  * hint-driven, so a ref reaching this panel from anywhere still renders.
  */
 describe('OutputPanel — audio', () => {
+  it('shows the node error recovery hint beside the failure', () => {
+    renderWithProviders(<OutputPanel results={[{
+      ...makeResult({ hint: 'Review billing before resuming.' })[0],
+      success: false, error: 'Spending cap reached.',
+    }]} selectedNode={NODE} />);
+    expect(screen.getByRole('alert')).toHaveTextContent('Spending cap reached.');
+    expect(screen.getByRole('alert')).toHaveTextContent('Review billing before resuming.');
+  });
+
   const SPEECH_NODE = { id: 'tts-1', type: 'textToSpeech' } as any;
 
   const audioRef = (overrides: Record<string, any> = {}) => ({

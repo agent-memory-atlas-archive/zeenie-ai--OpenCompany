@@ -87,6 +87,22 @@ def test_tool_input_defaults_to_params():
     assert CurrentTimeToolNode.tool_input_model() is CurrentTimeToolNode.Params
 
 
+@pytest.mark.asyncio
+async def test_node_error_recovery_metadata_reaches_agent_tools():
+    from services.plugin import NodeUserError
+
+    class BlockedTool(_ConfiguredToolNode, abstract=True):
+        @Operation("run")
+        async def run(self, ctx, params):
+            raise NodeUserError("Spending cap reached", hint="Review billing", requires_user_action=True)
+
+    result = await BlockedTool().execute_as_tool(
+        {"endpoint": "test"}, {"endpoint": "test"},
+        NodeContext(node_id="tool-1", node_type=BlockedTool.type, raw={}),
+    )
+    assert result == {"error": "Spending cap reached", "hint": "Review billing", "requires_user_action": True, "retryable": False}
+
+
 def test_native_validation_does_not_materialize_omitted_defaults():
     spec = AgentToolSpec(
         definition=ToolDef(

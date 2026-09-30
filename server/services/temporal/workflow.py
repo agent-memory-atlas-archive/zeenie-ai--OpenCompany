@@ -874,6 +874,26 @@ class MachinaWorkflow:
         queue = cls.task_queue if worker_pool_enabled else None
         return f"node.{cls.type}.v{cls.version}", queue
 
+    @staticmethod
+    def _node_failure(error: Exception) -> Dict[str, Any]:
+        """Keep safe recovery metadata through child/activity wrappers."""
+        if workflow.patched("workflow-node-user-action-error-v1"):
+            cause = error
+            for _ in range(10):
+                kind = str(getattr(cause, "type", ""))
+                if kind.startswith("LLMError.") or kind == "MissingAgentProviderCredential":
+                    details = getattr(cause, "details", ())
+                    if details and isinstance(details[0], dict) and details[0].get("requires_user_action") is True:
+                        return {
+                            "success": False, "error_type": "NodeUserError",
+                            "error": cause.message, "hint": details[0].get("hint"),
+                            "requires_user_action": True, "retryable": False,
+                        }
+                cause = getattr(cause, "cause", None)
+                if cause is None:
+                    break
+        return {"success": False, "error": str(error)}
+
     async def _wait_any_complete(self, running: Dict[str, Any]) -> tuple:
         """Wait for any activity to complete, return (node_id, result).
 
@@ -890,7 +910,7 @@ class MachinaWorkflow:
                     result = await handle
                     return node_id, result
                 except Exception as e:
-                    return node_id, {"success": False, "error": str(e)}
+                    return node_id, self._node_failure(e)
 
         # Wait for first completion using Temporal's wait
         await workflow.wait_condition(lambda: any(h.done() for _, h in items))
@@ -903,7 +923,7 @@ class MachinaWorkflow:
                     result = await handle
                     return node_id, result
                 except Exception as e:
-                    return node_id, {"success": False, "error": str(e)}
+                    return node_id, self._node_failure(e)
 
         # Should not reach here
         raise RuntimeError("No activity completed after wait")

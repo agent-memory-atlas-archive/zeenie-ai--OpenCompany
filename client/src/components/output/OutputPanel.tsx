@@ -13,6 +13,7 @@ import remarkBreaks from 'remark-breaks';
 import JsonView from '@uiw/react-json-view';
 import { Node } from 'reactflow';
 import { Badge } from '@/components/ui/badge';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import {
   Collapsible,
@@ -148,9 +149,12 @@ export default function OutputPanel({ results, onClear, selectedNode }: Props) {
       {/* Content */}
       <div className="flex-1 overflow-auto p-4">
         {latest.error && (
-          <pre className="mb-3 overflow-auto rounded-md border border-destructive/40 border-l-4 border-l-destructive bg-destructive/5 p-3 font-mono text-sm whitespace-pre-wrap break-words text-destructive">
-            {latest.error}
-          </pre>
+          <Alert variant="destructive" className="mb-3">
+            <AlertDescription>
+              <p className="whitespace-pre-wrap break-words">{latest.error}</p>
+              {typeof raw?.hint === 'string' && <p className="whitespace-pre-wrap break-words">{raw.hint}</p>}
+            </AlertDescription>
+          </Alert>
         )}
 
         <div className="space-y-0">

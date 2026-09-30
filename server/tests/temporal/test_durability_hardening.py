@@ -1248,6 +1248,31 @@ async def test_machina_failure_schedules_the_circuit_breaker_activity(monkeypatc
     assert captured == {}
 
 
+@pytest.mark.asyncio
+async def test_prepare_failure_keeps_owner_recovery_through_child_wrappers(monkeypatch):
+    import asyncio
+    from temporalio.exceptions import ApplicationError
+    from services.temporal import workflow as module
+
+    monkeypatch.setattr(module.workflow, "patched", lambda _name: True)
+    error = RuntimeError("Child workflow failed")
+    error.cause = ApplicationError(
+        "Provider credential missing", {"hint": "Connect the provider", "requires_user_action": True},
+        type="MissingAgentProviderCredential", non_retryable=True,
+    )
+    future = asyncio.get_running_loop().create_future()
+    future.set_exception(error)
+    node, result = await module.MachinaWorkflow()._wait_any_complete({"agent": future})
+    assert node == "agent"
+    assert result["requires_user_action"] is True
+    assert result["error"] == "Provider credential missing"
+    assert result["hint"] == "Connect the provider"
+
+    # Histories recorded before the propagation change keep their result.
+    monkeypatch.setattr(module.workflow, "patched", lambda _name: False)
+    assert module.MachinaWorkflow._node_failure(error) == {"success": False, "error": "Child workflow failed"}
+
+
 def test_can_edit_capability_is_server_owned():
     """Canvas editability is a capability the backend computes — the FE
     renders it and never re-derives the rule from state strings. Paused

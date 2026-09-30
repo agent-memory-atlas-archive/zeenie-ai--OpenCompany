@@ -95,6 +95,25 @@ _KEY = {
 }
 
 
+@pytest.mark.asyncio
+async def test_blocked_tool_turn_is_saved_once_and_stale_results_are_ignored(conversation_database, isolated_listeners):
+    from services.agent_context.conversation import append_tool_results
+    from services.llm.protocol import ToolCall
+
+    assistant = dict(message_to_wire(Message(role="assistant", tool_calls=[ToolCall(id="call-1", name="model", args={})])))
+    tool_result = dict(message_to_wire(Message(role="tool", tool_call_id="call-1", name="model", content='{"error":"blocked","hint":"Fix billing"}')))
+    await save_conversation(conversation_database, **_KEY, messages=[_wire("user", "go"), assistant])
+    assert await append_tool_results(conversation_database, **_KEY, results=[tool_result])
+    assert not await append_tool_results(conversation_database, **_KEY, results=[tool_result])
+    stored = await load_conversation(conversation_database, **_KEY)
+    assert [m["role"] for m in stored] == ["user", "assistant", "tool"]
+    assert stored[-1]["content"] == tool_result["content"]
+
+    await save_conversation(conversation_database, **_KEY, messages=[_wire("assistant", "A later turn")])
+    assert not await append_tool_results(conversation_database, **_KEY, results=[tool_result])
+    assert len(await load_conversation(conversation_database, **_KEY)) == 1
+
+
 def _sans_ts(messages: list[dict]) -> list[dict]:
     return [{k: v for k, v in m.items() if k != "ts"} for m in messages]
 

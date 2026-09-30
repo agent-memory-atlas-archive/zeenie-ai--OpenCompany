@@ -923,7 +923,7 @@ class AgentWorkflow:
                     getattr(cause, "message", "") or ""
                 ).strip()
                 recovery = {}
-                if cause_type.startswith("LLMError."):
+                if cause_type.startswith("LLMError.") or cause_type == "MissingAgentProviderCredential":
                     diagnostics = getattr(cause, "details", ())
                     if diagnostics and isinstance(diagnostics[0], dict):
                         recovery = {
@@ -931,6 +931,8 @@ class AgentWorkflow:
                             for key in ("hint", "requires_user_action", "retryable")
                             if diagnostics[0].get(key) is not None
                         }
+                        if recovery:
+                            recovery["error_type"] = "NodeUserError"
                 safe_activity_types = {
                     "MissingAgentProviderCredential",
                     "EmptyAgentPrompt",
@@ -2166,6 +2168,15 @@ class AgentWorkflow:
             if blocked_error:
                 # Complete/persist the current tool turn, then stop before
                 # another model request or paid compaction can be scheduled.
+                if conversation_key and workflow.patched("agent-blocked-tool-turn-save-v1"):
+                    await workflow.execute_activity(
+                        "agent.persist_turn",
+                        args=[{"conversation_key": conversation_key,
+                               "tool_results": [m for m in messages[turn_start:] if m.get("role") == "tool"]}],
+                        activity_id="persist-blocked-tool-turn",
+                        start_to_close_timeout=PERSIST_TURN_TIMEOUT,
+                        retry_policy=AGENT_ACTIVITY_RETRY,
+                    )
                 await workflow.execute_activity(
                     "agent.skill.clear",
                     args=[{"workflow_id": payload.get("workflow_id"),
