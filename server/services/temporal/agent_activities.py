@@ -183,6 +183,8 @@ def _as_temporal_llm_error(error: Any):
         "request_id": getattr(error, "request_id", None),
         "retry_after": getattr(error, "retry_after", None),
         "retry_after_raw": getattr(error, "retry_after_raw", None),
+        **({"hint": error.hint} if getattr(error, "hint", None) else {}),
+        **({"requires_user_action": True} if getattr(error, "requires_user_action", False) else {}),
     }
     # Honor the provider's own pacing: a 429 with Retry-After should wait
     # exactly that long before the next attempt instead of the policy's
@@ -623,6 +625,12 @@ async def broadcast_agent_progress(payload: Dict[str, Any]) -> Dict[str, Any]:
             **({"phase": phase} if phase else {}),
             **capability_data,
         }
+        if status == "error":
+            lifecycle_data.update({
+                key: payload[key]
+                for key in ("error", "error_type", "hint", "requires_user_action")
+                if payload.get(key) is not None
+            })
         if phase == "starting":
             lifecycle_data.update({"active_skills": [], "last_skills": [], "last_tool_name": None, "last_capability": None})
         await broadcaster.update_node_status(

@@ -149,9 +149,7 @@ async def run_native_llm_step(
             if not error.retryable or attempt + 1 >= attempts:
                 if not translate_errors:
                     raise
-                from services.plugin import NodeUserError
-
-                raise NodeUserError(error.user_message) from error
+                raise error.as_node_error() from error
             delay = (
                 error.retry_after
                 if error.retry_after is not None
@@ -340,6 +338,7 @@ async def run_native_agent_loop(
 
         specs = _tool_specs_by_name(current_tools)
         iteration_new_tools: List[AgentToolSpec] = []
+        blocked_error = None
         for call_index, call in enumerate(calls, start=1):
             if call.name not in specs:
                 result: Any = {
@@ -377,7 +376,12 @@ async def run_native_agent_loop(
                             call.name,
                             exc,
                         )
-                        result = {"error": str(exc)}
+                        from services.plugin import NodeUserError
+
+                        result = exc.as_dict() if isinstance(exc, NodeUserError) else {"error": str(exc)}
+
+            if isinstance(result, dict) and result.get("error") and result.get("requires_user_action") is True:
+                blocked_error = blocked_error or result
 
             if (
                 rebind_from_operations is not None
@@ -419,6 +423,16 @@ async def run_native_agent_loop(
 
         # One save per turn covers every tool result appended above.
         await save_now()
+
+        if blocked_error:
+            # All tool-call/result pairs are saved, but no extra LLM request
+            # (including compaction) is spent on an owner-only repair.
+            from services.plugin import NodeUserError
+
+            raise NodeUserError(
+                blocked_error["error"], hint=blocked_error.get("hint"),
+                requires_user_action=True,
+            )
 
         if iteration_new_tools:
             current_tools.extend(iteration_new_tools)

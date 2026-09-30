@@ -246,12 +246,21 @@ class MachinaWorkflow:
         spawned_by_trigger = any(node.get("_pre_executed") for node in nodes)
         if not workflow_id or not spawned_by_trigger:
             return
+        failure = errors[0] or {}
+        recovery = {}
+        if failure.get("requires_user_action") is True:
+            recovery = {
+                "requires_user_action": True,
+                "hint": failure.get("hint"),
+                "generation": workflow_data.get("generation"),
+            }
         try:
             await workflow.execute_activity(
                 "workflow_control.pause_on_failure",
                 {
                     "workflow_id": workflow_id,
                     "reason": str((errors[0] or {}).get("error", "run_failed"))[:500],
+                    **recovery,
                 },
                 start_to_close_timeout=timedelta(seconds=30),
                 retry_policy=QUICK_ACTIVITY_RETRY,
@@ -700,6 +709,7 @@ class MachinaWorkflow:
                 error_info = {
                     "node_id": done_id,
                     "error": result.get("error", "Unknown error"),
+                    **{key: result[key] for key in ("hint", "requires_user_action", "retryable") if key in result},
                 }
                 errors.append(error_info)
                 workflow.logger.error(f"Node failed: {done_id} - {error_info['error']}")

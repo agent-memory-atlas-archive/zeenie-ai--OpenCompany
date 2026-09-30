@@ -129,13 +129,13 @@ class ChatUnifier:
             self._log_failure("LLM provider request failed", error, entry, provider)
             if not translate_errors:
                 raise
-            raise NodeUserError(error.user_message) from error
+            raise error.as_node_error() from error
         except spec.sdk_exception_types as e:
             error = LLMError.from_exception(provider, e)
             self._log_failure("LLM provider request failed", error, entry, provider)
             if not translate_errors:
                 raise error from e
-            raise NodeUserError(error.user_message) from error
+            raise error.as_node_error() from error
         except (ValueError, TypeError, OSError) as e:
             # Only normalize generic configuration/transport failures raised
             # while constructing a provider client. Once a client exists,
@@ -162,7 +162,7 @@ class ChatUnifier:
             )
             if not translate_errors:
                 raise error from e
-            raise NodeUserError(error.user_message) from error
+            raise error.as_node_error() from error
         finally:
             if entry is not None:
                 await self._release_client(entry)
@@ -185,11 +185,11 @@ class ChatUnifier:
             models = await entry.client.fetch_models(api_key)
         except LLMError as error:
             self._log_failure("LLM model-list request failed", error, entry, provider)
-            raise NodeUserError(error.user_message) from error
+            raise error.as_node_error() from error
         except spec.sdk_exception_types as e:
             error = LLMError.from_exception(provider, e)
             self._log_failure("LLM model-list request failed", error, entry, provider)
-            raise NodeUserError(error.user_message) from error
+            raise error.as_node_error() from error
         except (ValueError, TypeError, OSError) as e:
             if entry is not None:
                 raise
@@ -210,7 +210,7 @@ class ChatUnifier:
                 category=error.category.value,
                 retryable=error.retryable,
             )
-            raise NodeUserError(error.user_message) from error
+            raise error.as_node_error() from error
         finally:
             if entry is not None:
                 await self._release_client(entry)

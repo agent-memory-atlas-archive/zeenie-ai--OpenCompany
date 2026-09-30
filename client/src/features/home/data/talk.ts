@@ -193,6 +193,8 @@ export function useSendTalkMessage(workflowId: string) {
 
 interface Wait {
   since: number;
+  /** Ignore an error left over from a previous message. */
+  initialStatus: object | undefined;
   /** The newest answer when the message went out; another one answers it. */
   repliedTo: string | null;
   /** The agent has been seen working. */
@@ -206,6 +208,7 @@ export interface ReplyWait {
   waiting: boolean;
   /** The last wait ended with no answer. */
   unanswered: boolean;
+  failure: { error: string; hint?: string } | null;
   /** A message just went to the agent. */
   begin: () => void;
   /** It did not after all (refused, or waiting for Resume). */
@@ -219,18 +222,29 @@ export function useReplyWait(
 ): ReplyWait {
   const [wait, setWait] = useState<Wait | null>(null);
   const [unanswered, setUnanswered] = useState(false);
-  const status = useNodeStatusStore(
+  const [failure, setFailure] = useState<ReplyWait['failure']>(null);
+  const nodeStatus = useNodeStatusStore(
     useCallback(
-      (state) => (agentNodeId ? state.allStatuses[workflowId]?.[agentNodeId]?.status : undefined),
+      (state) => (agentNodeId ? state.allStatuses[workflowId]?.[agentNodeId] : undefined),
       [workflowId, agentNodeId],
     ),
   );
+  const status = nodeStatus?.status;
   const replyId = latestReplyId(messages);
 
   // An answer ends the wait. The agent working, then stopping, settles it.
   useEffect(() => {
+    if (status === 'executing') setFailure(null);
     if (!wait) return;
     if (replyId !== wait.repliedTo) {
+      setWait(null);
+      setUnanswered(false);
+      setFailure(null);
+    } else if (status === 'error' && nodeStatus !== wait.initialStatus && typeof nodeStatus?.data?.error === 'string') {
+      setFailure({
+        error: nodeStatus.data.error,
+        hint: typeof nodeStatus.data.hint === 'string' ? nodeStatus.data.hint : undefined,
+      });
       setWait(null);
       setUnanswered(false);
     } else if (status === 'executing') {
@@ -238,7 +252,7 @@ export function useReplyWait(
     } else if (wait.working && !wait.settling) {
       setWait({ ...wait, settling: true });
     }
-  }, [wait, status, replyId]);
+  }, [wait, status, nodeStatus, replyId]);
 
   // Never picked up, never finished, or finished with nothing to say.
   useEffect(() => {
@@ -254,11 +268,13 @@ export function useReplyWait(
   }, [wait]);
 
   const begin = useCallback(() => {
-    setWait({ since: Date.now(), repliedTo: latestReplyId(messages), working: false, settling: false });
+    const initialStatus = agentNodeId ? useNodeStatusStore.getState().allStatuses[workflowId]?.[agentNodeId] : undefined;
+    setWait({ since: Date.now(), initialStatus, repliedTo: latestReplyId(messages), working: false, settling: false });
     setUnanswered(false);
-  }, [messages]);
+    setFailure(null);
+  }, [messages, workflowId, agentNodeId]);
   const cancel = useCallback(() => setWait(null), []);
-  return { waiting: wait !== null, unanswered, begin, cancel };
+  return { waiting: wait !== null, unanswered, failure, begin, cancel };
 }
 
 // ----- Turn on Talk, Apply -----

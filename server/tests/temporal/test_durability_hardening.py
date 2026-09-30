@@ -1119,6 +1119,30 @@ async def test_pause_on_failure_pauses_immediately_at_threshold_one(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_owner_action_blocker_pauses_once_without_spending_threshold_runs(monkeypatch):
+    from services.deployment import handlers
+
+    running = _boot_control("running")
+    _breaker_settings(monkeypatch, threshold=3)
+    monkeypatch.setattr(handlers, "_control_service", lambda: SimpleNamespace(database=_streak_database(running, {})))
+    pause = AsyncMock(return_value={"success": True})
+    monkeypatch.setattr(handlers, "handle_pause_workflow", pause)
+    result = await handlers.pause_generation_on_failure(
+        workflow_id="wf", reason="Spending cap reached", hint="Review billing before resuming.",
+        requires_user_action=True, generation=running.generation,
+    )
+    assert result["paused"] is True
+    pause.assert_awaited_once()
+    assert pause.await_args.args[0]["_pause_detail"] == "Spending cap reached Review billing before resuming."
+    pause.reset_mock()
+    result = await handlers.pause_generation_on_failure(
+        workflow_id="wf", reason="Old failure", requires_user_action=True, generation=running.generation - 1,
+    )
+    assert result["reason"] == "stale_generation"
+    pause.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_single_node_failure_does_not_trip_the_breaker(monkeypatch):
     """The reported regression: one telegramSend NodeUserError on one
     firing paused the whole deployment. Below the streak threshold the

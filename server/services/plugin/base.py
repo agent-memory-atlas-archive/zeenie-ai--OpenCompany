@@ -60,6 +60,25 @@ class NodeUserError(Exception):
     unexpected failures that warrant a stacktrace in the operator log.
     """
 
+    def __init__(self, message: str, *, hint: Optional[str] = None, requires_user_action: bool = False):
+        super().__init__(message)
+        self.hint = hint
+        self.requires_user_action = requires_user_action
+
+    def as_dict(self) -> Dict[str, Any]:
+        """Public recovery information, shared by nodes and agent tools.
+
+        Ordinary input errors remain correctable by the model. Account or
+        configuration blockers explicitly require the owner, so another
+        model turn cannot fix them. Callers must supply safe text only.
+        """
+        return {
+            "error": str(self),
+            "error_type": "NodeUserError",
+            **({"hint": self.hint} if self.hint else {}),
+            **({"requires_user_action": True, "retryable": False} if self.requires_user_action else {}),
+        }
+
 
 NODE_WAIT_INTERRUPTED = "NodeWaitInterrupted"
 
@@ -639,7 +658,7 @@ class BaseNode:
             # LLM gets the message in the structured response and can
             # retry with corrected input.
             logger.warning("[%s] %s op %s: %s", self.type, op_name, type(e).__name__, e)
-            return self._wrap_error(start_time=start_time, error=str(e), error_type="NodeUserError")
+            return self._wrap_error(start_time=start_time, error=str(e), extra=e.as_dict())
         except NodeWaitInterrupted as e:
             # Not a failure: the process is going away mid-wait. The activity
             # wrapper turns this envelope into a retryable error.
@@ -781,7 +800,7 @@ class BaseNode:
     def _tool_error_payload(self, envelope: Dict[str, Any]) -> Dict[str, Any]:
         """Copy only explicitly declared public metadata from a tool error."""
         result = {"error": envelope.get("error", "tool execution failed")}
-        for name in self.tool_error_fields:
+        for name in self.tool_error_fields | {"hint", "requires_user_action", "retryable"}:
             if name != "error" and name in envelope and envelope[name] is not None:
                 result[name] = envelope[name]
         return result
@@ -1174,7 +1193,8 @@ class BaseNode:
                     await broadcaster.update_node_status(
                         node_id,
                         "error",
-                        {"error": error, "execution_id": execution_id},
+                        {"error": error, "execution_id": execution_id,
+                         **{key: result[key] for key in ("hint", "requires_user_action", "error_type") if key in result}},
                         workflow_id=workflow_id,
                     )
 

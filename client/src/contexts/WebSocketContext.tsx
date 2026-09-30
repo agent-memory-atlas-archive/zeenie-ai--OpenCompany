@@ -176,6 +176,8 @@ export interface WorkflowControlStatus {
   /** Server-owned canvas-editability capability (backend SSOT — the FE
    * renders it, never re-derives it from state strings). */
   can_edit: boolean;
+  pause_reason?: string | null;
+  pause_detail?: string | null;
   started_at?: string | null;
   updated_at?: string | null;
   error?: string | null;

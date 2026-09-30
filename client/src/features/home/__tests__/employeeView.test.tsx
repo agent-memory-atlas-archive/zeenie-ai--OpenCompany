@@ -130,6 +130,13 @@ describe('EmployeeView', () => {
     expect(screen.getByRole('button', { name: 'Resume' })).toBeEnabled();
   });
 
+  it('keeps the recovery hint visible for a failure-paused employee after reopening', () => {
+    const why = 'Spending cap reached. Review billing before resuming.';
+    renderPage(summary({ status: 'attention', talk: TALK_ON }, { state: 'paused', pause_reason: 'failures', pause_detail: why }));
+    expect(screen.getByRole('alert')).toHaveTextContent(why);
+    expect(screen.getByRole('button', { name: 'Resume' })).toBeEnabled();
+  });
+
   it('says to connect an AI model, and opens that dialog, when Start is refused for want of one', async () => {
     useHomeStore.setState({ connectAIOpen: false });
     actions.startEmployee.mockRejectedValue(new Error('needs_ai'));

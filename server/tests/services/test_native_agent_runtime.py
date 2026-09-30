@@ -49,6 +49,34 @@ class _Database:
         return None
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("needs_owner", [True, False])
+async def test_tool_errors_only_stop_the_loop_when_the_owner_must_fix_them(needs_owner):
+    response = LLMResponse(tool_calls=[ToolCall(id="call-1", name="model", args={})])
+    unifier = _FakeUnifier([response, LLMResponse(content="fixed")])
+    save = AsyncMock()
+    async def execute(_name, _args):
+        raise NodeUserError("Blocked", hint="Fix the account" if needs_owner else "Supply a value", requires_user_action=needs_owner)
+
+    kwargs = dict(provider="gemini", api_key="test", model="test", temperature=0,
+                  max_tokens=100, initial_messages=[Message(role="user", content="go")],
+                  tools=[AgentToolSpec(definition=ToolDef(name="model", description="model", parameters={}))],
+                  tool_executor=execute, conversation_saver=save)
+    if needs_owner:
+        with pytest.raises(NodeUserError) as caught:
+            await run_native_agent_loop(unifier, **kwargs)
+        assert caught.value.requires_user_action
+        assert caught.value.hint == "Fix the account"
+        assert len(unifier.calls) == 1
+        # The failed tool result is saved with its matching call, without
+        # spending a second model turn to explain the error.
+        assert save.await_args.args[0][-1].role == "tool"
+    else:
+        result = await run_native_agent_loop(unifier, **kwargs)
+        assert result["response"].content == "fixed"
+        assert len(unifier.calls) == 2
+
+
 def test_in_process_compaction_usage_joins_execution_wide_total():
     from services.ai import _accumulate_compaction_usage
 

@@ -2315,7 +2315,10 @@ async def _clear_failure_streak(database, control) -> None:
         logger.debug(f"Failed to clear failure streak: {exc}")
 
 
-async def pause_generation_on_failure(*, workflow_id: str, reason: str) -> Dict[str, Any]:
+async def pause_generation_on_failure(
+    *, workflow_id: str, reason: str, requires_user_action: bool = False,
+    hint: Optional[str] = None, generation: Optional[int] = None,
+) -> Dict[str, Any]:
     """Circuit breaker: pause a controlled deployment after failed runs.
 
     Called by the ``workflow_control.pause_on_failure.v1`` activity that
@@ -2346,7 +2349,11 @@ async def pause_generation_on_failure(*, workflow_id: str, reason: str) -> Dict[
             "reason": "not_running",
             "status": getattr(control, "status", None),
         }
-    threshold = _pause_on_failure_threshold()
+    if generation is not None and int(generation) != control.generation:
+        return {"paused": False, "reason": "stale_generation"}
+    # Account/configuration blockers cannot heal by spending two more runs.
+    # Ordinary node/input failures retain the existing circuit breaker.
+    threshold = 1 if requires_user_action else _pause_on_failure_threshold()
     if threshold > 1:
         streak = await _bump_failure_streak(
             service.database,
@@ -2381,7 +2388,10 @@ async def pause_generation_on_failure(*, workflow_id: str, reason: str) -> Dict[
                 "expected_revision": control.revision,
                 "idempotency_key": f"pause-on-failure:{control.id}:{control.revision}",
                 "_pause_reason": PAUSE_REASON_FAILURES,
-                "_pause_detail": _failure_pause_detail(reason),
+                "_pause_detail": (
+                    " ".join(f"{reason} {hint or ''}".split())[:1000]
+                    if requires_user_action else _failure_pause_detail(reason)
+                ),
             },
             None,
         )

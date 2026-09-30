@@ -308,6 +308,7 @@ class LLMErrorCategory(str, Enum):
 
     AUTHENTICATION = "authentication"
     PERMISSION = "permission"
+    BILLING = "billing"
     RATE_LIMIT = "rate_limit"
     INVALID_REQUEST = "invalid_request"
     NOT_FOUND = "not_found"
@@ -402,6 +403,9 @@ class LLMError(Exception):
                 f"{provider} denied this request. "
                 "Check account and model access."
             ),
+            LLMErrorCategory.BILLING.value: (
+                f"{provider} blocked this request because a spending limit or available credits were exhausted."
+            ),
             LLMErrorCategory.RATE_LIMIT.value: (
                 f"{provider} is rate-limiting requests. "
                 "Retry after a short delay."
@@ -429,6 +433,35 @@ class LLMError(Exception):
             ),
         }
         return messages.get(category, messages[LLMErrorCategory.UNKNOWN.value])
+
+    @property
+    def hint(self) -> Optional[str]:
+        """Fixed recovery advice; never copy the provider's raw response."""
+        return {
+            LLMErrorCategory.BILLING: "Review the provider project's billing, spending cap, and credits. Resume after access is restored; repeating the request will not fix it.",
+            LLMErrorCategory.AUTHENTICATION: "Update the provider credential in Settings > Connectors, then resume.",
+            LLMErrorCategory.PERMISSION: "Check the credential's project and model permissions, then resume after access is restored.",
+            LLMErrorCategory.NOT_FOUND: "Choose a model available to this provider and credential, then apply the change and resume.",
+            LLMErrorCategory.PROTOCOL: "Correct the provider's base URL and API configuration, then resume.",
+            LLMErrorCategory.CONTEXT_LENGTH: "Reduce or clear the agent's context before trying again.",
+            LLMErrorCategory.INVALID_REQUEST: "Check the model's supported request settings before trying again.",
+        }.get(self.category)
+
+    @property
+    def requires_user_action(self) -> bool:
+        return not self.retryable and self.category in {
+            LLMErrorCategory.BILLING, LLMErrorCategory.AUTHENTICATION,
+            LLMErrorCategory.PERMISSION, LLMErrorCategory.NOT_FOUND,
+            LLMErrorCategory.PROTOCOL,
+        }
+
+    def as_node_error(self):
+        from services.plugin import NodeUserError
+
+        return NodeUserError(
+            self.user_message, hint=self.hint,
+            requires_user_action=self.requires_user_action,
+        )
 
     @classmethod
     def from_exception(cls, provider: str, exc: BaseException) -> "LLMError":
@@ -699,6 +732,15 @@ def _classify_error(
 ) -> LLMErrorCategory:
     name = type(exc).__name__.lower()
     message = str(exc).lower()
+    # A quota/credit exhaustion can arrive as 429, but backoff cannot fix it.
+    # Match narrow billing signatures before the generic HTTP classifiers.
+    if status in {400, 402, 403, 429} and (
+        status == 402 or any(marker in message for marker in (
+            "spend cap breached", "insufficient_quota", "insufficient credits",
+            "credit balance is too low", "billing_hard_limit_reached",
+        ))
+    ):
+        return LLMErrorCategory.BILLING
     if status == 401 or "authentication" in name or "api key" in message:
         return LLMErrorCategory.AUTHENTICATION
     if status == 403 or "permission" in name:

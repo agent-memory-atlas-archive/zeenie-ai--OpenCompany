@@ -88,6 +88,50 @@ def patched_workflow(monkeypatch):
 
 class TestWorkflowLoopContract:
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("from_tool", [False, True])
+    async def test_owner_action_error_stops_before_another_model_or_compaction(self, monkeypatch, patched_workflow, from_tool):
+        from services.llm.protocol import LLMError, LLMErrorCategory
+        from services.temporal.agent_activities import _as_temporal_llm_error
+        from services.temporal.agent_workflow import AgentWorkflow
+
+        error = LLMError("secret provider body", "gemini", category=LLMErrorCategory.BILLING)
+        prepared = _payload()
+        prepared["compaction_threshold"] = 1
+        calls = []
+        phases = []
+
+        async def execute(name, *, args, **_kwargs):
+            calls.append(name)
+            if name == "agent.prepare_payload":
+                return prepared
+            if name == "agent.execute_llm_step":
+                if from_tool:
+                    return {"kind": "tool_calls", "calls": [{"id": "call-1", "name": "write_todos", "args": {}}],
+                            "usage": {"input_tokens": 10, "output_tokens": 2}}
+                failure = RuntimeError("activity failed")
+                failure.cause = _as_temporal_llm_error(error)
+                raise failure
+            if name == "node.writeTodos.v1":
+                return {"success": False, **error.as_node_error().as_dict()}
+            if name == "agent.broadcast_progress":
+                phases.append(args[0])
+                return {}
+            if name in {"agent.skill.clear", "agent.persist_turn"}:
+                return {}
+            raise AssertionError(f"Unexpected activity: {name}")
+
+        monkeypatch.setattr(patched_workflow, "execute_activity", execute)
+        result = await AgentWorkflow().run({"node_id": "agent-1", "execution_id": "root-run-1"})
+        assert result["success"] is False
+        assert result["requires_user_action"] is True
+        assert result["hint"] == error.hint
+        assert calls.count("agent.execute_llm_step") == 1
+        assert "agent.compact_context" not in calls
+        failure = next(p for p in phases if p.get("status") == "error")
+        assert failure["hint"] == error.hint
+        assert "secret" not in str(failure)
+
+    @pytest.mark.asyncio
     async def test_llm_step_payload_shape_and_heartbeat(
         self,
         monkeypatch,

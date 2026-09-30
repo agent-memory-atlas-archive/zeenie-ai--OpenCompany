@@ -129,6 +129,20 @@ describe('the thread', () => {
 });
 
 describe('sending', () => {
+  it('shows the node failure and hint without waiting for another model answer', async () => {
+    renderTalk(employee());
+    const box = await screen.findByRole('textbox', { name: 'Message Maya' });
+    fireEvent.change(box, { target: { value: 'Hello' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await screen.findByText('Hello');
+    act(() => useNodeStatusStore.getState().setStatus('w1', AGENT, {
+      status: 'error', data: { error: 'Spending cap reached.', hint: 'Review billing before resuming.' },
+    }));
+    expect(screen.getByRole('alert')).toHaveTextContent('Spending cap reached. Review billing before resuming.');
+    expect(screen.queryByText('Working…')).not.toBeInTheDocument();
+    expect(screen.queryByText('No answer from Maya yet.')).not.toBeInTheDocument();
+  });
+
   it('shows the message at once and thinks until the answer lands', async () => {
     renderTalk(employee());
     const box = await screen.findByRole('textbox', { name: 'Message Maya' });
@@ -269,6 +283,17 @@ describe('useReplyWait', () => {
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it('ignores an old failure when a new message begins', () => {
+    act(() => useNodeStatusStore.getState().setStatus('w1', AGENT, { status: 'error', data: { error: 'Old failure' } }));
+    const { result } = renderHook(() => useReplyWait('w1', AGENT, []));
+    act(() => result.current.begin());
+    expect(result.current).toMatchObject({ waiting: true, failure: null });
+    act(() => useNodeStatusStore.getState().setStatus('w1', AGENT, { status: 'error', data: { error: 'New failure', hint: 'Fix the key' } }));
+    expect(result.current).toMatchObject({ waiting: false, unanswered: false, failure: { error: 'New failure', hint: 'Fix the key' } });
+    act(() => result.current.begin());
+    expect(result.current.failure).toBeNull();
   });
 
   it('gives up when the agent never picks the message up', () => {

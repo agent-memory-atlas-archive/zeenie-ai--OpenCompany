@@ -23,6 +23,7 @@ import { ArrowUp, Monitor } from 'lucide-react';
 import { Suspense, lazy, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { ActionButton } from '@/components/ui/action-button';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
@@ -163,7 +164,7 @@ function Conversation({ employee, control, drafts }: { employee: EmployeeSummary
   const thread = useTalkThread(workflowId);
   const messages = thread.data;
   const send = useSendTalkMessage(workflowId);
-  const { waiting, unanswered, begin, cancel } = useReplyWait(workflowId, employee.talk.agent_node_id, messages);
+  const { waiting, unanswered, failure, begin, cancel } = useReplyWait(workflowId, employee.talk.agent_node_id, messages);
   const mode = talkMode(employee.control);
   const [draft, setDraft] = useState('');
   const [queued, setQueued] = useState(false);
@@ -220,6 +221,9 @@ function Conversation({ employee, control, drafts }: { employee: EmployeeSummary
 
   const rows = messages ? threadRows(messages) : [];
   const notice = talkNoticeText(mode, name, queued);
+  const failureText = mode === 'queue' && employee.control.pause_reason === 'failures'
+    ? employee.control.pause_detail || (employee.task?.label === 'Paused' ? employee.task.text : null)
+    : failure ? [failure.error, failure.hint].filter(Boolean).join(' ') : null;
   const now = new Date();
 
   return (
@@ -255,11 +259,12 @@ function Conversation({ employee, control, drafts }: { employee: EmployeeSummary
               <p className={cn('m-0', BUBBLE, THEIRS, 'text-fg-muted')}>Working…</p>
             </div>
           )}
-          {unanswered && !waiting && <p className={cn('m-0 text-xs text-fg-muted', PAST_AVATAR)}>No answer from {name} yet.</p>}
+          {unanswered && !waiting && !failureText && <p className={cn('m-0 text-xs text-fg-muted', PAST_AVATAR)}>No answer from {name} yet.</p>}
         </div>
         {drafts}
       </div>
       <div className="sticky bottom-0 z-10 mt-auto flex flex-col gap-2.5 bg-bg-app pt-4 pb-3">
+        {failureText && <Alert variant="destructive"><AlertDescription>{failureText}</AlertDescription></Alert>}
         {employee.pending_changes && <PendingChangesNotice employee={employee} />}
         {employee.browser_request && <BrowserNotice employee={employee} />}
         {notice && (

@@ -179,6 +179,26 @@ def test_structured_error_exposes_only_category_based_user_message():
     assert "Bearer secret" not in error.user_message
 
 
+@pytest.mark.parametrize(("status", "message"), [
+    (403, "Spend cap breached for project: projects/private-id for service: aiplatform.googleapis.com"),
+    (429, "insufficient_quota: private account details"),
+    (400, "Your credit balance is too low: secret"),
+    (402, "Payment required: secret"),
+])
+def test_billing_errors_need_owner_action_instead_of_retry(status, message):
+    exc = Exception(message)
+    exc.status_code = status
+    error = LLMError.from_exception("gemini", exc)
+    assert error.category == LLMErrorCategory.BILLING
+    assert not error.retryable
+    node_error = error.as_node_error()
+    assert node_error.requires_user_action
+    assert "spending" in node_error.hint
+    assert "private" not in str(node_error)
+    assert "secret" not in str(node_error)
+    assert node_error.as_dict()["retryable"] is False
+
+
 @pytest.mark.parametrize(
     ("provider", "not_found", "context_length"),
     [

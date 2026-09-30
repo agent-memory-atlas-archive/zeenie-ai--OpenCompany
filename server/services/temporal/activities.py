@@ -614,6 +614,11 @@ async def pause_workflow_on_failure_activity(payload: Dict[str, Any]) -> Dict[st
         return await pause_generation_on_failure(
             workflow_id=str(payload.get("workflow_id") or ""),
             reason=str(payload.get("reason") or "run_failed"),
+            **({
+                "requires_user_action": True,
+                "hint": payload.get("hint"),
+                "generation": payload.get("generation"),
+            } if payload.get("requires_user_action") is True else {}),
         )
     except Exception as exc:  # noqa: BLE001 — non-fatal
         activity.logger.warning(f"pause_workflow_on_failure_activity failed for " f"workflow={payload.get('workflow_id')!r}: {exc}")

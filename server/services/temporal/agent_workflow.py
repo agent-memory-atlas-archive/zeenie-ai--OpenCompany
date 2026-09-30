@@ -919,6 +919,15 @@ class AgentWorkflow:
                 cause_message = str(
                     getattr(cause, "message", "") or ""
                 ).strip()
+                recovery = {}
+                if cause_type.startswith("LLMError."):
+                    diagnostics = getattr(cause, "details", ())
+                    if diagnostics and isinstance(diagnostics[0], dict):
+                        recovery = {
+                            key: diagnostics[0][key]
+                            for key in ("hint", "requires_user_action", "retryable")
+                            if diagnostics[0].get(key) is not None
+                        }
                 safe_activity_types = {
                     "MissingAgentProviderCredential",
                     "EmptyAgentPrompt",
@@ -965,11 +974,14 @@ class AgentWorkflow:
                     max_iterations,
                     phase="failed",
                     status="error",
+                    extra={"error": detail, "error_type": "NodeUserError", **recovery}
+                    if recovery else None,
                 )
                 return {
                     "success": False,
                     "error": f"LLM step failed: {detail}",
                     "error_type": "LLMStepError",
+                    **recovery,
                     "result": {
                         "iterations": iteration + 1,
                         "usage": usage_total,
@@ -1605,6 +1617,7 @@ class AgentWorkflow:
                 await _cleanup_cancelled_delegations()
                 raise
 
+            blocked_error = None
             for call_index, call in enumerate(calls):
                 if call.get("parse_error"):
                     # Native adapters retain malformed arguments rather than
@@ -1860,12 +1873,18 @@ class AgentWorkflow:
                                 call_index,
                                 None,
                             )
+                        child_recovery = {
+                            key: tool_result[key]
+                            for key in ("hint", "requires_user_action", "retryable")
+                            if isinstance(tool_result, dict) and key in tool_result
+                        }
                         tool_result = {
                             "success": child_succeeded,
                             "status": "submitted" if child_succeeded else "failed",
                             "result": child_response,
                             "usage": child_summary.get("usage"),
                             **({"error": child_error} if child_error else {}),
+                            **child_recovery,
                         }
                         if next_delegation_to_start < len(delegation_call_indices):
                             await _start_delegation(
@@ -1912,6 +1931,19 @@ class AgentWorkflow:
                                 "delegation_result": delegated["result"],
                                 "delegation_usage": delegated.get("usage"),
                             }
+                    if (
+                        isinstance(tool_result, dict)
+                        and tool_result.get("error")
+                        and tool_result.get("requires_user_action") is True
+                        and workflow.patched("agent-user-action-error-v1")
+                    ):
+                        blocked_error = blocked_error or {
+                            "error": tool_result["error"],
+                            "error_type": "NodeUserError",
+                            "hint": tool_result.get("hint"),
+                            "requires_user_action": True,
+                            "retryable": False,
+                        }
                     tool_content = _serialise_tool_result(tool_result)
                     if (
                         tool_output_limit
@@ -2128,6 +2160,25 @@ class AgentWorkflow:
             )
 
             # ---- Transcript pressure and compaction ----------------------
+            if blocked_error:
+                # Complete/persist the current tool turn, then stop before
+                # another model request or paid compaction can be scheduled.
+                await workflow.execute_activity(
+                    "agent.skill.clear",
+                    args=[{"workflow_id": payload.get("workflow_id"),
+                           "execution_id": task_scope_execution_id,
+                           "agent_node_id": agent_node_id}],
+                    activity_id="clear-active-skills-blocked",
+                    start_to_close_timeout=PERSIST_TURN_TIMEOUT,
+                    retry_policy=AGENT_ACTIVITY_RETRY,
+                )
+                await self._emit_phase(
+                    agent_node_id, agent_workflow_id, iteration, max_iterations,
+                    phase="failed", status="error", extra=blocked_error,
+                )
+                return {"success": False, **blocked_error,
+                        "result": {"iterations": iteration + 1, "usage": usage_total}}
+
             # Summarize, then swap messages: no memory-node gate, no
             # checkpoint machinery. A later rollover resumes from the
             # compacted state for free, because the next LLM turn sends and
