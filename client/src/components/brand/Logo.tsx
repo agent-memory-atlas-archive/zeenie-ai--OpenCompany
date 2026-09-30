@@ -1,132 +1,117 @@
 /**
- * OpenCompany logo: the OC mark and the wordmark.
+ * OpenCompany logo: the Open Council mark and the wordmark.
  *
- * The mark is an O (the orb's ring: a purple-to-cyan gradient stroke with a
- * core dot) linked to a C (a cyan-to-green arc) with two employee nodes at the
- * C's ends. It is inline SVG that reads the `--lg-*` palette (themes/light.css,
- * themes/dark.css), so it switches with the theme family. Geometry and motion
- * come from design_handoff_opencompany_home (README "Logo",
- * reference/OpenCompany Logo.dc.html).
- *
- * Standalone assets (favicon, desktop icon) are the handoff's signed SVG files
- * in client/public, copied byte for byte; this component re-draws the mark,
- * it never embeds those files.
+ * The mark is a C (an open ring) around a core, with three members at it:
+ * each a head and a crescent sweeping clockwise along the ring. The wordmark
+ * is "OpenCompany" in a serif, drawn as outlines. Both are one colour, the
+ * text colour, so they are black on light themes and white on dark ones.
+ * The paths live in ./geometry.ts, which the favicon and the desktop icon
+ * embed too.
  */
 
-import { useEffect, useId, useLayoutEffect, useRef, type Ref } from 'react';
+import { useEffect, useLayoutEffect, useRef } from 'react';
 import { animate } from '@/lib/motion';
-import { claimLogoIntro } from './logoIntro';
 import { cn } from '@/lib/utils';
+import {
+  MARK_CORE,
+  MARK_HEIGHT,
+  MARK_MEMBERS,
+  MARK_RING,
+  MARK_VIEWBOX,
+  MARK_WIDTH,
+  WORDMARK_HEIGHT_EM,
+  WORDMARK_PATH,
+  WORDMARK_VIEWBOX,
+  WORDMARK_WIDTH_EM,
+} from './geometry';
+import { claimLogoIntro } from './logoIntro';
 
-/** Mark heights from the handoff. Below 16px use the app icon instead. */
+/** Mark heights and wordmark em sizes (px). Below 16px use the app icon instead. */
 const SIZES = {
-  sidebar: { mark: 23, word: 'text-md', gap: 'gap-2.25' },
-  header: { mark: 20, word: 'text-lead', gap: 'gap-2' },
-  settings: { mark: 16, word: 'text-sm', gap: 'gap-2' },
+  sidebar: { mark: 23, em: 16, gap: 'gap-2.25' },
+  header: { mark: 20, em: 15, gap: 'gap-2' },
+  settings: { mark: 16, em: 13, gap: 'gap-2' },
 } as const;
 
 export type LogoSize = keyof typeof SIZES;
 
-const VIEWBOX_W = 140;
-const VIEWBOX_H = 96;
-
-/** Intro and pulse timings from the handoff's logo spec (ms). */
+/** Intro and pulse timings (ms). */
 const MOTION = {
   ring: 780,
-  cDraw: 760,
-  cDrawDelay: 220,
-  nodePop: 520,
-  nodeDelays: [820, 930],
+  headPop: 520,
+  headDelays: [760, 860, 960],
+  bodyFade: 420,
+  bodyLag: 80,
   wordmark: 520,
   wordmarkDelay: 300,
-  pulseNode: 560,
+  pulseHead: 560,
   pulseStagger: 90,
   pulseRing: 900,
 } as const;
 
+/** The C spins about the ring's centre, which sits this far from its box's
+ *  top left corner (the box of a C open on the right: outer radius, twice). */
+const RING_ORIGIN = 'origin-[258.5px_258.5px] [transform-box:fill-box]';
+
 interface MarkShapesProps {
-  uid: string;
-  ringRef?: Ref<SVGCircleElement>;
-  arcRef?: Ref<SVGPathElement>;
-  topNodeRef?: Ref<SVGCircleElement>;
-  bottomNodeRef?: Ref<SVGCircleElement>;
+  ringRef?: (el: SVGPathElement | null) => void;
+  headRef?: (i: number) => (el: SVGPathElement | null) => void;
+  bodyRef?: (i: number) => (el: SVGPathElement | null) => void;
 }
 
-/** The mark's gradients and shapes, shared by the logo and the static mark. */
-function MarkShapes({ uid, ringRef, arcRef, topNodeRef, bottomNodeRef }: MarkShapesProps) {
-  const ringGradient = `oc-o-${uid}`;
-  const arcGradient = `oc-c-${uid}`;
+/** The mark's shapes, shared by the logo and the static mark. */
+function MarkShapes({ ringRef, headRef, bodyRef }: MarkShapesProps) {
   return (
     <>
-      <defs>
-        <linearGradient id={ringGradient} x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" className="[stop-color:var(--lg-ring-a)]" />
-          <stop offset="1" className="[stop-color:var(--lg-ring-b)]" />
-        </linearGradient>
-        <linearGradient id={arcGradient} x1="0" y1="1" x2="1" y2="0">
-          <stop offset="0" className="[stop-color:var(--lg-ring-b)]" />
-          <stop offset="1" className="[stop-color:var(--lg-green)]" />
-        </linearGradient>
-      </defs>
-      {/* Paint order matters: the C arc sits under the ring where they meet. */}
-      <path
-        ref={arcRef}
-        d="M 113.8 28.2 A 28 28 0 1 0 113.8 67.8"
-        fill="none"
-        stroke={`url(#${arcGradient})`}
-        strokeWidth={14}
-        strokeLinecap="round"
-        pathLength={1}
-        strokeDasharray="1"
-      />
-      <circle
-        ref={ringRef}
-        cx="44"
-        cy="48"
-        r="28"
-        fill="none"
-        stroke={`url(#${ringGradient})`}
-        strokeWidth={14}
-        className="origin-center [transform-box:fill-box]"
-      />
-      <circle cx="44" cy="48" r="8" className="fill-lg-core" />
-      <circle
-        ref={topNodeRef}
-        cx="113.8"
-        cy="28.2"
-        r="9"
-        className="origin-center fill-lg-pink [transform-box:fill-box]"
-      />
-      <circle
-        ref={bottomNodeRef}
-        cx="113.8"
-        cy="67.8"
-        r="9"
-        className="origin-center fill-lg-yellow [transform-box:fill-box]"
-      />
+      <path ref={ringRef} d={MARK_RING} className={RING_ORIGIN} />
+      <path d={MARK_CORE} />
+      {MARK_MEMBERS.map((member, i) => (
+        <g key={member.head}>
+          <path ref={bodyRef?.(i)} d={member.body} />
+          <path ref={headRef?.(i)} d={member.head} className="origin-center [transform-box:fill-box]" />
+        </g>
+      ))}
     </>
   );
-}
-
-/** useId output is not guaranteed to be a valid url(#...) fragment. */
-function useGradientUid(): string {
-  return useId().replace(/[^a-zA-Z0-9_-]/g, '');
 }
 
 /** The mark alone, filling the width of its box and never animated: the
  *  orb's stand-in where WebGL or motion is unavailable. Decorative. */
 export function OcMark({ className }: { className?: string }) {
-  const uid = useGradientUid();
   return (
     <svg
-      viewBox={`0 0 ${VIEWBOX_W} ${VIEWBOX_H}`}
-      className={cn('block h-auto overflow-visible', className)}
+      viewBox={MARK_VIEWBOX}
+      fill="currentColor"
+      className={cn('block h-auto text-fg-default', className)}
       aria-hidden
       focusable="false"
     >
-      <MarkShapes uid={uid} />
+      <MarkShapes />
     </svg>
   );
+}
+
+/** The wordmark alone at `em` px, labelled as the product name. */
+function Wordmark({ em, svgRef }: { em: number; svgRef?: (el: SVGSVGElement | null) => void }) {
+  return (
+    <svg
+      ref={svgRef}
+      viewBox={WORDMARK_VIEWBOX}
+      width={round1(em * WORDMARK_WIDTH_EM)}
+      height={round1(em * WORDMARK_HEIGHT_EM)}
+      fill="currentColor"
+      className="shrink-0"
+      role="img"
+      aria-label="OpenCompany"
+      focusable="false"
+    >
+      <path d={WORDMARK_PATH} />
+    </svg>
+  );
+}
+
+function round1(value: number): number {
+  return Math.round(value * 10) / 10;
 }
 
 export interface OcLogoProps {
@@ -143,15 +128,12 @@ export interface OcLogoProps {
 export function OcLogo({ size = 'sidebar', wordmark = true, intro = false, pulseNonce = 0, className }: OcLogoProps) {
   const spec = SIZES[size];
   const height = spec.mark;
-  const width = Math.round((height * VIEWBOX_W) / VIEWBOX_H);
+  const width = Math.round((height * MARK_WIDTH) / MARK_HEIGHT);
 
-  const uid = useGradientUid();
-
-  const ringRef = useRef<SVGCircleElement>(null);
-  const arcRef = useRef<SVGPathElement>(null);
-  const topNodeRef = useRef<SVGCircleElement>(null);
-  const bottomNodeRef = useRef<SVGCircleElement>(null);
-  const wordRef = useRef<HTMLSpanElement>(null);
+  const ringRef = useRef<SVGPathElement | null>(null);
+  const heads = useRef<(SVGPathElement | null)[]>([]);
+  const bodies = useRef<(SVGPathElement | null)[]>([]);
+  const wordRef = useRef<SVGSVGElement | null>(null);
 
   useLayoutEffect(() => {
     if (!intro || !claimLogoIntro()) return;
@@ -163,16 +145,16 @@ export function OcLogo({ size = 'sidebar', wordmark = true, intro = false, pulse
       ],
       { duration: MOTION.ring, easing: 'overshoot' },
     );
-    animate(arcRef.current, [{ strokeDashoffset: 1 }, { strokeDashoffset: 0 }], {
-      duration: MOTION.cDraw,
-      delay: MOTION.cDrawDelay,
-      easing: 'reveal',
-    });
-    [topNodeRef.current, bottomNodeRef.current].forEach((node, i) => {
-      animate(node, [{ transform: 'scale(0)' }, { transform: 'scale(1)' }], {
-        duration: MOTION.nodePop,
-        delay: MOTION.nodeDelays[i],
+    MOTION.headDelays.forEach((delay, i) => {
+      animate(heads.current[i], [{ transform: 'scale(0)' }, { transform: 'scale(1)' }], {
+        duration: MOTION.headPop,
+        delay,
         easing: 'overshoot',
+      });
+      animate(bodies.current[i], [{ opacity: 0 }, { opacity: 1 }], {
+        duration: MOTION.bodyFade,
+        delay: delay + MOTION.bodyLag,
+        easing: 'reveal',
       });
     });
     animate(
@@ -187,11 +169,11 @@ export function OcLogo({ size = 'sidebar', wordmark = true, intro = false, pulse
 
   useEffect(() => {
     if (!pulseNonce) return;
-    [topNodeRef.current, bottomNodeRef.current].forEach((node, i) => {
+    heads.current.forEach((head, i) => {
       animate(
-        node,
-        [{ transform: 'scale(1)' }, { transform: 'scale(1.45)', offset: 0.4 }, { transform: 'scale(1)' }],
-        { duration: MOTION.pulseNode, delay: MOTION.pulseStagger * i, easing: 'spring', fill: 'none' },
+        head,
+        [{ transform: 'scale(1)' }, { transform: 'scale(1.3)', offset: 0.4 }, { transform: 'scale(1)' }],
+        { duration: MOTION.pulseHead, delay: MOTION.pulseStagger * i, easing: 'spring', fill: 'none' },
       );
     });
     animate(
@@ -208,11 +190,12 @@ export function OcLogo({ size = 'sidebar', wordmark = true, intro = false, pulse
   const labelled = !wordmark;
 
   return (
-    <span className={cn('inline-flex shrink-0 items-center', spec.gap, className)}>
+    <span className={cn('inline-flex shrink-0 items-center text-fg-default', spec.gap, className)}>
       <svg
-        viewBox={`0 0 ${VIEWBOX_W} ${VIEWBOX_H}`}
+        viewBox={MARK_VIEWBOX}
         width={width}
         height={height}
+        fill="currentColor"
         className="shrink-0 overflow-visible"
         role={labelled ? 'img' : undefined}
         aria-label={labelled ? 'OpenCompany' : undefined}
@@ -220,18 +203,24 @@ export function OcLogo({ size = 'sidebar', wordmark = true, intro = false, pulse
         focusable="false"
       >
         <MarkShapes
-          uid={uid}
-          ringRef={ringRef}
-          arcRef={arcRef}
-          topNodeRef={topNodeRef}
-          bottomNodeRef={bottomNodeRef}
+          ringRef={(el) => {
+            ringRef.current = el;
+          }}
+          headRef={(i) => (el) => {
+            heads.current[i] = el;
+          }}
+          bodyRef={(i) => (el) => {
+            bodies.current[i] = el;
+          }}
         />
       </svg>
       {wordmark && (
-        <span ref={wordRef} className={cn('font-body tracking-wordmark whitespace-nowrap', spec.word)}>
-          <span className="font-semibold text-fg-default">Open</span>
-          <span className="font-medium text-fg-muted">Company</span>
-        </span>
+        <Wordmark
+          em={spec.em}
+          svgRef={(el) => {
+            wordRef.current = el;
+          }}
+        />
       )}
     </span>
   );

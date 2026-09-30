@@ -206,17 +206,6 @@
   --node-workflow-edge:   color-mix(in srgb, var(--dracula-orange) var(--tint-action-border), transparent);
   --node-workflow-ink:    #c2410c;
 
-  /* ── Logo palette (OC mark) — the mark is inline SVG that reads these, so
-   * it switches with the theme family. Values from the design handoff. ── */
-  --lg-ring-a: #8b5cf6;
-  --lg-ring-b: #06b6d4;
-  --lg-green:  #22c55e;
-  --lg-orange: #f59e0b;
-  --lg-pink:   #ec4899;
-  --lg-yellow: #eab308;
-  --lg-link:   #a3aab5;
-  --lg-core:   #1a1d21;
-
   /* ── Floating-surface shadows (composer, employee card, popovers, the
    * Settings dialog). The colour differs per family, so they live here
    * rather than in base.css; dark.css overrides them. ────────────────── */

@@ -155,14 +155,14 @@ tokens are used directly, as `w-(--w-home-sidebar)` or `duration-(--dur-slow)`):
   keeps the paused dot at the design's mid grey.
 - **Per family** (light.css / dark.css): `--shadow-float | popover | dialog |
   dock` (`dock` is the Workspace's left shadow when it lies over the page),
-  the logo palette `--lg-*`, the node-role `-fill / -edge / -hover / -ink`
-  variants, and Home's glows: `--glow-connect | hire | hire-settle | refine |
-  refine-out | task` plus the working pip's `--tint-pip-ring`. Dark keeps the
-  neon; light swaps each neon for its ink at .75 of the alpha and .6 of the
-  blur, the design's rule for white surfaces. The Web Animations that play
-  them name the token (`boxShadow: 'var(--glow-hire)'`), so the colour follows
-  the theme with no script. dark.css restates each one, because light.css's
-  bare `:root` also matches the dark family.
+  the node-role `-fill / -edge / -hover / -ink` variants, and Home's glows:
+  `--glow-connect | hire | hire-settle | refine | refine-out | task` plus the
+  working pip's `--tint-pip-ring`. Dark keeps the neon; light swaps each neon
+  for its ink at .75 of the alpha and .6 of the blur, the design's rule for
+  white surfaces. The Web Animations that play them name the token
+  (`boxShadow: 'var(--glow-hire)'`), so the colour follows the theme with no
+  script. dark.css restates each one, because light.css's bare `:root` also
+  matches the dark family.
 
 Home shows only the two base themes: `ThemeProvider`'s `baseOnly` (set by
 `app/ShellThemeProvider.tsx` while Home is showing) renders a chosen stylized

@@ -49,6 +49,11 @@ desktop
 # node_modules, rendered audio and video output).
 marketing
 
+# Generated artwork (output/) and local scratch space (tmp/); the image uses
+# neither. Both patterns match only at the context root.
+output
+tmp
+
 # Terraform providers and state (state files carry secrets).
 **/.terraform
 **/*.tfstate*
@@ -67,3 +72,8 @@ marketing
 !.opencompany/workflows
 .machina
 data
+# A source-dev backend resolves a relative DATA_DIR against its own cwd, so
+# the Mobile workspace's phone runtime (emulator images, JDK, engine; several
+# GB) can sit under server/.opencompany. The runtime stage copies all of
+# server/, so leaving it in would put it in the image.
+server/.opencompany

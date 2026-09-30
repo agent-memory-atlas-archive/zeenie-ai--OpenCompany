@@ -3,6 +3,12 @@
  * `initScene` (design_handoff_opencompany_home, reference/OpenCompany
  * Home.dc.html; spec in orb/ORB.md). Loaded only through orb.ts.
  *
+ * Its shapes are the logo's mark in 3D (brand/geometry.ts): the C, a ring
+ * open on one side, around the core, and the council, three heads each
+ * trailing a crescent that tapers along the ring. The ring spins, the
+ * council turns more slowly the same way (heads first), and a line from the
+ * core to each head carries a packet. It keeps its own colours.
+ *
  * Changes from the prototype's three r149 for current three:
  * - colour management off and sRGB output, so colours read as authored;
  * - lights are physically based now: intensities x PI, and the point
@@ -18,9 +24,11 @@ import {
   BufferAttribute,
   BufferGeometry,
   CanvasTexture,
+  CircleGeometry,
   Color,
   ColorManagement,
   DirectionalLight,
+  Float32BufferAttribute,
   Group,
   Line,
   LineBasicMaterial,
@@ -32,6 +40,7 @@ import {
   Points,
   PointsMaterial,
   QuadraticBezierCurve3,
+  Quaternion,
   SRGBColorSpace,
   Scene,
   SphereGeometry,
@@ -48,6 +57,71 @@ ColorManagement.enabled = false;
 
 const PI = Math.PI;
 const POINT = 0.8 * PI;
+
+/** The mark in world units (its ring's outer edge at 1.44). */
+const RING_R = 1.2;
+const TUBE = 0.24;
+const GAP = (12.5 * PI) / 180;
+const CORE_R = 0.46;
+const HEAD_R = 0.3;
+const HEAD_D = 1.916;
+/** A crescent runs from 16 to 37 degrees clockwise of its head: its centre
+ *  line closes in on the ring and its thickness falls to a point, the mark's
+ *  profile. It starts later than in the mark, so the round tube clears the
+ *  head, and rounds off over its first 4 degrees. */
+const CRESCENT = { from: (16 * PI) / 180, to: (37 * PI) / 180, dome: 4 / 21, r0: 1.83, dr: 0.28, thick: 0.26 };
+
+/** The C's open end: a flat disc across the tube at `angle`, facing out of it. */
+function ringCap(angle: number, facing: 1 | -1): BufferGeometry {
+  const out = new Vector3(Math.sin(angle), -Math.cos(angle), 0).multiplyScalar(facing);
+  return new CircleGeometry(TUBE, 48)
+    .applyQuaternion(new Quaternion().setFromUnitVectors(new Vector3(0, 0, 1), out))
+    .translate(Math.cos(angle) * RING_R, Math.sin(angle) * RING_R, 0);
+}
+
+/** A member's crescent: a tube sweeping clockwise from the head at
+ *  `headAngle`, closed at both ends. */
+function crescentGeometry(headAngle: number): BufferGeometry {
+  const ALONG = 48;
+  const AROUND = 20;
+  const { from, to, dome, r0, dr, thick } = CRESCENT;
+  const at = (f: number, out: Vector3) => {
+    const a = headAngle - (from + (to - from) * f);
+    const r = r0 - dr * f ** 1.5;
+    return out.set(Math.cos(a) * r, Math.sin(a) * r, 0);
+  };
+  const centre = new Vector3();
+  const ahead = new Vector3();
+  const side = new Vector3();
+  const positions: number[] = [];
+  for (let i = 0; i <= ALONG; i++) {
+    const f = i / ALONG;
+    at(f, centre);
+    // Along the tube (clockwise); `side` is the outward normal in the ring's plane.
+    const step = 1 / ALONG / 2;
+    at(Math.min(1, f + step), ahead).sub(at(Math.max(0, f - step), side));
+    side.set(-ahead.y, ahead.x, 0).normalize();
+    const d = Math.min(1, f / dome);
+    const h = thick * (1 - f) * Math.sqrt(1 - (1 - d) ** 2);
+    for (let j = 0; j < AROUND; j++) {
+      const psi = (j / AROUND) * 2 * PI;
+      positions.push(centre.x + side.x * h * Math.cos(psi), centre.y + side.y * h * Math.cos(psi), h * Math.sin(psi));
+    }
+  }
+  const index: number[] = [];
+  for (let i = 0; i < ALONG; i++) {
+    for (let j = 0; j < AROUND; j++) {
+      const a = i * AROUND + j;
+      const b = i * AROUND + ((j + 1) % AROUND);
+      index.push(a, b, a + AROUND, b, b + AROUND, a + AROUND);
+    }
+  }
+  const geometry = new BufferGeometry();
+  geometry.setAttribute('position', new Float32BufferAttribute(positions, 3));
+  geometry.setIndex(index);
+  geometry.computeVertexNormals();
+  return geometry;
+}
 
 export function createOrbEngine(onLost: () => void) {
   const R = new WebGLRenderer({ antialias: true, alpha: true });
@@ -104,24 +178,31 @@ export function createOrbEngine(onLost: () => void) {
   orb.add(tilt);
   scene.add(orb);
 
-  // Ring: vertex colours purple -> cyan by angle; the light theme's near-blacks kept beside them.
-  const rg = new TorusGeometry(1.2, 0.24, 48, 220);
-  const pos = rg.attributes.position;
-  const ringDark = new Float32Array(pos.count * 3);
-  const ringLight = new Float32Array(pos.count * 3);
+  // The C: a torus open GAP either side of +x, with flat caps on its ends.
+  // Vertex colours purple -> cyan by angle; the light theme's near-blacks kept beside them.
   const tmp = new Color();
-  const pairs = [
-    [new Color(0xbd93f9), new Color(0x8be9fd), ringDark],
-    [new Color(0x050506), new Color(0x16181c), ringLight],
+  const ringStops = [
+    [new Color(0xbd93f9), new Color(0x8be9fd)],
+    [new Color(0x050506), new Color(0x16181c)],
   ] as const;
-  for (let i = 0; i < pos.count; i++) {
-    const t = (Math.sin(Math.atan2(pos.getY(i), pos.getX(i)) - 0.8) + 1) / 2;
-    for (const [a, b, out] of pairs) {
-      tmp.copy(a).lerp(b, t);
-      out.set([tmp.r, tmp.g, tmp.b], i * 3);
+  const ringParts = [
+    new TorusGeometry(RING_R, TUBE, 48, 200, 2 * PI - 2 * GAP).rotateZ(GAP),
+    ringCap(GAP, 1),
+    ringCap(2 * PI - GAP, -1),
+  ].map((geometry) => {
+    const pos = geometry.attributes.position;
+    const dark = new Float32Array(pos.count * 3);
+    const light = new Float32Array(pos.count * 3);
+    for (let i = 0; i < pos.count; i++) {
+      const t = (Math.sin(Math.atan2(pos.getY(i), pos.getX(i)) - 0.8) + 1) / 2;
+      ringStops.forEach(([a, b], k) => {
+        tmp.copy(a).lerp(b, t);
+        (k ? light : dark).set([tmp.r, tmp.g, tmp.b], i * 3);
+      });
     }
-  }
-  rg.setAttribute('color', new BufferAttribute(Float32Array.from(ringDark), 3));
+    geometry.setAttribute('color', new BufferAttribute(Float32Array.from(dark), 3));
+    return { geometry, dark, light };
+  });
   const ringMat = new MeshPhysicalMaterial({
     vertexColors: true,
     metalness: 0.25,
@@ -132,28 +213,36 @@ export function createOrbEngine(onLost: () => void) {
     emissive: 0x2a1d4a,
     emissiveIntensity: 0.5,
   });
-  const ring = new Mesh(rg, ringMat);
+  const ring = new Group();
+  ringParts.forEach(({ geometry }) => ring.add(new Mesh(geometry, ringMat)));
   tilt.add(ring);
   const coreMat = new MeshPhysicalMaterial({ color: 0xf8f8f2, emissive: 0xf8f8f2, emissiveIntensity: 0.55, roughness: 0.3, clearcoat: 1 });
-  const core = new Mesh(new SphereGeometry(0.38, 64, 64), coreMat);
+  const core = new Mesh(new SphereGeometry(CORE_R, 64, 64), coreMat);
   orb.add(core);
   const coreGlow = glow(0xf8f8f2, 2.2, 0.35);
   const ringGlow = glow(0xbd93f9, 5, 0.12);
   orb.add(coreGlow, ringGlow);
 
-  const nodes = [0x50fa7b, 0xffb86c, 0xff79c6, 0xf1fa8c].map((col, i) => {
+  // The council: a head and its crescent every 120 degrees from the top, one
+  // material each. The lines and packets sit beside it in the tilted plane.
+  const council = new Group();
+  tilt.add(council);
+  const members = [0xff79c6, 0xf1fa8c, 0x50fa7b].map((col, i) => {
+    const angle = PI / 2 + (i * 2 * PI) / 3;
     const mat = new MeshPhysicalMaterial({ color: col, emissive: col, emissiveIntensity: 0.35, roughness: 0.25, clearcoat: 1 });
-    const m = new Mesh(new SphereGeometry(0.2, 32, 32), mat);
-    const halo = glow(col, 1.1, 0.5);
-    m.add(halo);
+    const head = new Mesh(new SphereGeometry(HEAD_R, 32, 32), mat);
+    head.position.set(Math.cos(angle) * HEAD_D, Math.sin(angle) * HEAD_D, 0);
+    const halo = glow(col, 1.2, 0.5);
+    head.add(halo);
+    council.add(head, new Mesh(crescentGeometry(angle), mat));
     const lg = new BufferGeometry();
     lg.setAttribute('position', new BufferAttribute(new Float32Array(33 * 3), 3));
     const line = new Line(lg, new LineBasicMaterial({ color: 0x6272a4, transparent: true, opacity: 0.7 }));
     const pk = glow(col, 0.45, 0.9);
-    orb.add(m, line, pk);
+    tilt.add(line, pk);
     const cd = new Color(col);
     const cl = new Color([0x060607, 0x0e0f12][i % 2]);
-    return { m, mat, halo, line, pk, cd, cl, phase: (i * PI) / 2 + PI / 4, r: 2.0 + (i % 2) * 0.15, off: Math.random() };
+    return { angle, mat, halo, line, pk, cd, cl, off: Math.random() };
   });
 
   const N = 900;
@@ -269,16 +358,15 @@ export function createOrbEngine(onLost: () => void) {
     tilt.rotation.x = 0.3 + Math.sin(t * 0.5) * 0.18;
     tilt.rotation.y = Math.cos(t * 0.4) * 0.22;
     ring.rotation.z += dt * mot * (0.25 + e * 2.4);
+    council.rotation.z += dt * mot * (0.12 + e * 0.5);
     core.scale.setScalar(1 + Math.sin(now * 0.004 * (1 + e * 2)) * 0.04 * (1 + e * 3));
     coreGlow.material.opacity = 0.25 + e * 0.5;
     coreGlow.scale.setScalar(2 + e * 1.6);
     ringGlow.material.opacity = 0.08 + e * 0.18;
-    nodes.forEach((n, i) => {
-      const a = n.phase + t * 0.5;
-      n.m.position.set(Math.cos(a) * n.r, Math.sin(a) * n.r * 0.62, Math.sin(a + (i % 2 ? 0.4 : -0.4)) * 0.9);
-      const p = n.m.position;
-      bez.v1.set(p.x * 0.5 - p.y * 0.25, p.y * 0.5 + p.x * 0.25, p.z * 0.5 + 0.6);
-      bez.v2.copy(p);
+    members.forEach((n) => {
+      const a = n.angle + council.rotation.z;
+      const p = bez.v2.set(Math.cos(a) * HEAD_D, Math.sin(a) * HEAD_D, 0);
+      bez.v1.set(p.x * 0.5 - p.y * 0.25, p.y * 0.5 + p.x * 0.25, 0.6);
       const arr = n.line.geometry.attributes.position.array as Float32Array;
       bez.getPoints(32).forEach((v, j) => arr.set([v.x, v.y, v.z], j * 3));
       n.line.geometry.attributes.position.needsUpdate = true;
@@ -293,7 +381,7 @@ export function createOrbEngine(onLost: () => void) {
     pts.rotation.y += dt * 0.02 * mot * (1 + e * 3);
     pts.rotation.x = rx * 0.3;
     lf += ((light ? 1 : 0) - lf) * Math.min(1, dt * 3.2);
-    nodes.forEach((n) => n.line.material.color.copy(tc.lD).lerp(tc.lL, lf));
+    members.forEach((n) => n.line.material.color.copy(tc.lD).lerp(tc.lL, lf));
     ringMat.emissive.copy(tc.eD).lerp(tc.black, lf);
     coreGlow.material.color.copy(tc.gD).lerp(tc.black, lf);
     ringMat.iridescence = 0.7 * (1 - lf);
@@ -304,10 +392,12 @@ export function createOrbEngine(onLost: () => void) {
     coreMat.emissiveIntensity = 0.55 - 0.3 * lf;
     if (Math.abs(lf - lfApplied) > 0.002) {
       lfApplied = lf;
-      const ca = rg.attributes.color.array as Float32Array;
-      for (let i = 0; i < ca.length; i++) ca[i] = ringDark[i] + (ringLight[i] - ringDark[i]) * lf;
-      rg.attributes.color.needsUpdate = true;
-      nodes.forEach((n) => {
+      for (const { geometry, dark, light: lit } of ringParts) {
+        const ca = geometry.attributes.color.array as Float32Array;
+        for (let i = 0; i < ca.length; i++) ca[i] = dark[i] + (lit[i] - dark[i]) * lf;
+        geometry.attributes.color.needsUpdate = true;
+      }
+      members.forEach((n) => {
         n.mat.color.copy(n.cd).lerp(n.cl, lf);
         n.mat.emissive.copy(n.cd).lerp(tc.black, lf);
         n.pk.material.color.setScalar(1 - lf);
@@ -324,7 +414,7 @@ export function createOrbEngine(onLost: () => void) {
     ringMat.clearcoatRoughness = 0.1 - 0.06 * lf;
     ringMat.roughness = 0.18 - 0.08 * lf;
     coreMat.roughness = 0.3 - 0.2 * lf;
-    nodes.forEach((n) => {
+    members.forEach((n) => {
       n.mat.emissiveIntensity = 0.35 * (1 - lf);
       n.mat.roughness = 0.25 - 0.15 * lf;
       n.halo.material.opacity = 0.5 - 0.35 * lf;

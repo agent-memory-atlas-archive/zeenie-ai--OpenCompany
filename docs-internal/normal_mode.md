@@ -97,21 +97,26 @@ and never starts loops then. Toasts are a second sonner toaster
 A 3D version of the logo drawn behind Home's content
 ([orb/orbEngine.ts](../client/src/features/home/orb/orbEngine.ts), a port of
 the design prototype's scene on current three.js; loaded in its own chunk the
-first time it runs). [orb/orb.ts](../client/src/features/home/orb/orb.ts) holds
-what the engine reads each frame (the slot to fill, an energy target, a spike)
-and its lifecycle: leaving Home keeps the renderer, the app shell disposes it.
+first time it runs). Its shapes are the mark's: the C, a ring open on one
+side, around the core, and three heads each trailing a crescent that tapers
+along the ring. The ring spins, the heads turn more slowly the same way, and a
+line from the core to each head carries a packet.
+[orb/orb.ts](../client/src/features/home/orb/orb.ts) holds what the engine
+reads each frame (the slot to fill, an energy target, a spike) and its
+lifecycle: leaving Home keeps the renderer, the app shell disposes it.
 `OrbStage` is the canvas host below the header; each view's `OrbSlot` reserves
 the square the orb glides into (`--size-orb-hire`, `--size-orb-employee`:
 large on the hire view, small on an employee's page, where the conversation
-needs the room). The composer sets the energy target (focused, holding text,
-a setup being written). These spike it: a hire, a theme or mode
-switch, a connect, a task change, opening Settings or the Workspace, a setup
-arriving or failing, and saving the profile (`SPIKE` in orb.ts). In dark the orb keeps the
-logo's colours with white particles and packets; in light it is glossy
-piano-black under a white rim light. Its glows and particles blend additively
-in dark and normally in light (additive glow vanishes on white), fading through
-zero at the midpoint of a theme change. Without WebGL, under reduced motion, or
-after a lost WebGL context, the slot shows the static mark.
+needs the room). The composer sets the energy target (focused, holding text, a
+setup being written). These spike it: a hire, a theme or mode switch, a
+connect, a task change, opening Settings or the Workspace, a setup arriving or
+failing, and saving the profile (`SPIKE` in orb.ts). The logo itself is one
+colour; in dark the orb keeps colours of its own (a purple-to-cyan ring; pink,
+yellow and green heads) with white particles and packets; in light it is
+glossy piano-black under a white rim light. Its glows and particles blend
+additively in dark and normally in light (additive glow vanishes on white),
+fading through zero at the midpoint of a theme change. Without WebGL, under
+reduced motion, or after a lost WebGL context, the slot shows the static mark.
 
 ## The Workspace
 

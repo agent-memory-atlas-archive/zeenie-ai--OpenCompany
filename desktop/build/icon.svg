@@ -1,29 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#1f2340"/>
-      <stop offset="1" stop-color="#0e1020"/>
-    </linearGradient>
-    <linearGradient id="ring" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#bd93f9"/>
-      <stop offset="1" stop-color="#8be9fd"/>
-    </linearGradient>
-  </defs>
   <!-- rounded app tile -->
-  <rect x="64" y="64" width="896" height="896" rx="200" fill="url(#bg)"/>
-  <!-- workflow edges -->
-  <g stroke="#6272a4" stroke-width="22" stroke-linecap="round" fill="none" opacity="0.9">
-    <path d="M300 420 C 380 420, 400 512, 480 512"/>
-    <path d="M300 604 C 380 604, 400 512, 480 512"/>
-    <path d="M544 512 C 620 512, 640 420, 724 420"/>
-    <path d="M544 512 C 620 512, 640 604, 724 604"/>
-  </g>
-  <!-- nodes -->
-  <circle cx="300" cy="420" r="58" fill="#50fa7b"/>
-  <circle cx="300" cy="604" r="58" fill="#ffb86c"/>
-  <circle cx="724" cy="420" r="58" fill="#ff79c6"/>
-  <circle cx="724" cy="604" r="58" fill="#f1fa8c"/>
-  <!-- central agent ring: the "O" -->
-  <circle cx="512" cy="512" r="118" fill="none" stroke="url(#ring)" stroke-width="44"/>
-  <circle cx="512" cy="512" r="40" fill="#f8f8f2"/>
+  <rect x="64" y="64" width="896" height="896" rx="200" fill="#0d0f13"/>
+  <!-- the Open Council mark (client/src/components/brand/geometry.ts MARK_PATH) -->
+  <path fill="#ffffff" transform="translate(512 566.2) scale(0.8)" d="M252.4 -55.9A258.5 258.5 0 1 0 252.4 55.9L172.8 38.3A177 177 0 1 1 172.8 -38.3ZM-91 0A91 91 0 1 0 91 0A91 91 0 1 0 -91 0ZM165.5 -220.5A192 192 0 0 0 67.4 -369.2A72 72 0 0 1 43.3 -286.6A141.5 141.5 0 0 1 165.5 -220.5ZM-62 -344A62 62 0 1 0 62 -344A62 62 0 1 0 -62 -344ZM108.2 253.6A192 192 0 0 0 286 243A72 72 0 0 1 226.5 180.8A141.5 141.5 0 0 1 108.2 253.6ZM235.9 172A62 62 0 1 0 359.9 172A62 62 0 1 0 235.9 172ZM-273.7 -33.1A192 192 0 0 0 -353.4 126.2A72 72 0 0 1 -269.8 105.7A141.5 141.5 0 0 1 -273.7 -33.1ZM-359.9 172A62 62 0 1 0 -235.9 172A62 62 0 1 0 -359.9 172Z"/>
 </svg>

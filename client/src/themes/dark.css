@@ -116,16 +116,6 @@
   --node-trigger-ink:  var(--dracula-pink);
   --node-workflow-ink: var(--dracula-orange);
 
-  /* Logo palette (OC mark), dark values from the design handoff. */
-  --lg-ring-a: var(--dracula-purple);
-  --lg-ring-b: var(--dracula-cyan);
-  --lg-green:  var(--dracula-green);
-  --lg-orange: var(--dracula-orange);
-  --lg-pink:   var(--dracula-pink);
-  --lg-yellow: var(--dracula-yellow);
-  --lg-link:   var(--dracula-comment);
-  --lg-core:   #f8f8f2;
-
   /* Shadows — deeper on dark surfaces (overrides base.css). */
   --shadow-card: 0 4px 12px rgb(0 0 0 / 0.3);
   --shadow-card-hover: 0 6px 18px rgb(0 0 0 / 0.4);

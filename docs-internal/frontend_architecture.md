@@ -141,7 +141,8 @@ client/src/
 │   │   └── steps/                  # WelcomeStep / HowItWorksStep / ConnectAIStep / TryItStep
 │   │
 │   ├── icons/                      # AI provider icons (SVG data URIs)
-│   ├── brand/Logo.tsx              # OcMark / OcWordmark / OcLogo (inline SVG, --lg-* palette, intro + pulse)
+│   ├── brand/Logo.tsx              # OcMark / OcLogo (inline SVG in the text colour, intro + pulse)
+│   ├── brand/geometry.ts           # Mark + wordmark paths; the favicon and desktop icon embed MARK_PATH
 │   ├── shell/ModeToggle.tsx        # The Normal / Dev switch (editor toolbar + Home header)
 │   ├── auth/                       # Login page + protected route
 │   ├── SquareNode.tsx, StartNode.tsx, TriggerNode.tsx, AIAgentNode.tsx, ToolkitNode.tsx, TeamMonitorNode.tsx
