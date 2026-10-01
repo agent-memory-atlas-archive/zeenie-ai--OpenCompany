@@ -614,3 +614,28 @@ The `OSError` has no traceback of its own. Orphans the reaper had not reached ye
 **Fix**: nothing sends console events through `os.kill` any more. `cli/tree.py::send_ctrl_break` (through pywin32) and its server copy in `services/_supervisor/util.py` (through `ctypes`, since the server has no pywin32) call `GenerateConsoleCtrlEvent` only for a process attached to the caller's console, and return whether the event went out. `kill_pid` terminates everything else at once. Before, some console hosts accepted an event for another console, delivered nothing, and `kill_pid` waited out its grace period. `_stop_proc` and `terminate_then_kill` treat an event that did not go out as they treated `os.kill`'s `OSError`. Locked by `cli/tests/test_tree.py`, `cli/tests/test_ports.py`, `cli/tests/test_supervisor.py` and `server/tests/services/test_supervisor.py`; their Windows-only tests send real events to processes they start.
 
 To reproduce the old failure on 3.12.8, run `kill_orphaned_opencompany_processes` from a process with no console against sleepers it started itself, with a root their command lines name: it raises the `SystemError`.
+
+## 30. Scheduled runs fire at the wrong times: "every 5 minutes" runs every fifth hour, weekly schedules never run
+
+**Symptom**: A deployed `cronScheduler` fires, but not when its settings say. This includes every Home employee hired to work on a schedule.
+
+| Setting | When it fired |
+|---|---|
+| every 30 seconds | every 30 minutes |
+| every 5 minutes | at minute 0 of every fifth hour |
+| hourly | once a day at 00:00 |
+| daily at 09:00 | at 00:00 on the 9th of each month |
+| weekly | never |
+| monthly | the day of the month landed in the month field, so once a year at best |
+
+**Root cause**: `TriggerManager.build_cron_expression` (`services/deployment/triggers.py`) built a six-field string with the second first (`0 */5 * * * *`), and `create_cron_schedule` (`services/temporal/schedules.py`) hands the string to Temporal's `ScheduleSpec.cron_expressions` unchanged. Temporal reads five fields as minute, hour, day of month, month and day of week, and six as those five plus a trailing year. Only with seven fields does it read the second first (`ScheduleSpec.cron_string` in temporalio's `api/schedule/v1`). So every field shifted one place. The schedule tests passed hand-written five-field strings, which is why nothing caught it.
+
+**Fix** (`d4caa64e`): the builder emits five fields, or seven (second first, year `*` last) for the seconds frequency. `TestCronExpression` in `server/tests/test_cron_canary.py` reads each expression the way Temporal documents it. It covers every frequency, the node's defaults and the parameters a Home hire sends.
+
+**Deployments started before the fix**: when the backend starts, it re-arms running and paused deployments. Re-arming calls `create_cron_schedule`, which updates the existing Schedule in place and keeps it paused if it was. Reset followed by Start also rebuilds it.
+
+**Still open**: two settings cannot become a Schedule, so a deployment that uses either fails at Start:
+- `once`: the builder returns no expression, and the SDK rejects `None`.
+- `month_day` `L`: the "last day of the month" a Home hire can ask for. Temporal's cron values are integers and month or weekday names only.
+
+See the [cronScheduler card](./node-logic-flows/workflow_triggers/cronScheduler.md).
