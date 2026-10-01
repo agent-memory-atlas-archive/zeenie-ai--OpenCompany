@@ -639,3 +639,15 @@ To reproduce the old failure on 3.12.8, run `kill_orphaned_opencompany_processes
 - `month_day` `L`: the "last day of the month" a Home hire can ask for. Temporal's cron values are integers and month or weekday names only.
 
 See the [cronScheduler card](./node-logic-flows/workflow_triggers/cronScheduler.md).
+
+## 31. A failed canvas Run says `Workflow failed: Unknown error`
+
+**Symptom**: Run a whole workflow with Temporal on (the default). When a node fails, the result dialog says `Workflow failed: Unknown error` and the response's `errors` list is empty, whatever the node's actual error was.
+
+**Root cause**: `MachinaWorkflow.run` stops at the first failed node and returns that failure in `errors`, a list of `{node_id, error, ...}`. Only an empty graph returns a top-level `error`. `TemporalExecutor.execute_workflow` read only the top-level `error`, so it reported no errors, and `WorkflowService._execute_temporal` passed no `error` on at all. The dialog shows only `error`.
+
+**Fix**: the executor keeps the workflow's `errors` and sets `error` to the first message; an empty graph or a failed Temporal call becomes `[{"error": ...}]`. `_execute_temporal` forwards `error`. Locked by `server/tests/temporal/test_run_errors.py`. The result contract is in [Temporal Architecture → The run result](./TEMPORAL_ARCHITECTURE.md#4-the-run-result).
+
+**Still open**:
+- A successful Run's dialog says `0/0 nodes completed` on every path, because no path sets `total_nodes` or `completed_nodes`.
+- Without Temporal, a failed Run still says `Unknown error`. The sequential path reports failures only in `node_results`, and the Redis-only parallel path only in `errors`.

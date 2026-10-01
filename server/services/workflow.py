@@ -452,6 +452,7 @@ class WorkflowService:
             "nodes_executed": result.get("nodes_executed", []),
             "outputs": result.get("outputs", {}),
             "errors": result.get("errors", []),
+            "error": result.get("error"),
             "execution_time": result.get("execution_time", time.time() - start_time),
             "temporal_execution": True,
             "timestamp": datetime.now().isoformat(),

@@ -210,6 +210,10 @@ while True:
         break
 
     done_id, result = await self._wait_any_complete(running)
+    if not result.get("success"):
+        # The first failure stops the run (see "4. The run result").
+        errors.append({"node_id": done_id, "error": result.get("error", "Unknown error")})
+        break
     completed.add(done_id)
     outputs[done_id] = result
 ```
@@ -245,6 +249,16 @@ async def _node_activity(context: Dict[str, Any]) -> Dict[str, Any]:
 The 2-minute `heartbeat_timeout` would kill browser or claude_code_agent activities that routinely run 5-10 minutes. Both dispatch paths emit `activity.heartbeat()` at progress points — legacy on every non-matching WebSocket message, per-type at the start of each pipeline stage.
 
 In the legacy path the server broadcasts status updates, tool-glow events, and progress messages continuously during execution, so the WS-read-loop heartbeats keep the activity alive for as long as anything is happening. Start/end heartbeats alone are not enough — any operation longer than 2 minutes would trigger `TIMEOUT_TYPE_HEARTBEAT` and Temporal would retry (or fail) the activity.
+
+### 4. The run result
+
+`MachinaWorkflow.run` returns `{success, outputs, execution_trace, errors}`. `success` is true only when no node failed and every node in the executable graph completed. The first node that fails stops the run. `errors` then holds that failure as `{node_id, error}`, plus whichever of `hint`, `requires_user_action` and `retryable` the node supplied, and it is `None` when nothing failed. Only an empty graph returns a top-level `error` ("No nodes provided") instead.
+
+`TemporalExecutor.execute_workflow` turns that into the Run response:
+- `errors` is the workflow's list unchanged, or `[{"error": ...}]` for an empty graph or a failed Temporal call;
+- `error` is the first entry's message, or `None`.
+
+`WorkflowService._execute_temporal` forwards both. The editor's Run dialog shows only `error` ("Workflow failed: …"), so before both kept it, every failed Run said "Unknown error" ([Known Errors #31](./errors.md)). Locked by `server/tests/temporal/test_run_errors.py`.
 
 ## Connection Pooling
 

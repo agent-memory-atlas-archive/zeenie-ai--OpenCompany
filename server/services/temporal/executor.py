@@ -178,12 +178,16 @@ class TemporalExecutor:
                 execution_time=execution_time,
             )
 
+            # MachinaWorkflow reports node failures as ``errors``; only an
+            # empty graph comes back with a top-level ``error``.
+            errors = result.get("errors") or ([{"error": result["error"]}] if result.get("error") else [])
             return {
                 "success": result.get("success", False),
                 "execution_id": execution_id,
                 "nodes_executed": result.get("execution_trace", []),
                 "outputs": result.get("outputs", {}),
-                "errors": [result.get("error")] if result.get("error") else [],
+                "errors": errors,
+                "error": errors[0].get("error") if errors else None,
                 "execution_time": execution_time,
                 "temporal_execution": True,
                 "timestamp": datetime.now().isoformat(),
@@ -207,7 +211,8 @@ class TemporalExecutor:
                 "execution_id": execution_id,
                 "nodes_executed": [],
                 "outputs": {},
-                "errors": [error_details],
+                "errors": [{"error": error_details}],
+                "error": error_details,
                 "execution_time": execution_time,
                 "temporal_execution": True,
                 "timestamp": datetime.now().isoformat(),
