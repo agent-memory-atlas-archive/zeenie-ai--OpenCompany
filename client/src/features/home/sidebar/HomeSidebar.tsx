@@ -4,11 +4,21 @@
  * (width + opacity); the header then shows the logo and an open button.
  */
 
-import { useLayoutEffect, useRef } from 'react';
-import { PanelLeft, Plus, Settings } from 'lucide-react';
+import { useLayoutEffect, useRef, useState } from 'react';
+import { PanelLeft, Plus, Settings, X } from 'lucide-react';
 import { OcLogo } from '@/components/brand/Logo';
 import { ActionButton } from '@/components/ui/action-button';
 import { Button } from '@/components/ui/button';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { animate } from '@/lib/motion';
 import { cn } from '@/lib/utils';
@@ -19,6 +29,8 @@ import type { EmployeeSummary } from '../data/schemas';
 import { useHomeStore } from '../state/homeStore';
 import { Avatar, MicroLabel } from '../ui/primitives';
 import { useWorkflowControlPending } from '@/stores/workflowControlStore';
+import { useAppStore } from '@/store/useAppStore';
+import { pillToast } from '../ui/pillToast';
 
 function EmployeeRow({ employee, selected }: { employee: EmployeeSummary; selected: boolean }) {
   const showEmployee = useHomeStore((s) => s.showEmployee);
@@ -26,6 +38,25 @@ function EmployeeRow({ employee, selected }: { employee: EmployeeSummary; select
   const pending = useWorkflowControlPending(employee.workflow_id);
   const ref = useRef<HTMLButtonElement>(null);
   const view = presentEmployee(employee, pending);
+  const deleteWorkflow = useAppStore((s) => s.deleteWorkflow);
+  const [confirming, setConfirming] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const deletingRef = useRef(false);
+
+  const remove = async () => {
+    if (deletingRef.current) return;
+    deletingRef.current = true;
+    setDeleting(true);
+    try {
+      if (!(await deleteWorkflow(employee.workflow_id))) throw new Error('Delete failed');
+      setConfirming(false);
+    } catch {
+      pillToast(`Couldn’t delete ${employee.name}. Try again.`, { tone: 'error' });
+    } finally {
+      deletingRef.current = false;
+      setDeleting(false);
+    }
+  };
 
   // A new hire drops into the list with a green glow (design handoff "Hire").
   useLayoutEffect(() => {
@@ -51,31 +82,64 @@ function EmployeeRow({ employee, selected }: { employee: EmployeeSummary; select
   }, [glow]);
 
   return (
-    <button
-      ref={ref}
-      type="button"
-      data-employee-row={employee.workflow_id}
-      aria-current={selected ? 'page' : undefined}
-      onClick={() => showEmployee(employee.workflow_id)}
+    <div
       className={cn(
-        'flex min-h-12.5 w-full items-center gap-2.5 rounded-row px-2.5 py-1.5 text-left text-fg-default transition-colors hover:bg-bg-hover',
+        'group flex w-full items-center rounded-row text-fg-default transition-colors hover:bg-bg-hover',
         selected && 'bg-bg-hover',
       )}
     >
-      <Avatar name={employee.name} colorRole={employee.color_role} status={view.pill.tone} pulse={view.pulse} />
-      <span className="flex min-w-0 flex-1 flex-col gap-px">
-        <span className="truncate text-row font-medium">{employee.name}</span>
-        <span className="truncate text-xs text-fg-muted">{employee.role}</span>
-      </span>
-      {employee.pending_approvals > 0 && (
-        <span
-          className="grid h-5 min-w-5 shrink-0 place-items-center rounded-pill border border-status-waiting-border bg-status-waiting-fill px-1.5 font-mono text-2xs font-semibold text-status-waiting-ink"
-          aria-label={`${employee.pending_approvals} waiting for you`}
-        >
-          {employee.pending_approvals}
+      <button
+        ref={ref}
+        type="button"
+        data-employee-row={employee.workflow_id}
+        aria-current={selected ? 'page' : undefined}
+        onClick={() => showEmployee(employee.workflow_id)}
+        className="flex min-h-12.5 min-w-0 flex-1 items-center gap-2.5 rounded-row px-2.5 py-1.5 text-left"
+      >
+        <Avatar name={employee.name} colorRole={employee.color_role} status={view.pill.tone} pulse={view.pulse} />
+        <span className="flex min-w-0 flex-1 flex-col gap-px">
+          <span className="truncate text-row font-medium">{employee.name}</span>
+          <span className="truncate text-xs text-fg-muted">{employee.role}</span>
         </span>
-      )}
-    </button>
+        {employee.pending_approvals > 0 && (
+          <span
+            className="grid h-5 min-w-5 shrink-0 place-items-center rounded-pill border border-status-waiting-border bg-status-waiting-fill px-1.5 font-mono text-2xs font-semibold text-status-waiting-ink"
+            aria-label={`${employee.pending_approvals} waiting for you`}
+          >
+            {employee.pending_approvals}
+          </span>
+        )}
+      </button>
+      <Button
+        variant="quiet"
+        size="icon-sm"
+        aria-label={`Delete ${employee.name}`}
+        title={`Delete ${employee.name}`}
+        disabled={deleting}
+        onClick={() => setConfirming(true)}
+        className="mr-1 size-7.5 shrink-0 text-action-stop-ink opacity-100 transition-opacity hover:bg-action-stop-soft group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:hover)]:opacity-0"
+      >
+        <X aria-hidden className="size-3.75" />
+      </Button>
+      <AlertDialog open={confirming} onOpenChange={(open) => { if (!deletingRef.current) setConfirming(open); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {employee.name}?</AlertDialogTitle>
+            <AlertDialogDescription>This removes the employee and their workflow. This cannot be undone.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={deleting}
+              onClick={(event) => { event.preventDefault(); void remove(); }}
+            >
+              {deleting ? 'Deleting…' : 'Delete'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
   );
 }
 

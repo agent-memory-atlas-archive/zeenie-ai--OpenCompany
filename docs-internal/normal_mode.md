@@ -73,7 +73,7 @@ is the reference.
 | `workspace/` | The Workspace dock (below), its header pill, and its Canvas tab, which loads in its own chunk |
 | `settings/` | Settings pages (Profile, Billing, Skills, Connectors, Plugins). Catalog primitives live in `components/catalog`; Connectors embeds the shared `components/credentials/CredentialsBrowser`. Provider dialogs belong to AppShell. |
 | `approvals/` | The drafts query, the decide mutation (optimistic), the approval broadcast listener |
-| `data/` | zod-parsed queries for employees, connectors and the profile; `talk.ts`, the thread and its mutations; `presentation.ts` maps server state to pills, actions and the message box's mode without deriving new rules |
+| `data/` | zod-parsed queries for employees, connectors and the profile; `employeeCache.ts`, the team's query keys and `removeEmployee` (shared with the app store's delete); `talk.ts`, the thread and its mutations; `presentation.ts` maps server state to pills, actions and the message box's mode without deriving new rules |
 | `orb/` | The 3D orb (below) |
 | `ui/` | Small shared pieces (avatar, status dot and pill, app mark), the pill toast, and `useAutoGrow` (the composer's and the message box's growing text area) |
 | `state/homeStore.ts` | UI state only: the view, the sidebar, Settings, the Connect an AI model dialog, the last hire's notice, the Workspace dock, one-shot glow and pulse signals |
@@ -91,6 +91,45 @@ which reads the `--dur-*` / `--ease-*` tokens, runs at 1 ms under reduced
 motion and while the page is hidden ([lib/pageActivity.ts](../client/src/lib/pageActivity.ts)),
 and never starts loops then. Toasts are a second sonner toaster
 (`ui/pillToast.tsx`): one bottom-centre pill at a time.
+
+### Deleting an employee
+
+Each row in the team sidebar has a delete button, an X at its end: on a
+device with hover it shows when the row is hovered or focused, on touch it is
+always there. [HomeSidebar.tsx](../client/src/features/home/sidebar/HomeSidebar.tsx)
+asks for confirmation, sends one delete while it is pending, and on failure
+keeps the employee where it was and says so, so the owner can try again.
+
+- **One delete for both modes.** Home and the editor's workflow list call
+  `useAppStore.deleteWorkflow` ([store/useAppStore.ts](../client/src/store/useAppStore.ts)),
+  which deletes the saved workflow (`DELETE /api/database/workflows/{id}`,
+  the same handler as the `delete_workflow` WebSocket command).
+- **The server stops the employee first.** `delete_workflow_with_context_archival`
+  ([handlers.py](../server/services/workflow_storage/handlers.py)) calls
+  `stop_workflow_for_deletion` ([deletion.py](../server/services/workflow_storage/deletion.py)).
+  A generation that is live, paused, failed or still resetting, or a
+  Workspace controller, goes through Reset; a legacy local deployment is
+  cancelled. If that fails, or a Start slips in meanwhile, nothing is
+  deleted: the answer is `workflow_shutdown_failed` with the reason in
+  `detail`. An employee that never ran is deleted without connecting to
+  Temporal.
+- **Every tab forgets them.** After a successful delete, and on the
+  `workflow.deleted` broadcast in any tab, `forgetWorkflow` closes the
+  workflow if the editor has it open and drops it from the workflow list
+  and its query; `removeEmployee` ([data/employeeCache.ts](../client/src/features/home/data/employeeCache.ts))
+  drops the employee, goes back to Hire if their page was showing, and
+  closes their Workspace and notices. The broadcast is handled app-wide
+  (`WebSocketContext.tsx`), so this happens while Home is not showing too.
+  Reads still in flight are cancelled first, so a late answer cannot bring
+  the employee back; the next read asks the server. There is no client-side
+  list of deleted ids.
+- **Nothing replaces them.** Deleting the last workflow leaves the editor
+  empty until the owner chooses New or hires someone; the editor no longer
+  creates an Untitled workflow on its own.
+- **A late write cannot restore them.** Saving an existing workflow is an
+  update only (`save_workflow(..., require_existing=True)`): an editor's
+  save, a read's migration, or a Vertex agent's cloud tools that land after
+  the delete fail with `workflow_not_found` instead of writing the graph back.
 
 ### The orb
 
@@ -296,7 +335,8 @@ the client's `HIRE_PAYLOAD_KEYS` must match, locked by
 
 On the client ([genui/useHire.ts](../client/src/features/home/genui/useHire.ts))
 every successful hire lands on the new employee's page, with a glow in the
-sidebar and a toast. The response's `warnings` show there once as the hire
+sidebar and a toast; the team list is then read back from the server rather
+than taking the summary the hire answered with. The response's `warnings` show there once as the hire
 notice ("A few notes on {Name}'s setup", `hire/HireNotice.tsx`), until the
 owner dismisses it or opens another view; `needs_ai` opens Connect an AI
 model; every error code has plain words (`busy`: they are still being set
@@ -474,8 +514,9 @@ Workspace's task line stays on their other work.
 ### Turn on Talk and Apply
 
 Both live in [handlers.py](../server/services/employees/handlers.py), run one
-at a time per employee, and answer with the employee's fresh summary, which
-the client puts in the team cache.
+at a time per employee, and answer with the employee's fresh summary.
+The client refreshes the employee queries after either outcome instead of
+merging that snapshot, which may already be stale when the response arrives.
 
 - **`enable_employee_talk`** plans the line (`plan_talk_line`), adds it
   through `apply_graph_additions` (one transaction; an editor with the
@@ -673,6 +714,7 @@ WebSocket requests (snake_case; failures come back as `success: false` with an
 | `get_chat_messages` | `{session_id, limit?, all_generations?}` | `{messages}`, oldest first, each `{id, role, message, timestamp, run_key}`. Timestamps carry their UTC offset; `run_key` is the generation the row was written in. Without `all_generations`, only the latest generation's rows (none after a Reset; every row when the workflow was never started) |
 | `list_approvals` | `{workflow_id?, status?, limit <= 100}` | `{approvals, counts, server_time}` |
 | `decide_approval` | `{approval_id, decision, text?, subject?, decision_key}` | `{approval, will_send_on_resume}` |
+| `delete_workflow` | `{workflow_id}` | `{workflow_id, contexts_archived, context_archives_pending}`; `DELETE /api/database/workflows/{id}` is the same handler. Error `workflow_shutdown_failed` (with `detail`) when stopping the employee failed: nothing was deleted |
 
 Broadcasts, all CloudEvents events broadcast directly (no Temporal
 consumer; see [Event Framework](./event_framework.md#ui-only-lifecycle-events-broadcast-directly-never-through-emit));
@@ -680,9 +722,9 @@ every frame but `workflow_ops_apply` carries the whole envelope:
 
 | Wire key | Type | Notes |
 |---|---|---|
-| `employee_lifecycle` | `com.opencompany.employee.{hired,updated,removed}` | Subject is the workflow id; `updated` is coalesced to one per second per employee, except control changes and browser control changes (each agent step, and the wait for the owner), which go out at once |
+| `employee_lifecycle` | `com.opencompany.employee.{hired,updated,removed}` | Subject is the workflow id; `updated` is coalesced to one per second per employee, except control changes and browser control changes (each agent step, and the wait for the owner), which go out at once. Home refetches on `hired` and `updated` rather than taking the summary the event carries, which can already be out of date; `removed` drops the employee |
 | `approval_lifecycle` | `com.opencompany.approval.{requested,decided,expired,cancelled}` | Identity only, never the message or the recipient |
-| `workflow_lifecycle` | gains `created` and `deleted` stages | So open editors refresh their workflow lists |
+| `workflow_lifecycle` | gains `created` and `deleted` stages | So open editors refresh their workflow lists. `deleted` also makes every tab forget the workflow and its employee (`forgetWorkflow`, see [Deleting an employee](#deleting-an-employee)) |
 | `chat.updated` | `com.opencompany.chat.updated` | Sent after every chat insert and clear (`services/chat_thread.py`). Data `{workflow_id, session_id, role}`, identity only: `role` is null for a clear, `workflow_id` null for session `"default"`. Home's thread and the editor's chat pane refetch |
 | `workflow_ops_apply` | `com.opencompany.workflow.ops.applied` | The frame is the event's flat data, `{workflow_id, caller_node_id, operations, persisted?}`, not the envelope. `persisted: true` marks a batch the server already saved (`apply_graph_additions`: Turn on Talk, the Agent Builder), whose ops carry the server's ids; editors adopt it without saving. See [Workflow Operations Protocol](./workflow_ops_protocol.md#persisted-batches) |
 
@@ -705,13 +747,19 @@ history). Talk and growing a saved employee: `tests/services/employees/`
 `tests/services/test_graph_build.py`, `tests/services/test_graph_additions.py`,
 `tests/services/test_graph_listeners.py`,
 `tests/services/test_deployment_restart.py`,
-`tests/nodes/test_agent_builder_employee.py`. Client:
+`tests/nodes/test_agent_builder_employee.py`. Deleting:
+`tests/services/test_workflow_deletion_shutdown.py`,
+`tests/services/test_workflow_context_archive_outbox.py` (a late save or read
+cannot re-create a deleted workflow). Client:
 `features/home/**/__tests__` (including `talk.test.tsx`, `thread.test.ts`,
 `connectAI.test.tsx`), `app/__tests__`,
 `contexts/__tests__/themePrePaint.test.ts`,
 `contexts/__tests__/webSocketActions.test.tsx` (`chat.updated`, the editor
 chat's rollback), `lib/__tests__/workflowOps.test.ts` and
-`hooks/__tests__/useWorkflowOpsListener.test.ts` (persisted batches).
+`hooks/__tests__/useWorkflowOpsListener.test.ts` (persisted batches),
+`store/__tests__/deleteWorkflow.test.ts`,
+`features/home/__tests__/homeSidebar.test.tsx` and `employeesRemount.test.tsx`
+(deleting), `lib/__tests__/debouncedInvalidate.test.ts`.
 
 ## Known gaps
 
@@ -761,7 +809,8 @@ chat's rollback), `lib/__tests__/workflowOps.test.ts` and
 - A Dev editor holding unsaved edits made before a server-side change (Turn on
   Talk, the Agent Builder) can still overwrite it on its next save, because
   saves carry no revision check. Adopting persisted batches narrows the
-  window.
+  window. Such a save can no longer bring back a deleted workflow, though:
+  saving an existing workflow is an update only.
 - Pre-existing: with Temporal disabled, deployed chat triggers never fire,
   and a canvas Run of a `chatTrigger` waits forever.
 - An example workflow whose agent serves several triggers posts all of that

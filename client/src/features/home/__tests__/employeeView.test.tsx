@@ -52,6 +52,16 @@ function summary(patch: Record<string, unknown>, control: Record<string, unknown
 }
 
 function renderPage(employee: EmployeeSummary, onConnect = vi.fn()) {
+  const sendOtherRequest = actions.sendRequest.getMockImplementation();
+  actions.sendRequest.mockImplementation(async (type: string, data?: Record<string, unknown>) => {
+    if (type === 'list_employees') return { success: true, employees: [employee] };
+    if (type === 'get_employee') {
+      return data?.workflow_id === employee.workflow_id
+        ? { success: true, employee }
+        : { success: false, error: 'not_found' };
+    }
+    return sendOtherRequest?.(type, data);
+  });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
   client.setQueryData(EMPLOYEES_QUERY_KEY, [employee]);
   render(

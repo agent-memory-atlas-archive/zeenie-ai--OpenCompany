@@ -1146,7 +1146,9 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             edge_count?: number;
           }>;
           const eventType = event?.type ?? '';
-          if (['.imported', '.renamed', '.created', '.deleted'].some((stage) => eventType.endsWith(stage))) {
+          if (eventType.endsWith('.deleted') && event.subject) {
+            useAppStore.getState().forgetWorkflow(event.subject);
+          } else if (['.imported', '.renamed', '.created'].some((stage) => eventType.endsWith(stage))) {
             void queryClient.invalidateQueries({ queryKey: WORKFLOWS_QUERY_KEY });
           }
           // Normal mode's team list follows the same lifecycle.

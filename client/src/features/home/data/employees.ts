@@ -5,9 +5,9 @@
  *
  * `useEmployeeLifecycle()` keeps the cache current from broadcasts, and is
  * mounted once by the Home shell:
- * - `employee_lifecycle` hired / updated carry the fresh summary: upserted
- *   when newer than what the cache holds (by `revision`), so a delayed
- *   broadcast never rolls a row back; removed deletes it.
+ * - `employee_lifecycle` hired / updated refresh the server queries. Event
+ *   summaries may already be out of date, so they never replace cached rows.
+ *   Confirmed removals prune the cache and refresh the remaining team.
  * - `workflow_lifecycle` created / renamed / imported mean a workflow
  *   (every workflow is an employee) appeared or changed name: the list is
  *   refetched, debounced so a burst costs one request.
@@ -18,13 +18,13 @@ import { useEffect } from 'react';
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { useWebSocketActions } from '@/contexts/WebSocketContext';
 import { makeDebouncedInvalidator } from '@/lib/debouncedInvalidate';
-import { parseEmployee, parseEmployeeDetail, parseEmployees, type EmployeeDetail, type EmployeeSummary } from './schemas';
+import { parseEmployeeDetail, parseEmployees, type EmployeeDetail, type EmployeeSummary } from './schemas';
+import { EMPLOYEES_QUERY_KEY, employeeDetailKey, removeEmployee } from './employeeCache';
 
-export const EMPLOYEES_QUERY_KEY = ['employees'] as const;
-export const employeeDetailKey = (workflowId: string) => ['employees', 'detail', workflowId] as const;
+export { EMPLOYEES_QUERY_KEY, employeeDetailKey, removeEmployee } from './employeeCache';
 
 const LIST_INVALIDATE_DEBOUNCE_MS = 300;
-export const invalidateEmployees = makeDebouncedInvalidator(EMPLOYEES_QUERY_KEY, LIST_INVALIDATE_DEBOUNCE_MS);
+export const invalidateEmployees = makeDebouncedInvalidator(EMPLOYEES_QUERY_KEY, LIST_INVALIDATE_DEBOUNCE_MS, true);
 
 
 /** Dev builds only: `?fixture=employees` shows the handoff's sample team. */
@@ -45,6 +45,9 @@ export function useEmployeesQuery() {
     },
     enabled: isReady || fixture,
     staleTime: 30_000,
+    // Home's lifecycle listener is absent in Dev; re-entry must reconcile
+    // even a warm cache whose removal broadcasts arrived while unmounted.
+    refetchOnMount: 'always',
   });
 }
 
@@ -64,6 +67,7 @@ export function useEmployeeDetailQuery(workflowId: string | null) {
     },
     enabled: isReady && Boolean(workflowId),
     staleTime: 30_000,
+    refetchOnMount: 'always',
   });
 }
 
@@ -99,28 +103,10 @@ export function resetSeenEmployeeEvents(): void {
   seen.clear();
 }
 
-/** Put a summary into the cache unless the cache already holds a newer one.
- *  New employees go first (placeFirst), as a fresh hire does. */
-export function upsertEmployee(queryClient: QueryClient, summary: EmployeeSummary, placeFirst: boolean): void {
-  queryClient.setQueryData<EmployeeSummary[]>(EMPLOYEES_QUERY_KEY, (list) => {
-    if (!list) return list;
-    const index = list.findIndex((item) => item.workflow_id === summary.workflow_id);
-    if (index === -1) return placeFirst ? [summary, ...list] : [...list, summary];
-    if (list[index].revision > summary.revision) return list;
-    const next = list.slice();
-    next[index] = summary;
-    return next;
-  });
-  queryClient.setQueryData<EmployeeDetail | null>(employeeDetailKey(summary.workflow_id), (detail) =>
-    detail && detail.revision <= summary.revision ? { ...detail, ...summary } : detail,
-  );
-}
-
-function remove(queryClient: QueryClient, workflowId: string): void {
-  queryClient.setQueryData<EmployeeSummary[]>(EMPLOYEES_QUERY_KEY, (list) =>
-    list ? list.filter((item) => item.workflow_id !== workflowId) : list,
-  );
-  queryClient.removeQueries({ queryKey: employeeDetailKey(workflowId) });
+/** Read the current database state after a mutation or lifecycle signal. */
+export function refreshEmployee(queryClient: QueryClient, workflowId: string): void {
+  void queryClient.invalidateQueries({ queryKey: employeeDetailKey(workflowId), exact: true });
+  invalidateEmployees(queryClient);
 }
 
 /** Apply one `employee_lifecycle` envelope to the cache. Exported for tests. */
@@ -130,15 +116,10 @@ export function applyEmployeeLifecycle(queryClient: QueryClient, event: Lifecycl
   const workflowId = event.data?.workflow_id ?? event.subject ?? '';
   if (!workflowId) return;
   if (type.endsWith('.removed')) {
-    remove(queryClient, workflowId);
+    removeEmployee(queryClient, workflowId);
     return;
   }
-  const summary = parseEmployee(event.data?.employee);
-  if (!summary || summary.workflow_id !== workflowId) {
-    invalidateEmployees(queryClient);
-    return;
-  }
-  upsertEmployee(queryClient, summary, type.endsWith('.hired'));
+  if (type.endsWith('.hired') || type.endsWith('.updated')) refreshEmployee(queryClient, workflowId);
 }
 
 /** Apply one `workflow_lifecycle` envelope to the team list. Exported for tests. */
@@ -146,9 +127,10 @@ export function applyWorkflowLifecycle(queryClient: QueryClient, event: Lifecycl
   const type = event?.type ?? '';
   const workflowId = event?.subject ?? '';
   if (type.endsWith('.deleted') && workflowId) {
-    remove(queryClient, workflowId);
+    removeEmployee(queryClient, workflowId);
   } else if (['.created', '.renamed', '.imported'].some((stage) => type.endsWith(stage))) {
-    invalidateEmployees(queryClient);
+    if (workflowId) refreshEmployee(queryClient, workflowId);
+    else invalidateEmployees(queryClient);
   }
 }
 

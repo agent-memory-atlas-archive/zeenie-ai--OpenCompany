@@ -8,7 +8,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { setReducedMotion } from '@/test/waapi';
 import { useShellDialogsStore } from '@/stores/shellDialogsStore';
@@ -128,7 +128,10 @@ describe('HireDraftPanel', () => {
       finish(hired());
     });
     expect(useDraftStore.getState().status).toBe('idle');
-    expect(queryClient.getQueryData<{ workflow_id: string }[]>(EMPLOYEES_QUERY_KEY)?.[0]?.workflow_id).toBe('w1');
+    // Hiring selects the response's identity, but the list is refreshed from
+    // the database rather than populated with the mutation's summary.
+    expect(queryClient.getQueryData(EMPLOYEES_QUERY_KEY)).toEqual([]);
+    await waitFor(() => expect(queryClient.getQueryState(EMPLOYEES_QUERY_KEY)?.isInvalidated).toBe(true));
     expect(useHomeStore.getState().glow?.workflowId).toBe('w1');
     expect(useHomeStore.getState().view).toEqual({ kind: 'employee', workflowId: 'w1' });
     expect(useHomeStore.getState().hireNotice).toBeNull();

@@ -15,7 +15,7 @@
 import { useCallback } from 'react';
 import { useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { useWebSocketActions } from '@/contexts/WebSocketContext';
-import { upsertEmployee } from '../data/employees';
+import { refreshEmployee } from '../data/employees';
 import { parseEmployee, type EmployeeSummary } from '../data/schemas';
 import { SPIKE, spikeOrb } from '../orb/orb';
 import { useHomeStore } from '../state/homeStore';
@@ -71,7 +71,7 @@ export function hireFailureMessage(error: unknown): string {
 /** The new employee joins the team: a glow, the logo, a toast, and their
  *  page, with what the hire said. */
 export function welcomeHire(queryClient: QueryClient, employee: EmployeeSummary, response: HireResponse): void {
-  upsertEmployee(queryClient, employee, true);
+  refreshEmployee(queryClient, employee.workflow_id);
   const home = useHomeStore.getState();
   home.glowRow(employee.workflow_id);
   home.pulseLogo();

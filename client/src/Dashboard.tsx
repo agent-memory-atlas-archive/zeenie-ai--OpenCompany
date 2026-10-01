@@ -43,9 +43,8 @@ import CommandPaletteHost from './components/ui/CommandPaletteHost';
 import { withSound } from './hooks/useSound';
 import { useAppTheme } from './hooks/useAppTheme';
 import { useWorkflowManagement } from './hooks/useWorkflowManagement';
-import { useWorkflowsQuery, WORKFLOWS_QUERY_KEY } from './hooks/useWorkflowsQuery';
-import { useQueryClient } from '@tanstack/react-query';
-import { workflowApi } from './services/workflowApi';
+import { useWorkflowsQuery, workflowsQueryOptions } from './hooks/useWorkflowsQuery';
+import { isCancelledError, useQueryClient } from '@tanstack/react-query';
 import { useDragAndDrop } from './hooks/useDragAndDrop';
 import { useComponentPalette } from './hooks/useComponentPalette';
 import { useReactFlowNodes } from './hooks/useReactFlowNodes';
@@ -165,7 +164,6 @@ const DashboardContent: React.FC = () => {
   const sidebarVisible = useAppStore((s) => s.sidebarVisible);
   const componentPaletteVisible = useAppStore((s) => s.componentPaletteVisible);
   const loadWorkflow = useAppStore((s) => s.loadWorkflow);
-  const createNewWorkflow = useAppStore((s) => s.createNewWorkflow);
   const deleteWorkflow = useAppStore((s) => s.deleteWorkflow);
   const migrateCurrentWorkflow = useAppStore((s) => s.migrateCurrentWorkflow);
   const toggleSidebar = useAppStore((s) => s.toggleSidebar);
@@ -946,7 +944,8 @@ const DashboardContent: React.FC = () => {
     };
     fileInput.click();
   };
-  // Load saved workflows on mount and auto-select most recent or create new if none exist
+  // Select an existing workflow on mount. Only an explicit New/Hire action
+  // creates a saved workflow; opening an empty editor must not add an employee.
   const hasMigrated = React.useRef(false);
   const hasInitialized = React.useRef(false);
   useEffect(() => {
@@ -958,44 +957,32 @@ const DashboardContent: React.FC = () => {
       currentWorkflowId: currentWorkflow?.id,
     });
 
-    const fetchWorkflowsList = () => queryClient.fetchQuery({
-      queryKey: WORKFLOWS_QUERY_KEY,
-      queryFn: async () => {
-        const summaries = await workflowApi.getAllWorkflows();
-        return summaries.map(w => ({
-          id: w.id,
-          name: w.name,
-          nodeCount: w.nodeCount,
-          createdAt: new Date(w.createdAt),
-          lastModified: new Date(w.lastModified),
-        }));
-      },
-    });
+    const fetchWorkflowsList = () => queryClient.fetchQuery(workflowsQueryOptions());
+    const reportInitializationError = (error: unknown) => {
+      // Confirmed deletion deliberately cancels stale list/detail requests.
+      if (!isCancelledError(error)) console.error('Failed to initialize workflows:', error);
+    };
 
     const initWorkflows = async () => {
       const list = await fetchWorkflowsList();
+      if (useAppStore.getState().currentWorkflow) return;
       if (list.length > 0) {
         const mostRecent = [...list].sort(
           (a, b) => b.lastModified.getTime() - a.lastModified.getTime()
         )[0];
         await loadWorkflow(mostRecent.id);
       }
-      const state = useAppStore.getState();
-      if (!state.currentWorkflow) {
-        console.log('[Dashboard] No saved workflows found, creating new one');
-        createNewWorkflow();
-      }
     };
 
     if (!currentWorkflow) {
-      initWorkflows();
+      void initWorkflows().catch(reportInitializationError);
     } else if (!hasMigrated.current) {
       console.log('[Dashboard] Migrating current workflow');
-      migrateCurrentWorkflow();
+      void migrateCurrentWorkflow().catch(reportInitializationError);
       hasMigrated.current = true;
-      void fetchWorkflowsList(); // seed sidebar list cache
+      void fetchWorkflowsList().catch(reportInitializationError); // seed sidebar list cache
     }
-  }, [queryClient, currentWorkflow, loadWorkflow, createNewWorkflow, migrateCurrentWorkflow]);
+  }, [queryClient, currentWorkflow, loadWorkflow, migrateCurrentWorkflow]);
 
   // Track previous workflow ID for viewport save/restore (n8n pattern)
   const prevWorkflowIdRef = React.useRef<string | null>(null);
@@ -1246,7 +1233,9 @@ const DashboardContent: React.FC = () => {
                 workflows={savedWorkflows}
                 currentWorkflowId={currentWorkflow?.id}
                 onSelectWorkflow={handleSelectWorkflow}
-                onDeleteWorkflow={deleteWorkflow}
+                onDeleteWorkflow={async (id) => {
+                  if (!(await deleteWorkflow(id))) toast.error('Could not delete the workflow. Try again.');
+                }}
               />
             )}
           </div>

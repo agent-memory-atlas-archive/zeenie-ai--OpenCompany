@@ -23,7 +23,7 @@ vi.mock('../ui/pillToast', () => ({ pillToast: vi.fn() }));
 
 import { WORKFLOW_CONTROL_REQUEST_TIMEOUT, normalizeWorkflowControlStatus } from '@/contexts/WebSocketContext';
 import { useNodeStatusStore } from '@/stores/nodeStatusStore';
-import { EMPLOYEES_QUERY_KEY } from '../data/employees';
+import { EMPLOYEES_QUERY_KEY, employeeDetailKey, removeEmployee, useEmployeesQuery } from '../data/employees';
 import { presentEmployee } from '../data/presentation';
 import { parseEmployee, type EmployeeSummary } from '../data/schemas';
 import {
@@ -63,11 +63,18 @@ function controlFor(summary: EmployeeSummary): EmployeeControl {
 let server: { messages: Record<string, unknown>[]; send: Record<string, unknown> };
 let client: QueryClient;
 
+function TeamSubscription() {
+  useEmployeesQuery();
+  return null;
+}
+
 function renderTalk(summary: EmployeeSummary) {
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   client.setQueryData(EMPLOYEES_QUERY_KEY, [summary]);
+  client.setQueryData(employeeDetailKey(summary.workflow_id), summary);
   const view = (next: EmployeeSummary) => (
     <QueryClientProvider client={client}>
+      <TeamSubscription />
       <EmployeeTalk employee={next} control={controlFor(next)} />
     </QueryClientProvider>
   );
@@ -230,10 +237,13 @@ describe('Turn on Talk', () => {
   it('confirms, mentioning the drafts a restart throws away, then turns Talk on', async () => {
     const user = userEvent.setup();
     const off = employee({ talk: { state: 'off', agent_node_id: null }, pending_approvals: 2 });
+    const fromDatabase = employee({ revision: 10, talk: { state: 'on', agent_node_id: AGENT } });
     sendRequest.mockImplementation(async (type: string) =>
       type === 'enable_employee_talk'
         ? { success: true, employee: { ...off, control: undefined, talk: { state: 'on', agent_node_id: AGENT }, revision: 9 } }
-        : { success: true, messages: [] },
+        : type === 'list_employees'
+          ? { success: true, employees: [fromDatabase] }
+          : { success: true, messages: [] },
     );
     renderTalk(off);
     expect(sendRequest).not.toHaveBeenCalledWith('get_chat_messages', expect.anything());
@@ -247,17 +257,22 @@ describe('Turn on Talk', () => {
     const [, payload, timeout] = sendRequest.mock.calls.find(([type]) => type === 'enable_employee_talk')!;
     expect(payload).toEqual({ workflow_id: 'w1', idempotency_key: expect.any(String) });
     expect(timeout).toBe(WORKFLOW_CONTROL_REQUEST_TIMEOUT);
-    expect(client.getQueryData<EmployeeSummary[]>(EMPLOYEES_QUERY_KEY)?.[0]).toMatchObject({ revision: 9, talk: { state: 'on' } });
+    expect(client.getQueryState(employeeDetailKey('w1'))?.isInvalidated).toBe(true);
+    await waitFor(() => expect(client.getQueryData<EmployeeSummary[]>(EMPLOYEES_QUERY_KEY)?.[0]).toMatchObject({ revision: 10, talk: { state: 'on' } }));
+    expect(sendRequest).toHaveBeenCalledWith('list_employees', {});
   });
 });
 
 describe('Apply', () => {
   it('restarts the employee on the latest setup', async () => {
     const summary = employee({ pending_changes: true });
+    const fromDatabase = employee({ pending_changes: false, revision: 14 });
     sendRequest.mockImplementation(async (type: string) =>
       type === 'apply_employee_changes'
         ? { success: true, employee: { ...summary, control: undefined, pending_changes: false, revision: 12 } }
-        : { success: true, messages: [] },
+        : type === 'list_employees'
+          ? { success: true, employees: [fromDatabase] }
+          : { success: true, messages: [] },
     );
     renderTalk(summary);
     expect(await screen.findByText(/Maya has new abilities for this conversation\./)).toBeInTheDocument();
@@ -268,20 +283,43 @@ describe('Apply', () => {
       { workflow_id: 'w1', idempotency_key: expect.any(String) },
       WORKFLOW_CONTROL_REQUEST_TIMEOUT,
     );
-    expect(client.getQueryData<EmployeeSummary[]>(EMPLOYEES_QUERY_KEY)?.[0]).toMatchObject({ revision: 12, pending_changes: false });
+    await waitFor(() => expect(client.getQueryData<EmployeeSummary[]>(EMPLOYEES_QUERY_KEY)?.[0]).toMatchObject({ revision: 14, pending_changes: false }));
+    expect(sendRequest).toHaveBeenCalledWith('list_employees', {});
   });
 
-  it('keeps the employee it gets back when the restart fails', async () => {
+  it('refreshes database state when the restart fails instead of merging its response summary', async () => {
     const summary = employee({ pending_changes: true });
+    const fromDatabase = employee({ pending_changes: true, revision: 15 }, 'ready');
     sendRequest.mockImplementation(async (type: string) =>
       type === 'apply_employee_changes'
         ? { success: false, error: 'restart_failed', employee: { ...summary, control: { state: 'ready' }, revision: 13 } }
-        : { success: true, messages: [] },
+        : type === 'list_employees'
+          ? { success: true, employees: [fromDatabase] }
+          : { success: true, messages: [] },
     );
     renderTalk(summary);
     fireEvent.click(await screen.findByRole('button', { name: 'Apply' }));
     await waitFor(() => expect(pillToast).toHaveBeenCalledWith('Maya couldn’t restart. Try starting them again.', { tone: 'error' }));
-    expect(client.getQueryData<EmployeeSummary[]>(EMPLOYEES_QUERY_KEY)?.[0]).toMatchObject({ revision: 13 });
+    await waitFor(() => expect(client.getQueryData<EmployeeSummary[]>(EMPLOYEES_QUERY_KEY)?.[0]).toMatchObject({ revision: 15, control: { state: 'ready' } }));
+    expect(sendRequest).toHaveBeenCalledWith('list_employees', {});
+  });
+
+  it('does not recreate a deleted employee when an earlier Apply response arrives', async () => {
+    const summary = employee({ pending_changes: true });
+    let finish!: (response: unknown) => void;
+    sendRequest.mockImplementation((type: string) => {
+      if (type === 'apply_employee_changes') return new Promise((resolve) => { finish = resolve; });
+      if (type === 'list_employees') return Promise.resolve({ success: true, employees: [] });
+      return Promise.resolve({ success: true, messages: [] });
+    });
+    renderTalk(summary);
+    fireEvent.click(await screen.findByRole('button', { name: 'Apply' }));
+    await waitFor(() => expect(finish).toBeTypeOf('function'));
+    await act(async () => { removeEmployee(client, 'w1'); });
+    await act(async () => { finish({ success: true, employee: { ...summary, revision: 99 } }); });
+    await waitFor(() => expect(sendRequest.mock.calls.filter(([type]) => type === 'list_employees')).toHaveLength(2));
+    expect(client.getQueryData(EMPLOYEES_QUERY_KEY)).toEqual([]);
+    expect(client.getQueryData(employeeDetailKey('w1'))).toBeUndefined();
   });
 });
 

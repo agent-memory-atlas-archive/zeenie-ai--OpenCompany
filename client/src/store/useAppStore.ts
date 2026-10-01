@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { isCancelledError } from '@tanstack/react-query';
 import { Node, Edge } from 'reactflow';
 import { toast } from 'sonner';
 import { NEW_WORKFLOW_ID } from '../utils/workflow';
@@ -14,7 +15,8 @@ import { workflowApi } from '../services/workflowApi';
 import { queryClient } from '../lib/queryClient';
 import { addSavedEdges, addSavedNodes, type WorkflowOperation } from '../lib/workflowOps';
 import { BRAND_STORAGE_KEYS, readAndMigrateStorageValue } from '../lib/brandStorage';
-import { WORKFLOWS_QUERY_KEY } from '../hooks/useWorkflowsQuery';
+import { WORKFLOWS_QUERY_KEY, workflowQueryKey, workflowQueryOptions, type SavedWorkflow } from '../hooks/useWorkflowsQuery';
+import { removeEmployee } from '../features/home/data/employeeCache';
 
 const invalidateWorkflowsList = (): void => {
   void queryClient.invalidateQueries({ queryKey: WORKFLOWS_QUERY_KEY });
@@ -87,6 +89,8 @@ interface AppStore {
   saveWorkflow: () => Promise<void>;
   loadWorkflow: (id: string) => Promise<void>;
   deleteWorkflow: (id: string) => Promise<boolean>;
+  /** Apply a successful deletion from this tab or a lifecycle broadcast. */
+  forgetWorkflow: (id: string) => void;
   migrateCurrentWorkflow: () => Promise<void>;
   /** Adopt a batch the server already saved (`workflow_ops_apply` with
    *  `persisted: true`) into the open workflow, whichever screen shows.
@@ -307,6 +311,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
       console.error('Failed to save workflow to database');
       return;
     }
+    // A delete, navigation, or newer edit can finish while the save is in
+    // flight. Its response must not restore the old graph or clear new edits.
+    if (get().currentWorkflow !== currentWorkflow) return;
 
     const aliases = result.nodeIdAliases ?? {};
     // Server normalization is authoritative: it creates Context companions,
@@ -347,8 +354,21 @@ export const useAppStore = create<AppStore>((set, get) => ({
   },
   
   loadWorkflow: async (id) => {
-    const result = await workflowApi.getWorkflow(id);
-    if (result) {
+    // Use the same server-record query as other readers. Deletion cancels it,
+    // so late responses cannot restore a removed graph. No client ID registry
+    // decides whether a workflow exists; every later load asks the backend.
+    const key = workflowQueryKey(id);
+    let result;
+    try {
+      result = await queryClient.fetchQuery({
+        ...workflowQueryOptions(id),
+        staleTime: 0,
+      });
+    } catch (error) {
+      if (isCancelledError(error)) return;
+      throw error;
+    }
+    if (result && queryClient.getQueryData(key) === result) {
       // Migrate old node types
       const nodes = migrateNodes(result.data?.nodes || []);
       const edges = result.data?.edges || [];
@@ -372,21 +392,31 @@ export const useAppStore = create<AppStore>((set, get) => ({
   },
   
   deleteWorkflow: async (id) => {
-    const { currentWorkflow } = get();
-
     const success = await workflowApi.deleteWorkflow(id);
     if (!success) {
       console.error('Failed to delete workflow from database');
       return false;
     }
 
-    // If deleting current workflow, create a new one
-    if (currentWorkflow?.id === id) {
-      await get().createNewWorkflow();
-    }
-
-    invalidateWorkflowsList();
+    get().forgetWorkflow(id);
     return true;
+  },
+
+  forgetWorkflow: (id) => {
+    set((state) => {
+      const { [id]: _deletedUI, ...workflowUIStates } = state.workflowUIStates;
+      return state.currentWorkflow?.id === id
+        ? { workflowUIStates, currentWorkflow: null, hasUnsavedChanges: false, selectedNode: null, renamingNodeId: null }
+        : { workflowUIStates };
+    });
+    // Cancel stale list/detail reads before pruning, even while Home is
+    // unmounted. Its cache does not automatically refetch on mount.
+    void queryClient.cancelQueries({ queryKey: WORKFLOWS_QUERY_KEY, exact: true });
+    void queryClient.cancelQueries({ queryKey: workflowQueryKey(id) });
+    queryClient.setQueryData<SavedWorkflow[]>(WORKFLOWS_QUERY_KEY, (list) => list?.filter((workflow) => workflow.id !== id));
+    queryClient.removeQueries({ queryKey: workflowQueryKey(id) });
+    removeEmployee(queryClient, id);
+    invalidateWorkflowsList();
   },
 
   adoptSavedOperations: (workflowId, operations) => {
@@ -421,6 +451,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
         { nodes: sanitizeNodes(migratedWorkflow.nodes), edges: migratedWorkflow.edges }
       );
       if (!result) return;
+      if (get().currentWorkflow !== currentWorkflow) return;
 
       set({
         currentWorkflow: {

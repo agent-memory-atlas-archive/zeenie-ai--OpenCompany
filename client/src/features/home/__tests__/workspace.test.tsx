@@ -67,6 +67,15 @@ function employee(patch: Record<string, unknown> = {}): EmployeeSummary {
 }
 
 function renderWith(team: EmployeeSummary[], ui: ReactElement = <WorkspaceDock onConnect={vi.fn()} />) {
+  const sendOtherRequest = actions.sendRequest.getMockImplementation();
+  actions.sendRequest.mockImplementation(async (type: string, data?: Record<string, unknown>) => {
+    if (type === 'list_employees') return { success: true, employees: team };
+    if (type === 'get_employee') {
+      const selected = team.find((member) => member.workflow_id === data?.workflow_id);
+      return selected ? { success: true, employee: selected } : { success: false, error: 'not_found' };
+    }
+    return sendOtherRequest?.(type, data);
+  });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
   client.setQueryData(EMPLOYEES_QUERY_KEY, team);
   render(

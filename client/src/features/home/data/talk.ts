@@ -16,8 +16,8 @@
  *   the editor's hooks see only the workflow open in Dev mode), with
  *   fallbacks for an agent that never picks the message up or never ends.
  * - `useEnableTalk()` / `useApplyChanges()`: Turn on Talk and Apply. Both
- *   restart the employee, so they wait as long as Start does; the summary
- *   they return goes into the team cache.
+ *   restart the employee, so they wait as long as Start does, then refresh
+ *   the team from the database.
  * - Pure helpers the thread renders from: restart dividers, time labels.
  */
 
@@ -27,8 +27,7 @@ import { z } from 'zod';
 import { WORKFLOW_CONTROL_REQUEST_TIMEOUT, useWebSocketActions } from '@/contexts/WebSocketContext';
 import { STALE_TIME, queryKeys } from '@/lib/queryConfig';
 import { useNodeStatusStore } from '@/stores/nodeStatusStore';
-import { upsertEmployee } from './employees';
-import { parseEmployee, type EmployeeSummary } from './schemas';
+import { refreshEmployee } from './employees';
 
 /** The newest messages the thread shows. */
 export const THREAD_LIMIT = 200;
@@ -286,24 +285,22 @@ export function useReplyWait(
 
 // ----- Turn on Talk, Apply -----
 
-/** Both restart the employee on the server. The employee they return goes
- *  into the team cache, also on `restart_failed`, which carries it too.
+/** Both restart the employee on the server. Refresh the queries afterwards,
+ *  including failures that may have changed the employee before failing.
  *  Every click sends its own idempotency key. Errors carry the server's code. */
 function useEmployeeChange(type: 'enable_employee_talk' | 'apply_employee_changes') {
   const { sendRequest } = useWebSocketActions();
   const queryClient = useQueryClient();
-  return useMutation<EmployeeSummary | null, Error, string>({
+  return useMutation<void, Error, string>({
     mutationFn: async (workflowId) => {
-      const response = await sendRequest<{ success?: boolean; error?: string; employee?: unknown }>(
+      const response = await sendRequest<{ success?: boolean; error?: string }>(
         type,
         { workflow_id: workflowId, idempotency_key: crypto.randomUUID() },
         WORKFLOW_CONTROL_REQUEST_TIMEOUT,
       );
-      const employee = parseEmployee(response?.employee);
-      if (employee) upsertEmployee(queryClient, employee, false);
       if (response?.success === false) throw new Error(response.error || 'failed');
-      return employee;
     },
+    onSettled: (_data, _error, workflowId) => refreshEmployee(queryClient, workflowId),
   });
 }
 

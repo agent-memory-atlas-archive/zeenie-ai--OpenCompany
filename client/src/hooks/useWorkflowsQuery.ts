@@ -1,11 +1,10 @@
 /**
- * Workflow list + single-workflow queries, and save/delete mutations.
+ * Workflow list + single-workflow queries, and the save mutation.
  *
  * Server-owned data (the workflow list and individual workflow records)
- * lives in the TanStack Query cache, not in Zustand. The Zustand store
- * keeps only the mutable edit buffer (currentWorkflow). When a save or
- * delete completes, these mutations invalidate `['workflows']` so any
- * component consuming `useWorkflowsQuery()` re-renders with fresh data.
+ * is read from the backend database through shared Query options. Zustand
+ * keeps only the mutable edit buffer (currentWorkflow). Deletion goes through
+ * useAppStore.deleteWorkflow so both modes share confirmation-result cleanup.
  *
  * Mirrors the ownership boundary established by `useCatalogueQuery.ts`.
  */
@@ -14,6 +13,7 @@ import {
   useQuery,
   useMutation,
   useQueryClient,
+  queryOptions,
   type UseQueryResult,
 } from '@tanstack/react-query';
 import {
@@ -43,8 +43,8 @@ function toSavedWorkflow(w: WorkflowSummary): SavedWorkflow {
   };
 }
 
-export function useWorkflowsQuery(): UseQueryResult<SavedWorkflow[], Error> {
-  return useQuery<SavedWorkflow[], Error>({
+export function workflowsQueryOptions() {
+  return queryOptions({
     queryKey: WORKFLOWS_QUERY_KEY,
     queryFn: async () => {
       const list = await workflowApi.getAllWorkflows();
@@ -52,6 +52,10 @@ export function useWorkflowsQuery(): UseQueryResult<SavedWorkflow[], Error> {
     },
     staleTime: 30_000,
   });
+}
+
+export function useWorkflowsQuery(): UseQueryResult<SavedWorkflow[], Error> {
+  return useQuery(workflowsQueryOptions());
 }
 
 export interface SaveWorkflowInput {
@@ -73,24 +77,15 @@ export function useSaveWorkflowMutation() {
   });
 }
 
-export function useDeleteWorkflowMutation() {
-  const qc = useQueryClient();
-  return useMutation<void, Error, string>({
-    mutationFn: async (id) => {
-      const ok = await workflowApi.deleteWorkflow(id);
-      if (!ok) throw new Error('Failed to delete workflow');
-    },
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: WORKFLOWS_QUERY_KEY });
-    },
-  });
-}
-
-export function useWorkflowQuery(id: string | null | undefined) {
-  return useQuery<ApiWorkflowData | null, Error>({
+export function workflowQueryOptions(id: string | null | undefined) {
+  return queryOptions<ApiWorkflowData | null, Error>({
     queryKey: id ? workflowQueryKey(id) : ['workflow', 'none'],
     queryFn: () => (id ? workflowApi.getWorkflow(id) : Promise.resolve(null)),
     enabled: !!id,
     staleTime: 30_000,
   });
+}
+
+export function useWorkflowQuery(id: string | null | undefined) {
+  return useQuery(workflowQueryOptions(id));
 }

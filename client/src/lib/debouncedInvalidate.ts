@@ -9,13 +9,13 @@
 
 import type { QueryClient, QueryKey } from '@tanstack/react-query';
 
-export function makeDebouncedInvalidator(queryKey: QueryKey, delayMs: number) {
+export function makeDebouncedInvalidator(queryKey: QueryKey, delayMs: number, exact?: boolean) {
   let timer: ReturnType<typeof setTimeout> | null = null;
   return (queryClient: QueryClient): void => {
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => {
       timer = null;
-      void queryClient.invalidateQueries({ queryKey });
+      void queryClient.invalidateQueries({ queryKey, ...(exact === undefined ? {} : { exact }) });
     }, delayMs);
   };
 }

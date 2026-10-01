@@ -62,6 +62,9 @@ import { queryClient } from '../../lib/queryClient';
 import { queryKeys } from '../../lib/queryConfig';
 import { useAppStore, type WorkflowData } from '../../store/useAppStore';
 import { useWorkflowControlStore } from '../../stores/workflowControlStore';
+import { EMPLOYEES_QUERY_KEY } from '../../features/home/data/employeeCache';
+import { useHomeStore } from '../../features/home/state/homeStore';
+import { WORKFLOWS_QUERY_KEY } from '../../hooks/useWorkflowsQuery';
 
 function broadcast(message: Record<string, unknown>): void {
   act(() => {
@@ -111,6 +114,27 @@ describe('WebSocket actions for Normal mode', () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
+  });
+
+  it('removes a remotely deleted employee while Home is unmounted', () => {
+    const id = 'remote-deleted-employee';
+    const workflow: WorkflowData = {
+      id, name: 'Maya', slug: 'maya', nodes: [], edges: [],
+      createdAt: new Date(0), lastModified: new Date(0),
+    };
+    useAppStore.setState({ currentWorkflow: workflow, hasUnsavedChanges: true, shellMode: 'dev' });
+    useHomeStore.getState().showEmployee(id);
+    queryClient.setQueryData(WORKFLOWS_QUERY_KEY, [workflow]);
+    queryClient.setQueryData(EMPLOYEES_QUERY_KEY, [{ workflow_id: id }]);
+    const { unmount } = mount();
+    broadcast({ type: 'workflow_lifecycle', data: { specversion: '1.0', type: 'com.opencompany.workflow.deleted', subject: id } });
+    expect(useAppStore.getState().currentWorkflow).toBeNull();
+    expect(useAppStore.getState().hasUnsavedChanges).toBe(false);
+    expect(useHomeStore.getState().view).toEqual({ kind: 'hire' });
+    expect(queryClient.getQueryData(EMPLOYEES_QUERY_KEY)).toEqual([]);
+    expect(queryClient.getQueryData(WORKFLOWS_QUERY_KEY)).toEqual([]);
+    unmount();
+    queryClient.clear();
   });
 
   it('keeps the actions context stable while the main value churns', () => {
