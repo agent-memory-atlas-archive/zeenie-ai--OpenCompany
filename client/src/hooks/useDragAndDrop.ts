@@ -20,6 +20,9 @@ interface UseDragAndDropProps {
   saveNodeParameters?: (nodeId: string, parameters: Record<string, any>) => Promise<boolean>;
   globalModelDefaults?: { provider: string; model: string } | null;
   workflowId: string;
+  /** React Flow's `screenToFlowPosition`: turns a pointer position into
+   *  canvas coordinates, accounting for the pane's offset, pan and zoom. */
+  screenToFlowPosition: (position: { x: number; y: number }) => { x: number; y: number };
 }
 
 /**
@@ -48,7 +51,7 @@ export const generateUniqueLabel = (displayName: string, nodeType: string, exist
   return `${displayName} ${suffix}`;
 };
 
-export const useDragAndDrop = ({ nodes, setNodes, saveNodeParameters, globalModelDefaults, workflowId }: UseDragAndDropProps) => {
+export const useDragAndDrop = ({ nodes, setNodes, saveNodeParameters, globalModelDefaults, workflowId, screenToFlowPosition }: UseDragAndDropProps) => {
   const onDragOver = useCallback((event: React.DragEvent) => {
     event.preventDefault();
     event.dataTransfer.dropEffect = 'move';
@@ -64,11 +67,14 @@ export const useDragAndDrop = ({ nodes, setNodes, saveNodeParameters, globalMode
           return;
         }
 
-        const reactFlowBounds = (event.target as Element).getBoundingClientRect();
+        // Canvas coordinates under the pointer. The drop target's own rect
+        // is not used: it ignores pan and zoom, and when the drop lands on
+        // an existing node it is that node's rect, not the canvas's.
+        const pointer = screenToFlowPosition({ x: event.clientX, y: event.clientY });
 
         let position = {
-          x: event.clientX - reactFlowBounds.left - theme.constants.dragOffset.x,
-          y: event.clientY - reactFlowBounds.top - theme.constants.dragOffset.y,
+          x: pointer.x - theme.constants.dragOffset.x,
+          y: pointer.y - theme.constants.dragOffset.y,
         };
 
         // Snap to grid for better alignment
@@ -118,7 +124,7 @@ export const useDragAndDrop = ({ nodes, setNodes, saveNodeParameters, globalMode
         console.error('Error dropping node:', error);
       }
     },
-    [setNodes, nodes, saveNodeParameters, globalModelDefaults, workflowId]
+    [setNodes, nodes, saveNodeParameters, globalModelDefaults, workflowId, screenToFlowPosition]
   );
 
   const handleComponentDragStart = useCallback((event: React.DragEvent, definition: any) => {

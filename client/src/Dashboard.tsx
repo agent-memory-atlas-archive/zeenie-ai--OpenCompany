@@ -210,7 +210,7 @@ const DashboardContent: React.FC = () => {
   } = useWorkflowManagement();
 
   const { collapsedSections, searchQuery, setSearchQuery, toggleSection } = useComponentPalette();
-  const { saveNodeParameters, getAllNodeParameters, executeWorkflow, nodeStatuses, deploymentStatus, workflowControlStatuses, workflowControlPending, startWorkflow, pauseWorkflow, resumeWorkflow, resetWorkflow, getWorkflowControlStatus, workflowLock, isReady, sendRequest, clearNodeStatus } = useWebSocket();
+  const { saveNodeParameters, getNodeParameters, getAllNodeParameters, executeWorkflow, nodeStatuses, deploymentStatus, workflowControlStatuses, workflowControlPending, startWorkflow, pauseWorkflow, resumeWorkflow, resetWorkflow, getWorkflowControlStatus, workflowLock, isReady, sendRequest, clearNodeStatus } = useWebSocket();
 
   // Workflows list: server-owned data, cached by TanStack Query.
   const queryClient = useQueryClient();
@@ -257,7 +257,7 @@ const DashboardContent: React.FC = () => {
     return false;
   }, [canvasLock.locked, canvasLock.reason]);
   const [globalModelDefaults, setGlobalModelDefaults] = React.useState<{ provider: string; model: string } | null>(null);
-  const { onDragOver, onDrop, handleComponentDragStart } = useDragAndDrop({ nodes, setNodes, saveNodeParameters, globalModelDefaults, workflowId: currentWorkflow?.id ?? 'new' });
+  const { onDragOver, onDrop, handleComponentDragStart } = useDragAndDrop({ nodes, setNodes, saveNodeParameters, globalModelDefaults, workflowId: currentWorkflow?.id ?? 'new', screenToFlowPosition: reactFlowInstance.screenToFlowPosition });
   // Palette drop creates nodes AND persists their default parameters —
   // an HTML5 drop that React Flow's nodesDraggable/Connectable cannot
   // block, so it goes through the shared guard.
@@ -268,7 +268,7 @@ const DashboardContent: React.FC = () => {
     }
     onDrop(event);
   }, [guardCanvasEdit, onDrop]);
-  const { onConnect: baseOnConnect, onNodesDelete, onEdgesDelete: baseOnEdgesDelete } = useReactFlowNodes({ setNodes, setEdges, clearNodeStatus });
+  const { onConnect: baseOnConnect, onNodesDelete, onEdgesDelete: baseOnEdgesDelete, deleteNodeById } = useReactFlowNodes({ setNodes, setEdges, clearNodeStatus });
   const { onConnect, onEdgesDelete } = useAutoSkillEdges({
     baseOnConnect,
     baseOnEdgesDelete,
@@ -280,7 +280,7 @@ const DashboardContent: React.FC = () => {
   // Apply runtime canvas mutations pushed from the backend (e.g.,
   // Agent Builder tools called by the LLM mid-execution).
   useWorkflowOpsListener({ nodes, edges, setNodes, setEdges });
-  const { copySelectedNodes, pasteNodes } = useCopyPaste({ nodes, edges, setNodes, setEdges, saveNodeParameters, workflowId: currentWorkflow?.id ?? 'new' });
+  const { copySelectedNodes, pasteNodes } = useCopyPaste({ nodes, edges, setNodes, setEdges, saveNodeParameters, getNodeParameters, workflowId: currentWorkflow?.id ?? 'new' });
 
   // Override all agent nodes to use the global model. Agent membership is
   // derived at call time from the backend-served `group` field — by the
@@ -1089,10 +1089,10 @@ const DashboardContent: React.FC = () => {
     // The emptied deleteKeyCode only blocks the keyboard path — this
     // menu action bypassed the lock entirely before the shared guard.
     if (contextMenu && guardCanvasEdit()) {
-      onNodesDelete([nodes.find(n => n.id === contextMenu.nodeId)].filter(Boolean) as Node[]);
+      deleteNodeById(contextMenu.nodeId);
     }
     closeContextMenu();
-  }, [contextMenu, guardCanvasEdit, nodes, onNodesDelete, closeContextMenu]);
+  }, [contextMenu, guardCanvasEdit, deleteNodeById, closeContextMenu]);
 
   // Keyboard shortcut handler for workflow operations
   useEffect(() => {

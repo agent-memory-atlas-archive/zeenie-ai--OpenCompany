@@ -3,19 +3,51 @@ import { Node, Edge } from 'reactflow';
 import { generateUniqueLabel } from './useDragAndDrop';
 import { resolveNodeDescription } from '../lib/nodeSpec';
 import { nextNodeInstanceId } from '../utils/workflow';
+import { withoutRuntimeKeys } from '../utils/parameterSanitizer';
 interface UseCopyPasteProps {
   nodes: Node[];
   edges: Edge[];
   setNodes: (nodes: Node[] | ((nodes: Node[]) => Node[])) => void;
   setEdges: (edges: Edge[] | ((edges: Edge[]) => Edge[])) => void;
   saveNodeParameters?: (nodeId: string, parameters: Record<string, any>) => Promise<boolean>;
+  getNodeParameters?: (nodeId: string) => Promise<{ parameters: Record<string, any> } | null>;
   workflowId: string;
 }
+
+type ParameterSnapshot = Record<string, Record<string, any> | null>;
 
 interface ClipboardData {
   nodes: Node[];
   edges: Edge[];
+  /** Saved parameters of each copied node, keyed by its id, read at copy
+   *  time so a later edit or delete of the original does not change what
+   *  gets pasted. `null` when a node's parameters could not be read. */
+  parameters: Promise<ParameterSnapshot>;
 }
+
+/** Spec defaults for a node type: what a fresh palette drop would save. */
+const specDefaults = (nodeType: string): Record<string, any> => {
+  const properties = resolveNodeDescription(nodeType)?.properties ?? [];
+  return Object.fromEntries(properties.map((p) => [p.name, p.default]));
+};
+
+const snapshotParameters = async (
+  nodes: Node[],
+  getNodeParameters: UseCopyPasteProps['getNodeParameters'],
+): Promise<ParameterSnapshot> => {
+  const entries = await Promise.all(
+    nodes.map(async (node): Promise<[string, Record<string, any> | null]> => {
+      if (!getNodeParameters) return [node.id, null];
+      try {
+        const stored = await getNodeParameters(node.id);
+        return [node.id, stored?.parameters ?? null];
+      } catch {
+        return [node.id, null];
+      }
+    }),
+  );
+  return Object.fromEntries(entries);
+};
 
 /**
  * Hook for copy/paste functionality with n8n-style auto-labeling.
@@ -31,6 +63,7 @@ export const useCopyPaste = ({
   setNodes,
   setEdges,
   saveNodeParameters,
+  getNodeParameters,
   workflowId,
 }: UseCopyPasteProps) => {
   // In-memory clipboard (simpler than browser clipboard API)
@@ -55,10 +88,11 @@ export const useCopyPaste = ({
     clipboardRef.current = {
       nodes: selectedNodes,
       edges: selectedEdges,
+      parameters: snapshotParameters(selectedNodes, getNodeParameters),
     };
 
     console.log(`[CopyPaste] Copied ${selectedNodes.length} nodes and ${selectedEdges.length} edges`);
-  }, [nodes, edges]);
+  }, [nodes, edges, getNodeParameters]);
 
   /**
    * Paste nodes from clipboard with offset and unique labels.
@@ -70,6 +104,7 @@ export const useCopyPaste = ({
     }
 
     const { nodes: copiedNodes, edges: copiedEdges } = clipboardRef.current;
+    const copiedParameters = await clipboardRef.current.parameters;
 
     // Generate ID mapping (old ID -> new ID)
     const idMap = new Map<string, string>();
@@ -112,10 +147,14 @@ export const useCopyPaste = ({
         },
       };
 
-      // Save parameters for new node to database
-      if (saveNodeParameters && newNode.data) {
+      // Save the original's configuration under the new id. node.data holds
+      // only UI fields, so it is never the parameter row; when the original's
+      // row could not be read, fall back to what a fresh drop would save.
+      if (saveNodeParameters) {
+        const source = copiedParameters[node.id];
+        const parameters = source ? withoutRuntimeKeys(source) : specDefaults(node.type!);
         try {
-          await saveNodeParameters(newId, newNode.data);
+          await saveNodeParameters(newId, { ...parameters, label: uniqueLabel });
         } catch (error) {
           console.error(`[CopyPaste] Failed to save parameters for ${newId}:`, error);
         }

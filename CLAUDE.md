@@ -882,7 +882,7 @@ const handleSave = useCallback(() => {
 #### NodeContextMenu Features
 - Rename (F2), Copy (Ctrl+C), Delete (Del) with keyboard shortcuts shown
 - Uses existing `useCopyPaste.copySelectedNodes()` for Copy
-- Uses existing `onNodesDelete` for Delete
+- Delete goes through `useReactFlowNodes.deleteNodeById` (React Flow's `deleteElements`), the same path as the Delete key, so the node's edges are removed too and `onEdgesDelete` reports them
 - Keyboard navigation (Arrow keys, Enter)
 - Click outside to close
 - Tailwind semantic tokens (no palette names)

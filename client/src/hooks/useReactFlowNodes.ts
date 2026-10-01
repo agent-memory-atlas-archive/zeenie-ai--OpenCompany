@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import { Node, Edge, addEdge, Connection } from 'reactflow';
+import { Node, Edge, addEdge, Connection, useReactFlow } from 'reactflow';
 import { useAppStore } from '../store/useAppStore';
 import { INodeInputDefinition, INodeOutputDefinition, NodeConnectionType } from '../types/INodeProperties';
 
@@ -215,9 +215,23 @@ export const useReactFlowNodes = ({ setNodes, setEdges, clearNodeStatus }: UseRe
     [setEdges]
   );
 
+  // Delete one node the way the Delete key does. React Flow's
+  // `deleteElements` also removes the node's edges and calls both
+  // `onEdgesDelete` (so auto-skill sees the disconnect) and `onNodesDelete`.
+  // Calling `onNodesDelete` directly removes only the node and leaves its
+  // edges behind.
+  const { deleteElements } = useReactFlow();
+  const deleteNodeById = useCallback(
+    (nodeId: string) => {
+      deleteElements({ nodes: [{ id: nodeId }] });
+    },
+    [deleteElements]
+  );
+
   return {
     onConnect,
     onNodesDelete,
     onEdgesDelete,
+    deleteNodeById,
   };
 };

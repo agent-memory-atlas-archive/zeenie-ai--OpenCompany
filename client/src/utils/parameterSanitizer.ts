@@ -137,6 +137,17 @@ function isRuntimeKey(key: string): boolean {
 }
 
 /**
+ * Drop the top-level runtime keys and keep everything else, credentials
+ * included. For copying a node within the same install: the copy keeps the
+ * original's configuration but must not share its conversation or session.
+ */
+export function withoutRuntimeKeys(params: Record<string, any>): Record<string, any> {
+  return Object.fromEntries(
+    Object.entries(params).filter(([key]) => !isRuntimeKey(key)),
+  );
+}
+
+/**
  * Deep-strip sensitive and runtime keys from a parameter object.
  * Returns a new object with sensitive values removed.
  * Recurses into nested objects but passes arrays through unchanged.
