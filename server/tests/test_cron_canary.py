@@ -468,6 +468,98 @@ class TestDeleteCronSchedulesForDeployment:
 
 
 # ---------------------------------------------------------------------------
+# cron expressions, read the way Temporal reads them
+# ---------------------------------------------------------------------------
+
+# Temporal's cron layout (ScheduleSpec.cron_string in temporalio's
+# api/schedule/v1): five fields start at the minute, six add a year at the
+# end, and only seven start at the second. A missing second is 0 and a
+# missing year is *; values are decimal integers.
+_TEMPORAL_CRON_FIELDS = {
+    5: ("minute", "hour", "day_of_month", "month", "day_of_week"),
+    6: ("minute", "hour", "day_of_month", "month", "day_of_week", "year"),
+    7: ("second", "minute", "hour", "day_of_month", "month", "day_of_week", "year"),
+}
+
+
+def _as_temporal_reads(expression: str) -> Dict[str, str]:
+    fields = expression.split()
+    calendar = {"second": "0", "year": "*"}
+    for name, value in zip(_TEMPORAL_CRON_FIELDS[len(fields)], fields):
+        calendar[name] = str(int(value)) if value.isdigit() else value
+    return calendar
+
+
+def _fires(**fields: str) -> Dict[str, str]:
+    """A calendar that matches every time, except where a field narrows it."""
+    calendar = {"second": "0", "minute": "*", "hour": "*", "day_of_month": "*", "month": "*", "day_of_week": "*", "year": "*"}
+    calendar.update(fields)
+    return calendar
+
+
+class TestCronExpression:
+    """The deploy path's cron string fires when the node says it will."""
+
+    @pytest.mark.parametrize(
+        ("params", "fires"),
+        [
+            pytest.param({"frequency": "seconds", "interval": 30}, _fires(second="*/30"), id="every-30-seconds"),
+            pytest.param({"frequency": "minutes", "interval_minutes": 5}, _fires(minute="*/5"), id="every-5-minutes"),
+            pytest.param({"frequency": "minutes", "interval_minutes": 1}, _fires(), id="every-minute"),
+            pytest.param({"frequency": "hours", "interval_hours": 1}, _fires(minute="0"), id="hourly"),
+            pytest.param({"frequency": "hours", "interval_hours": 6}, _fires(minute="0", hour="*/6"), id="every-6-hours"),
+            pytest.param({"frequency": "days", "daily_time": "09:00"}, _fires(minute="0", hour="9"), id="daily"),
+            pytest.param(
+                {"frequency": "weeks", "weekday": "1", "weekly_time": "22:00"},
+                _fires(minute="0", hour="22", day_of_week="1"),
+                id="weekly",
+            ),
+            pytest.param(
+                {"frequency": "months", "month_day": "15", "monthly_time": "08:00"},
+                _fires(minute="0", hour="8", day_of_month="15"),
+                id="monthly",
+            ),
+        ],
+    )
+    def test_fires_when_the_node_says(self, params, fires):
+        from services.deployment.triggers import TriggerManager
+
+        assert _as_temporal_reads(TriggerManager.build_cron_expression(params)) == fires
+
+    def test_node_defaults_fire_every_five_minutes(self):
+        from nodes.scheduler.cron_scheduler import CronSchedulerParams
+        from services.deployment.triggers import TriggerManager
+
+        expression = TriggerManager.build_cron_expression(CronSchedulerParams().model_dump())
+
+        assert _as_temporal_reads(expression) == _fires(minute="*/5")
+
+    @pytest.mark.parametrize(
+        ("trigger", "fires"),
+        [
+            pytest.param({"every": "hour"}, _fires(minute="0"), id="hour"),
+            pytest.param({"every": "day", "at": "09:00"}, _fires(minute="0", hour="9"), id="day"),
+            pytest.param({"every": "week", "day": "friday", "at": "18:00"}, _fires(minute="0", hour="18", day_of_week="5"), id="week"),
+            pytest.param({"every": "month", "day": "15", "at": "08:00"}, _fires(minute="0", hour="8", day_of_month="15"), id="month"),
+        ],
+    )
+    def test_home_schedule_hires_fire_when_asked(self, trigger, fires):
+        from datetime import datetime, timezone
+
+        from services.deployment.triggers import TriggerManager
+        from services.employees.builder import schedule_params
+        from services.employees.hire_request import HireTrigger
+
+        params = schedule_params(
+            HireTrigger(kind="schedule", **trigger),
+            "UTC",
+            datetime(2026, 9, 25, 12, 0, tzinfo=timezone.utc),
+        )
+
+        assert _as_temporal_reads(TriggerManager.build_cron_expression(params)) == fires
+
+
+# ---------------------------------------------------------------------------
 # DeploymentManager cron canary integration
 # ---------------------------------------------------------------------------
 

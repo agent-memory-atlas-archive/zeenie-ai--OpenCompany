@@ -257,7 +257,13 @@ class TriggerManager:
 
     @staticmethod
     def build_cron_expression(parameters: Dict[str, Any]) -> Optional[str]:
-        """Build cron expression from user-friendly parameters."""
+        """Build a Temporal Schedule cron string from user-friendly parameters.
+
+        Temporal reads five fields as minute, hour, day, month, weekday and
+        seven as second first and year last. Six fields are minute through
+        year to Temporal, not seconds first, so a schedule with seconds gets
+        all seven.
+        """
         frequency = parameters.get("frequency", "minutes")
 
         second, minute, hour = "0", "*/5", "*"
@@ -299,7 +305,8 @@ class TriggerManager:
         elif frequency == "once":
             return None
 
-        return f"{second} {minute} {hour} {day} {month} {weekday}"
+        fields = f"{minute} {hour} {day} {month} {weekday}"
+        return fields if second == "0" else f"{second} {fields} *"
 
     @staticmethod
     def find_trigger_nodes(nodes: list, edges: list) -> tuple:

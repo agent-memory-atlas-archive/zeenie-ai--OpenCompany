@@ -102,7 +102,8 @@ async def create_cron_schedule(
         trigger_label: Cron-trigger node's label (``cronScheduler`` by
             default, or F2-renamed). Forms the suffix of the Schedule
             id and child workflow ids.
-        cron_expression: Crontab string (5 or 6 field).
+        cron_expression: Cron string with 5 fields, or 7 with the second
+            first and the year last (Temporal reads 6 as minute through year).
         timezone: IANA tz name (e.g. ``"America/New_York"``).
         listener_data: Frozen action args for the workflow run
             (deployment graph snapshot + cron metadata).

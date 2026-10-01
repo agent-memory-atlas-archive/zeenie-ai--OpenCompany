@@ -4,7 +4,7 @@
 |------|-------|
 | **Category** | workflow / trigger / tool (dual-purpose) |
 | **Backend handler** | Plugin [`server/nodes/scheduler/cron_scheduler/__init__.py`](../../../server/nodes/scheduler/cron_scheduler/__init__.py) (`CronSchedulerNode`); dispatch via `BaseNode.execute()` + the `@Operation("trigger")` method. Deployed-workflow cron lifecycle lives in `DeploymentManager` (Temporal Schedules canary via `CronTriggerWorkflow`); this op only runs on a manual / AI-tool invocation. |
-| **Tests** | [`server/tests/nodes/test_workflow_triggers.py`](../../../server/tests/nodes/test_workflow_triggers.py) |
+| **Tests** | [`server/tests/nodes/test_workflow_triggers.py`](../../../server/tests/nodes/test_workflow_triggers.py); the deployed Schedule in [`server/tests/test_cron_canary.py`](../../../server/tests/test_cron_canary.py) |
 | **Skill (if any)** | [`server/skills/task_agent/cron-scheduler-skill/SKILL.md`](../../../server/skills/task_agent/cron-scheduler-skill/SKILL.md) |
 | **Dual-purpose tool** | yes - exposed on the `tool` output handle |
 
@@ -131,6 +131,14 @@ flowchart TD
   The manual-run op does not use any of that - it only sleeps for a fixed
   interval. `daily_time`, `weekday`, `weekly_time`, `month_day`,
   `monthly_time`, and `timezone` are **display-only** in this code path.
+- **The deployed Schedule's cron string** comes from
+  `TriggerManager.build_cron_expression` (`services/deployment/triggers.py`):
+  five fields, or seven (second first, year last) for `seconds`. Temporal
+  reads six fields as minute through year, so the builder never emits six.
+  Two settings cannot become a Schedule yet: `once` builds no expression
+  (the SDK rejects `None`), and `month_day` `L` is not a value Temporal's
+  cron syntax accepts (integers and month or weekday names only). A
+  deployment using either fails at Start.
 - `iteration` is always `1`. The op does not loop; repeated firings
   come from the deployed Schedule firing per tick (deployment mode).
 - `interval`, `interval_minutes`, `interval_hours` are Pydantic-validated
