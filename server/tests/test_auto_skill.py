@@ -226,6 +226,87 @@ def test_other_skills_in_config_are_preserved():
         _exit(patches)
 
 
+def test_set_params_keeps_the_rest_of_the_master_skill_row():
+    """Applying set_node_parameters replaces the whole row, so the op must
+    carry every saved setting, not just skills_config. Before the fix it
+    carried skills_config alone and wiped skill_folder on every connect."""
+    patches = _patch_lookups(skill="http-request-skill")
+    _enter(patches)
+    try:
+        result = _evaluate(
+            master_skill_id="ms-1",
+            master_skill_parameters={
+                "skill_folder": "assistant",
+                "label": "Master Skill",
+                "skills_config": {
+                    "calculator-skill": {"enabled": True, "instructions": "", "isCustomized": False},
+                },
+            },
+        )
+        params = result["operations"][0]["parameters"]
+        assert params["skill_folder"] == "assistant"
+        assert params["label"] == "Master Skill"
+        assert params["skills_config"]["calculator-skill"]["enabled"] is True
+        assert params["skills_config"]["http-request-skill"]["enabled"] is True
+    finally:
+        _exit(patches)
+
+
+def test_saved_skills_config_wins_over_the_client_copy():
+    patches = _patch_lookups(skill="http-request-skill")
+    _enter(patches)
+    try:
+        result = _evaluate(
+            master_skill_id="ms-1",
+            master_skill_config={},
+            master_skill_parameters={
+                "skills_config": {
+                    "calculator-skill": {"enabled": True, "instructions": "", "isCustomized": False},
+                },
+            },
+        )
+        skills_config = result["operations"][0]["parameters"]["skills_config"]
+        assert set(skills_config) == {"calculator-skill", "http-request-skill"}
+    finally:
+        _exit(patches)
+
+
+@pytest.mark.asyncio
+async def test_handler_reads_the_saved_master_skill_row():
+    """The WS handler loads the Master Skill's saved row and the op it
+    returns keeps that row's other settings."""
+    from services.skills import handlers
+
+    class _Database:
+        async def get_node_parameters(self, node_id):
+            assert node_id == "ms-1"
+            return {"skill_folder": "assistant", "skills_config": {}}
+
+    container = SimpleNamespace(database=lambda: _Database())
+    patches = _patch_lookups(skill="http-request-skill") + [
+        patch.object(handlers, "container", container),
+    ]
+    _enter(patches)
+    try:
+        result = await handlers.handle_evaluate_auto_skill(
+            {
+                "action": "connect",
+                "source_type": "httpRequest",
+                "target_type": "aiAgent",
+                "target_handle": "input-tools",
+                "target_node_id": "agent-1",
+                "master_skill_id": "ms-1",
+                "master_skill_config": None,
+            },
+            None,
+        )
+        params = result["operations"][0]["parameters"]
+        assert params["skill_folder"] == "assistant"
+        assert params["skills_config"]["http-request-skill"]["enabled"] is True
+    finally:
+        _exit(patches)
+
+
 # --- spawn new Master Skill --------------------------------------------------
 
 

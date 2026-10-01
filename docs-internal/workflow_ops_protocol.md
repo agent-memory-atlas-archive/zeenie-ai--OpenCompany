@@ -122,7 +122,7 @@ return {
     "operations": [
         workflow_ops.add_node(
             ref, "masterSkill",
-            {"skillsConfig": {...}},
+            {"skills_config": {...}},
             label="Master Skill",
             position=workflow_ops.anchored(agent_id, offset_x=-60, offset_y=220),
         ),
@@ -158,7 +158,7 @@ failures (toast, log, retry, etc.).
 
 | Service | Trigger | Module |
 |---|---|---|
-| Auto-add Skill on tool connect | WS request `evaluate_auto_skill` (frontend on edge connect/disconnect) | `server/services/auto_skill.py` |
+| Auto-add Skill on tool connect | WS request `evaluate_auto_skill` (frontend on edge connect/disconnect). The handler reads the wired Master Skill's saved row, so its `set_node_parameters` op is that whole row with only `skills_config` changed | `server/services/auto_skill.py` |
 | Agent Builder runtime tools | `apply_graph_additions`, then the persisted `workflow_ops_apply` push (mid-execution, from the agent's tool call) | `server/nodes/tool/agent_builder/__init__.py` |
 | Turn on Talk (any employee on Home, hired or built in Dev mode) | `apply_graph_additions`, then the persisted push | `server/services/employees/handlers.py` |
 | Vertex managed agent cloud-tool nodes | whole-graph `database.save_workflow`, then a push that is NOT persisted (the editor saves the parameter rows) | `server/nodes/agent/vertex_managed_agent/_ops.py` |

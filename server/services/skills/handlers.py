@@ -145,9 +145,16 @@ async def handle_evaluate_auto_skill(data: Dict[str, Any], websocket: WebSocket)
     plugin-registry agent classification + canonical SkillConfig
     shape. Frontend forwards minimal edge details and the current
     Master Skill state; this returns a standard workflow-ops batch
-    (see docs-internal/workflow_ops_protocol.md).
+    (see docs-internal/workflow_ops_protocol.md). The wired Master
+    Skill's saved row is read here so the returned
+    ``set_node_parameters`` op replaces it with every other setting kept.
     """
     from services import auto_skill
+
+    master_skill_id = data.get("master_skill_id")
+    master_skill_parameters = None
+    if master_skill_id:
+        master_skill_parameters = await container.database().get_node_parameters(master_skill_id)
 
     result = auto_skill.evaluate(
         action=data["action"],
@@ -155,8 +162,9 @@ async def handle_evaluate_auto_skill(data: Dict[str, Any], websocket: WebSocket)
         target_type=data["target_type"],
         target_handle=data["target_handle"],
         target_node_id=data.get("target_node_id"),
-        master_skill_id=data.get("master_skill_id"),
+        master_skill_id=master_skill_id,
         master_skill_config=data.get("master_skill_config"),
+        master_skill_parameters=master_skill_parameters,
     )
     return {"success": True, **result}
 

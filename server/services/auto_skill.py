@@ -86,6 +86,7 @@ def evaluate(
     target_node_id: Optional[str] = None,
     master_skill_id: Optional[str] = None,
     master_skill_config: Optional[SkillsConfig] = None,
+    master_skill_parameters: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, List[Any]]:
     """Decide what (if anything) to do for an edge connect/disconnect.
 
@@ -96,7 +97,13 @@ def evaluate(
     * Empty batch -- the event is irrelevant (not a tool node, not the
       tools handle, not an agent target).
     * One ``set_node_parameters`` op -- a Master Skill is already
-      wired; toggle the matching skill in its ``skillsConfig``.
+      wired; toggle the matching skill in its ``skills_config``. The op
+      carries the Master Skill's whole saved row
+      (``master_skill_parameters``) with only ``skills_config`` changed,
+      because applying it replaces the row: an op holding
+      ``skills_config`` alone would wipe ``skill_folder`` and every other
+      setting. The saved row's ``skills_config`` wins over the
+      client-sent ``master_skill_config`` when both are present.
     * One ``add_node`` + one ``add_edge`` op -- no Master Skill exists
       yet; spawn one, wire it into the agent's ``input-skill``, and
       seed it with the matching skill enabled.
@@ -112,12 +119,14 @@ def evaluate(
     enabled = action == "connect"
 
     if master_skill_id:
-        new_config = _toggle_skill(master_skill_config, skill, enabled)
+        row = dict(master_skill_parameters or {})
+        current = row["skills_config"] if "skills_config" in row else master_skill_config
+        new_config = _toggle_skill(current, skill, enabled)
         return {
             "operations": [
                 workflow_ops.set_node_parameters(
                     master_skill_id,
-                    {"skills_config": new_config},
+                    {**row, "skills_config": new_config},
                 ),
             ],
         }
