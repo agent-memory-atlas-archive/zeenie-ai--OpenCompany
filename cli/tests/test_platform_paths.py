@@ -45,3 +45,17 @@ def test_custom_data_dir_is_never_rewritten(tmp_path: Path, monkeypatch) -> None
     monkeypatch.setenv("DATA_DIR", str(configured))
 
     assert platform_.user_data_dir() == configured
+
+
+def test_relative_data_dir_resolves_under_the_app_root(tmp_path: Path, monkeypatch) -> None:
+    """The server's ``core.paths`` rule: dev mode's relative ``.opencompany``
+    is ``<app root>/.opencompany`` wherever the command runs from."""
+    app_root = tmp_path / "app"
+    elsewhere = tmp_path / "elsewhere"
+    app_root.mkdir()
+    elsewhere.mkdir()
+    monkeypatch.setattr(platform_, "project_root", lambda: app_root)
+    monkeypatch.chdir(elsewhere)
+    monkeypatch.setenv("DATA_DIR", "state")
+
+    assert platform_.user_data_dir() == app_root / "state"

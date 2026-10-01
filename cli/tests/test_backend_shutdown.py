@@ -88,3 +88,17 @@ def test_stop_orphan_cleanup_preserves_backend_budget(tmp_path: Path, monkeypatc
     ):
         stop.stop_command()
     kill_orphans.assert_called_once_with(str(tmp_path), backend_graceful_timeout=backend_shutdown_grace_seconds(cfg))
+
+
+def test_stop_kills_only_this_installations_temporal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    cfg = replace(load_config(), temporal_enabled=False)
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "state"))
+    with (
+        patch.object(stop, "preflight", return_value=(cfg, tmp_path)),
+        patch.object(stop, "load_dev_overrides"),
+        patch.object(stop, "free_all_ports", return_value=[KillResult(p, [], True) for p in cfg.all_ports]),
+        patch.object(stop, "kill_by_pattern", return_value=[]) as kill_by_pattern,
+        patch.object(stop, "kill_orphaned_opencompany_processes", return_value=[]),
+    ):
+        stop.stop_command()
+    kill_by_pattern.assert_called_once_with("temporal", within=tmp_path / "state")

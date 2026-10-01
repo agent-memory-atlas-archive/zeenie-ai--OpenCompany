@@ -7,6 +7,7 @@ same battle-tested ``psutil`` paths that are already in production.
 from __future__ import annotations
 
 import os
+import shutil
 import sys
 import subprocess
 import time
@@ -177,25 +178,128 @@ def kill_port(port: int, *, backend_graceful_timeout: float | None = None) -> Ki
     return KillResult(port=port, killed_pids=killed, port_free=port_free)
 
 
-def kill_by_pattern(pattern: str, *, root_dir: str | None = None) -> list[int]:
-    """Kill processes whose name OR command line matches ``pattern``.
+def _normalized(path: str | os.PathLike[str]) -> str:
+    """A path as command lines are compared here: lower case, forward slashes,
+    no trailing slash."""
+    return os.fspath(path).lower().replace("\\", "/").rstrip("/")
 
-    When ``root_dir`` is supplied, only processes whose command line also
-    references that path are killed (so unrelated tools that happen to
-    share a substring are left alone).
+
+def _command_line(proc: psutil.Process) -> str:
+    """``proc``'s command line from ``process_iter``'s cache, normalized like a path."""
+    return " ".join(proc.info.get("cmdline") or []).lower().replace("\\", "/")
+
+
+def _within(path: str, root: str) -> bool:
+    return path == root or path.startswith(root + "/")
+
+
+def _path_ends_at(text: str, end: int) -> bool:
+    """Whether a path in ``text`` can end at ``end``: at a separator, at the
+    end of an argument, or at the end of the text."""
+    return text[end : end + 1] in ("", "/", " ", '"', "'")
+
+
+@dataclass(frozen=True)
+class _Tree:
+    """A directory and, when it is a git working tree, the repository's others.
+
+    Paths are :func:`_normalized`. ``others`` comes from git (see
+    :func:`_working_tree`): a worktree nested inside ``root``, or beside it,
+    is a separate checkout even when its files share ``root``'s prefix.
+    """
+
+    root: str
+    others: tuple[str, ...] = ()
+
+    def named_in(self, cmd: str) -> bool:
+        """Whether a normalized command line names a path in this tree.
+
+        The root has to end at a path boundary, so a sibling folder that only
+        shares the prefix (``opencompany-worktrees/...``) does not count, and
+        a path inside a worktree nested here belongs to that worktree.
+        """
+        if not self.root:
+            return False
+        nested = [tree for tree in self.others if _within(tree, self.root)]
+        start = 0
+        while (index := cmd.find(self.root, start)) >= 0:
+            start = index + 1
+            if not _path_ends_at(cmd, index + len(self.root)):
+                continue
+            if not any(cmd.startswith(tree, index) and _path_ends_at(cmd, index + len(tree)) for tree in nested):
+                return True
+        return False
+
+    def belongs_elsewhere(self, path: str) -> bool:
+        """Whether a normalized ``path`` lies in another of the repository's
+        working trees. The deepest working tree containing a path owns it."""
+        owners = [tree for tree in (self.root, *self.others) if _within(path, tree)]
+        return bool(owners) and max(owners, key=len) != self.root
+
+
+def _working_tree(root_dir: str | os.PathLike[str]) -> _Tree:
+    """``root_dir`` with the repository's other working trees, as git lists them.
+
+    Git, not a folder-naming convention, says which directories are separate
+    checkouts: ``git worktree add`` can put one anywhere. There are none
+    without git, outside a repository, or when ``root_dir`` is not itself a
+    working tree (an installed package unpacked inside some other repository).
+    """
+    root_path = Path(root_dir).resolve()
+    root = _normalized(root_path)
+    git = shutil.which("git")
+    if git is None:
+        return _Tree(root)
+    try:
+        listing = subprocess.run(
+            [git, "-C", str(root_path), "worktree", "list", "--porcelain", "-z"],
+            capture_output=True,
+            encoding="utf-8",
+            check=True,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return _Tree(root)
+    trees = [_normalized(field.removeprefix("worktree ")) for field in listing.split("\0") if field.startswith("worktree ")]
+    if root not in trees:
+        return _Tree(root)
+    return _Tree(root, tuple(tree for tree in trees if tree != root))
+
+
+def _works_in_another_tree(proc: psutil.Process, checkout: _Tree) -> bool:
+    """Whether ``proc``'s working directory lies in another working tree.
+
+    A test run in a worktree that borrows this checkout's Python names the
+    interpreter's path here; its working directory says whose run it is. An
+    unreadable working directory leaves the command line to decide.
+    """
+    try:
+        cwd = proc.cwd()
+    except psutil.Error:
+        return False
+    return checkout.belongs_elsewhere(_normalized(cwd))
+
+
+def kill_by_pattern(pattern: str, *, within: str | os.PathLike[str]) -> list[int]:
+    """Kill processes whose name or command line contains ``pattern`` and
+    whose command line names a path inside the directory ``within``.
+
+    ``within`` is what keeps the kill to this installation. ``company stop``
+    passes its data directory, where the Temporal binary and database live,
+    so another checkout's Temporal server, and a test run whose arguments
+    merely mention ``temporal``, are left alone.
     """
     pattern_lower = pattern.lower()
-    root_norm = root_dir.lower().replace("\\", "/") if root_dir else None
+    scope = _Tree(_normalized(Path(within).resolve()))
     safe_pids = _ancestor_pids()
     killed: list[int] = []
 
     for proc in psutil.process_iter(["pid", "name", "cmdline"]):
         try:
             name = (proc.info["name"] or "").lower()
-            cmd = " ".join(proc.info.get("cmdline") or []).lower().replace("\\", "/")
+            cmd = _command_line(proc)
             if pattern_lower not in name and pattern_lower not in cmd:
                 continue
-            if root_norm and root_norm not in cmd:
+            if not scope.named_in(cmd):
                 continue
             if proc.pid in safe_pids:
                 continue
@@ -206,40 +310,17 @@ def kill_by_pattern(pattern: str, *, root_dir: str | None = None) -> list[int]:
     return killed
 
 
-def _names_this_checkout(cmd: str, root_norm: str) -> bool:
-    """Whether a normalized cmdline names a path inside the checkout at ``root_norm``.
-
-    A plain substring match also caught other checkouts: a sibling folder
-    that only shares the prefix (``opencompany-worktrees/...``) and the
-    worktrees nested in the checkout (``<root>/.claude/worktrees/...``), so a
-    ``company stop`` in one checkout killed a dev server or test run in another.
-    The root must be followed by a separator or the end of an argument, and a
-    path under the nested worktrees does not count.
-    """
-    root = root_norm.rstrip("/")
-    if not root:
-        return False
-    nested_worktrees = root + "/.claude/worktrees/"
-    start = 0
-    while True:
-        index = cmd.find(root, start)
-        if index < 0:
-            return False
-        following = cmd[index + len(root) : index + len(root) + 1]
-        if following in ("", "/", " ", '"', "'") and not cmd.startswith(nested_worktrees, index):
-            return True
-        start = index + 1
-
-
 def kill_orphaned_opencompany_processes(
     root_dir: str, *, exclude_substring: str | None = None,
     backend_graceful_timeout: float | None = None,
 ) -> list[int]:
-    """Kill stray python/bun processes whose cmdline references the project root.
+    """Kill stray python/bun/node processes that belong to the checkout at ``root_dir``.
 
-    Only this checkout's processes: see :func:`_names_this_checkout`.
+    A process belongs to it when its command line names a path in the
+    checkout (:meth:`_Tree.named_in`) and it is not working in another of
+    the repository's working trees (:func:`_works_in_another_tree`).
     """
-    root_norm = root_dir.lower().replace("\\", "/")
+    checkout = _working_tree(root_dir)
     # bun runs the JS executor sidecar and the company shim; node is kept
     # so a sidecar left over from a pre-bun install is still reaped.
     target_names = {"python", "python3", "python.exe", "bun", "bun.exe", "node", "node.exe"}
@@ -251,12 +332,14 @@ def kill_orphaned_opencompany_processes(
             name = (proc.info["name"] or "").lower()
             if name not in target_names:
                 continue
-            cmd = " ".join(proc.info.get("cmdline") or []).lower().replace("\\", "/")
-            if not _names_this_checkout(cmd, root_norm):
+            cmd = _command_line(proc)
+            if not checkout.named_in(cmd):
                 continue
             if exclude_substring and exclude_substring.lower() in cmd:
                 continue
             if proc.pid in safe_pids:
+                continue
+            if _works_in_another_tree(proc, checkout):
                 continue
             grace = 2.0
             if backend_graceful_timeout is not None and _is_backend_process(proc.pid, root_dir):

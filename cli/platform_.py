@@ -178,11 +178,16 @@ def user_data_dir() -> Path:
 
     Honours the project's ``DATA_DIR`` env override (see
     ``.env.template``) -- the convention shared with the server's
-    ``core.paths.opencompany_root``. Otherwise delegates to platformdirs.
+    ``core.paths.opencompany_root``, including its rule that a relative
+    value (dev mode's ``.opencompany``) is resolved under the app root, not
+    under the directory the command was run from. Otherwise delegates to
+    platformdirs.
     """
     override = os.environ.get("DATA_DIR")
     if override:
         configured = Path(override).expanduser()
+        if not configured.is_absolute():
+            configured = project_root() / configured
         # Released versions commonly configured ``~/.machina`` or
         # ``<repo>/.machina``. The new defaults use the sibling
         # ``.opencompany`` directory; discover the old sibling until real

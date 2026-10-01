@@ -14,7 +14,7 @@ import typer
 from cli._common import backend_shutdown_grace_seconds, free_all_ports, preflight
 from cli.colors import console
 from cli.config import load_dev_overrides
-from cli.platform_ import platform_name
+from cli.platform_ import platform_name, user_data_dir
 from cli.ports import (
     kill_by_pattern,
     kill_orphaned_opencompany_processes,
@@ -49,7 +49,10 @@ def stop_command() -> None:
         if result.killed_pids:
             console.print(f"    PIDs: {', '.join(str(p) for p in result.killed_pids)}")
 
-    temporal_pids = kill_by_pattern("temporal")
+    # Only this installation's Temporal server: its binary and database live
+    # in the data directory, which keeps another checkout's server (and any
+    # process whose arguments merely mention "temporal") out of the kill.
+    temporal_pids = kill_by_pattern("temporal", within=user_data_dir())
     if temporal_pids:
         console.print(
             f"[green]\\[OK][/] Temporal: Killed {len(temporal_pids)} process(es)"

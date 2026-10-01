@@ -116,31 +116,35 @@ def test_kill_port_excludes_self():
     assert result.port_free is True
 
 
-def test_orphan_reaper_kills_only_this_checkouts_processes():
-    """A substring match on the root also caught sibling folders sharing the
-    prefix and the worktrees nested under ``.claude/worktrees/`` -- so a
-    ``company stop`` in the main checkout killed dev servers and test runs in
-    every worktree."""
+def _process(pid, name, cmdline, cwd):
     from types import SimpleNamespace as NS
 
+    return NS(pid=pid, info={"name": name, "cmdline": cmdline}, cwd=lambda: cwd, kill=MagicMock())
+
+
+def test_orphan_reaper_kills_only_this_checkouts_processes():
+    """A substring match on the root also caught sibling folders sharing the
+    prefix and the worktrees nested in the checkout, so a ``company stop`` in
+    the main checkout killed dev servers and test runs in every worktree. A
+    worktree's test run that borrows the main checkout's Python names a path
+    here too; its working directory is what says whose run it is."""
     root = "D:\\startup\\projects\\opencompany"
+    worktree = f"{root}\\.claude\\worktrees\\native-browser"
+    main_python = f"{root}\\server\\.venv\\Scripts\\python.exe"
     procs = [
-        NS(pid=11, info={"name": "python.exe", "cmdline": [f"{root}\\server\\.venv\\Scripts\\python.exe", "-m", "uvicorn"]}),
-        NS(pid=12, info={"name": "bun.exe", "cmdline": ["bun", f"{root}/server/nodejs/dist/index.js"]}),
-        NS(pid=21, info={"name": "python.exe", "cmdline": [f"{root}-worktrees\\feature\\server\\.venv\\Scripts\\python.exe"]}),
-        NS(
-            pid=22,
-            info={
-                "name": "python.exe",
-                "cmdline": [f"{root}\\.claude\\worktrees\\native-browser\\server\\.venv\\Scripts\\python.exe", "-m", "pytest"],
-            },
-        ),
-        NS(pid=23, info={"name": "python.exe", "cmdline": ["python", "-c", "print('opencompanyx')"]}),
-        NS(pid=24, info={"name": "chrome.exe", "cmdline": [f"{root}\\server\\whatever"]}),
+        _process(11, "python.exe", [main_python, "-m", "uvicorn"], f"{root}\\server"),
+        _process(12, "bun.exe", ["bun", f"{root}/server/nodejs/dist/index.js"], f"{root}\\server\\nodejs"),
+        _process(21, "python.exe", [f"{root}-worktrees\\feature\\server\\.venv\\Scripts\\python.exe"], f"{root}-worktrees\\feature"),
+        _process(22, "python.exe", [f"{worktree}\\server\\.venv\\Scripts\\python.exe", "-m", "pytest"], f"{worktree}\\server"),
+        _process(23, "python.exe", ["python", "-c", "print('opencompanyx')"], root),
+        _process(24, "chrome.exe", [f"{root}\\server\\whatever"], root),
+        _process(25, "python.exe", [main_python, "-m", "pytest", "tests/"], f"{worktree}\\server"),
     ]
+    checkout = ports._Tree(ports._normalized(root), (ports._normalized(worktree),))
     killed = []
     with (
         patch.object(psutil, "process_iter", return_value=procs),
+        patch.object(ports, "_working_tree", return_value=checkout),
         patch.object(ports, "_ancestor_pids", return_value=set()),
         patch.object(ports, "kill_pid", side_effect=lambda pid, **_kw: killed.append(pid) or True),
     ):
@@ -148,11 +152,81 @@ def test_orphan_reaper_kills_only_this_checkouts_processes():
     assert killed == [11, 12]
 
 
-def test_checkout_match_needs_a_path_boundary():
+def test_a_checkout_is_named_only_at_a_path_boundary_outside_its_worktrees():
     root = "d:/startup/projects/opencompany"
-    assert ports._names_this_checkout(f"python {root}/server/main.py", root)
-    assert ports._names_this_checkout(f"python -m cli dev --root {root}", root)
-    assert not ports._names_this_checkout(f"python {root}-worktrees/a/main.py", root)
-    assert not ports._names_this_checkout(f"python {root}/.claude/worktrees/a/server/main.py", root)
-    # Both a worktree path and a main-checkout path: the main one counts.
-    assert ports._names_this_checkout(f"python {root}/.claude/worktrees/a/x.py {root}/server/y.py", root)
+    checkout = ports._Tree(root, (f"{root}/.claude/worktrees/a", "d:/elsewhere/b"))
+    assert checkout.named_in(f"python {root}/server/main.py")
+    assert checkout.named_in(f"python -m cli dev --root {root}")
+    assert not checkout.named_in(f"python {root}-worktrees/a/main.py")
+    assert not checkout.named_in(f"python {root}/.claude/worktrees/a/server/main.py")
+    # A worktree path and a checkout path: the checkout one counts.
+    assert checkout.named_in(f"python {root}/.claude/worktrees/a/x.py {root}/server/y.py")
+    # Git decides what is a separate checkout, not the folder it sits in.
+    assert checkout.named_in(f"python {root}/.claude/worktrees/not-a-worktree/x.py")
+
+
+def test_the_deepest_working_tree_owns_a_directory():
+    root = "d:/repo"
+    nested = f"{root}/.claude/worktrees/a"
+    checkout = ports._Tree(root, (nested, "d:/beside"))
+    assert not checkout.belongs_elsewhere(f"{root}/server")
+    assert checkout.belongs_elsewhere(f"{nested}/server")
+    assert checkout.belongs_elsewhere("d:/beside/client")
+    assert not checkout.belongs_elsewhere("c:/users/me")
+    # Seen from the nested worktree, the enclosing checkout is the other tree.
+    worktree = ports._Tree(nested, (root,))
+    assert worktree.belongs_elsewhere(f"{root}/server")
+    assert not worktree.belongs_elsewhere(f"{nested}/server")
+
+
+def test_working_trees_come_from_git(tmp_path):
+    import shutil
+    import subprocess
+
+    git = shutil.which("git")
+    if git is None:
+        pytest.skip("git is not installed")
+    repo = tmp_path.resolve() / "repo"
+    repo.mkdir()
+
+    def run(*args):
+        subprocess.run([git, "-C", str(repo), *args], check=True, capture_output=True)
+
+    run("init", "-q")
+    run("-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "-q", "--allow-empty", "-m", "start")
+    nested = repo / ".claude" / "worktrees" / "a"
+    beside = tmp_path.resolve() / "beside"
+    run("worktree", "add", "-q", "--detach", str(nested))
+    run("worktree", "add", "-q", "--detach", str(beside))
+
+    checkout = ports._working_tree(repo)
+    assert checkout.root == ports._normalized(repo)
+    assert set(checkout.others) == {ports._normalized(nested), ports._normalized(beside)}
+    assert ports._normalized(repo) in ports._working_tree(nested).others
+    # A directory inside a working tree, but not one itself, has no others.
+    (repo / "sub").mkdir()
+    assert ports._working_tree(repo / "sub").others == ()
+
+
+def test_working_trees_without_git_or_a_repository(tmp_path):
+    with patch.object(ports.shutil, "which", return_value=None):
+        assert ports._working_tree(tmp_path).others == ()
+    assert ports._working_tree(tmp_path).others == ()
+
+
+def test_temporal_kill_stays_inside_the_data_directory(tmp_path):
+    """``company stop`` killed every process on the machine with "temporal"
+    in its name or command line: other checkouts' Temporal servers and test
+    runs of ``tests/temporal``."""
+    data = tmp_path.resolve() / ".opencompany"
+    worktree_data = tmp_path.resolve() / ".claude" / "worktrees" / "a" / ".opencompany"
+    temporal = ["server", "start-dev", "--db-filename"]
+    procs = [
+        _process(31, "temporal.exe", [str(data / "packages" / "temporal" / "temporal.exe"), *temporal, str(data / "temporal.db")], str(data)),
+        _process(32, "temporal.exe", [str(worktree_data / "packages" / "temporal" / "temporal.exe"), *temporal], str(worktree_data)),
+        _process(33, "python.exe", ["python", "-m", "pytest", "tests/temporal"], str(tmp_path)),
+        _process(34, "temporal.exe", [str(tmp_path.resolve() / ".opencompany-old" / "temporal.exe")], str(tmp_path)),
+    ]
+    with patch.object(psutil, "process_iter", return_value=procs), patch.object(ports, "_ancestor_pids", return_value=set()):
+        assert ports.kill_by_pattern("temporal", within=data) == [31]
+    procs[0].kill.assert_called_once()
