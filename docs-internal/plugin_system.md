@@ -1066,14 +1066,20 @@ dataschema / data` plus the extras.
 
 ```python
 WorkflowEvent(
-    id=payload["id"],                          # provider's event id (replay safety)
-    source="stripe://acct_test",               # URI: scheme://provider/account
-    type="stripe.charge.succeeded",            # reverse-DNS event type
+    id=payload["id"],                                # provider's event id (replay safety)
+    source="stripe://acct_test",                     # URI: scheme://provider/account
+    type="com.opencompany.stripe.event.received",    # reverse-DNS event type
     time=datetime.fromtimestamp(payload["created"], tz=timezone.utc),
-    subject=payload.get("type"),
-    data=payload,
+    subject=payload.get("type"),                     # the provider's own type, "charge.succeeded"
+    data=shape_stripe_event(payload),
 )
 ```
+
+A deployed trigger listens for exactly one CloudEvents type (the string
+`register_canary_trigger_type` records), so a provider with many event
+types sends them all under one type and carries its own type in
+`subject` and `data`, where the trigger's filter reads it
+(`nodes/stripe/_events.py`).
 
 `WorkflowEvent.matches_type(pattern)` does CloudEvents-style glob
 matching: `"all"` / `""` matches everything, `"foo.*"` matches
@@ -1092,6 +1098,7 @@ differs from the generic shape:
 from services.events import (
     BaseTriggerParams, WebhookTriggerNode, WorkflowEvent,
 )
+from services.events.envelope import event_type_matches
 
 class MyParams(BaseTriggerParams):
     livemode_filter: Literal["all", "test", "live"] = "all"
@@ -1104,7 +1111,7 @@ class MyReceiveNode(WebhookTriggerNode):
     credentials = (MyCredential,)
 
     webhook_source = MyWebhookSource          # required: which source feeds events
-    event_type_prefix = "my."                  # auto-prepended to user filters
+    event_type = MY_EVENT_TYPE                 # the type MyWebhookSource.shape emits
     Params = MyParams
     Output = MyOutput
 
@@ -1112,25 +1119,54 @@ class MyReceiveNode(WebhookTriggerNode):
         from ._source import get_listen_source
         return None if get_listen_source()._started else "Daemon not running"
 
-    def _extra_filter(self, params):           # optional; on top of event-type match
-        if params.livemode_filter == "all":
-            return None
-        target = params.livemode_filter == "live"
-        return lambda ev: bool(ev.data.get("livemode")) is target
+    def build_filter(self, params):            # both callers pass the envelope's data
+        pattern = params.event_type_filter or "all"
+
+        def matches(event):
+            data = event.data if isinstance(event, WorkflowEvent) else event
+            if not isinstance(data, dict):
+                return False
+            if not event_type_matches(str(data.get("event_type") or ""), pattern):
+                return False
+            return params.livemode_filter == "all" or (
+                bool(data.get("livemode")) is (params.livemode_filter == "live")
+            )
+
+        return matches
 
     def shape_output(self, event: WorkflowEvent) -> Dict:
-        # Optional override; default returns event.model_dump(mode="json")
-        ...
+        return event.data                      # shaped by the source, as the deployed run sees it
 ```
 
 `WebhookTriggerNode` provides:
 
-- `event_type` derived from `webhook_source.type` automatically.
+- `event_type` derived from `webhook_source.type` automatically. It is
+  the canvas-Run waiter key, so set it yourself when `shape` returns
+  envelopes of another type, or `event_waiter.dispatch` matches no
+  waiter (Stripe sets `STRIPE_EVENT_RECEIVED_TYPE`).
 - `build_filter` combining CloudEvents type-glob + optional
-  `_extra_filter`.
-- `execute()` with `_check_precondition` short-circuit and reshape
-  passthrough.
+  `_extra_filter`. **Override it to read the payload instead.** Both
+  callers hand the filter the envelope's `data`, not the envelope: the
+  event waiter on a canvas Run, and `evaluate_trigger_filter_activity`
+  on a deployed listener. The base rebuilds a `WorkflowEvent` from that
+  dict, which raises unless the data happens to carry `source` and
+  `type`; a waiter logs the error and stays unresolved, and a deployed
+  listener fails open and ignores the filter. `StripeReceiveNode`
+  overrides it; the WhatsApp Business triggers do not, so a deployed one
+  admits every event whatever its `event_type_filter`.
+- `execute()` with the `_check_precondition` short-circuit, then
+  `shape_output` on the resolved event (the waiter resolves with
+  `data`, which `_as_event` wraps back into an envelope). A deployed
+  run receives `event.data` verbatim and never calls `shape_output`,
+  so shape the payload in the source and let `shape_output` return
+  `event.data`, or Run and deploy disagree about the fields.
 - The `@Operation("wait")` stub.
+
+A trigger whose events need something running (Stripe's `stripe listen`
+daemon) starts it from the `TriggerNode.prepare_deployment` classmethod,
+which the deployment manager calls for every trigger it arms, at Start
+and at the boot re-arm. Return quickly and schedule slow work; a raise is
+logged and the trigger is armed anyway.
 
 ### `WebhookSource` — HTTP receiver
 
@@ -1148,18 +1184,24 @@ class StripeWebhookSource(WebhookSource):
     credential = StripeCredential
 
     async def shape(self, request, body, payload) -> WorkflowEvent:
-        return WorkflowEvent(
-            id=payload["id"],
-            type=f"stripe.{payload['type']}",
-            source=f"stripe://{payload.get('account', 'default')}",
-            time=datetime.fromtimestamp(payload["created"], tz=timezone.utc),
-            data=payload,
+        data = shape_stripe_event(payload)          # the trigger's output fields
+        return stripe_event_received(               # type: com.opencompany.stripe.event.received
+            data, event_id=data["event_id"], account=data["account"], time=...,
         )
+
+    async def handle(self, request):
+        event = await super().handle(request)       # verify, shape, wake the in-process waiter
+        await emit_stripe_event(event)              # dispatch.emit: deployed listeners
+        return event
 ```
 
 The shared dispatch path lives in `routers/webhook.py` — it consults
 `WEBHOOK_SOURCES`, runs the verifier, calls `shape()`, dispatches via
-`event_waiter`. **No plugin name is hardcoded in core.**
+`event_waiter`. **No plugin name is hardcoded in core.** That reaches a
+canvas Run, and a deploy only when it runs without Temporal. A
+trigger that deploys on Temporal also needs `register_canary_trigger_type`
+and a `dispatch.emit` of each envelope, as `StripeWebhookSource.handle`
+does above.
 
 ### `DaemonEventSource` — supervised subprocess driver
 
@@ -1364,8 +1406,10 @@ project that publishes pre-built binaries via GitHub releases.
 | Concern | Framework integration | Plugin contribution |
 |---|---|---|
 | HTTP webhook ingress | `routers/webhook.py` consults `WEBHOOK_SOURCES` registry | `register_webhook_source(MySource())` |
-| Event dispatch into workflows | `event_waiter.dispatch(source.type, event)` from `WebhookSource.handle` | provider-specific `shape()` returning `WorkflowEvent` |
-| Trigger waiting + filtering | `WebhookTriggerNode.build_filter` (CloudEvents glob) | optional `_extra_filter(params)` |
+| Event dispatch into workflows | `event_waiter.dispatch(event)` from `WebhookSource.handle` (canvas Run, and a deploy that runs without Temporal) | provider-specific `shape()` returning `WorkflowEvent` |
+| Deployed delivery (Temporal) | `services.events.dispatch.emit` signals the listeners whose `EventType` matches the envelope's `type` | `register_canary_trigger_type(node_type, <the envelope type>)` + an `emit` of each envelope (Stripe: `_events.emit_stripe_event`, called from `handle`) |
+| Trigger waiting + filtering | `WebhookTriggerNode.build_filter` (CloudEvents glob); both callers pass the envelope's `data` | override `build_filter` to read the payload (the base rebuilds an envelope from it and raises); `_extra_filter(params)` only on top of the base |
+| Deploy-time setup | `DeploymentManager._prepare_trigger_deployment` calls the trigger class's `prepare_deployment` at Start and at the boot re-arm; a raise is logged and the trigger armed anyway | optional `prepare_deployment(node_id=, workflow_id=, parameters=)` classmethod (Stripe starts `stripe listen` in a background task) |
 | Daemon lifecycle | `DaemonEventSource.start/stop/restart` via `ProcessService` | `build_command(secrets)` + `parse_line(stream, line)` (subscribed via `ProcessService.start(line_handler=...)` — no log-file tailing) |
 | Daemon credential gate | `DaemonEventSource.start` consults `await self.has_credential()` before spawning | optional override when auth is non-api-key (Stripe → `is_logged_in()`); default tests `secrets["api_key"]` |
 | Lifecycle WebSocket commands | `make_lifecycle_handlers(prefix, source, extra=…)` | provider-specific extra handlers |

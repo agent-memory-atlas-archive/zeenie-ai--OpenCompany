@@ -859,3 +859,58 @@ async def test_pause_status_disarms_trigger_nodes_without_touching_agents():
     broadcaster.update_node_status.assert_awaited_once_with(
         "chat-1", "idle", {"paused": True, "message": "Paused"}, workflow_id="wf-pause",
     )
+
+
+class TestTriggerPrepareDeployment:
+    """Arming a trigger runs its class's ``prepare_deployment`` hook, so a
+    plugin whose events need something running (Stripe's listen daemon) can
+    start it at Start and at the boot re-arm, both of which arrive in
+    ``_setup_event_trigger``. A failing hook must never stop the trigger
+    from being armed."""
+
+    def _arm(self, monkeypatch, hook):
+        from services import node_registry
+        from services.deployment.manager import DeploymentManager
+
+        class _Trigger:
+            prepare_deployment = hook
+
+        monkeypatch.setattr(node_registry, "get_node_class", lambda node_type: _Trigger)
+        monkeypatch.setattr(DeploymentManager, "_canary_listener_enabled_for", AsyncMock(return_value=False))
+        mgr, _ = _build_manager_with_state("wf-prep", nodes=[], edges=[])
+        mgr.database.get_node_parameters = AsyncMock(return_value={"event_type_filter": "charge.*"})
+        trigger_manager = MagicMock()
+        trigger_manager.setup_event_trigger = AsyncMock()
+        mgr._trigger_managers["wf-prep"] = trigger_manager
+        return mgr, trigger_manager
+
+    @pytest.mark.asyncio
+    async def test_hook_runs_before_the_trigger_is_armed(self, monkeypatch):
+        hook = AsyncMock()
+        mgr, trigger_manager = self._arm(monkeypatch, hook)
+
+        await mgr._setup_event_trigger(_node("stripe-1", "stripeReceive"), "wf-prep")
+
+        hook.assert_awaited_once_with(
+            node_id="stripe-1", workflow_id="wf-prep", parameters={"event_type_filter": "charge.*"},
+        )
+        trigger_manager.setup_event_trigger.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_a_raising_hook_still_arms_the_trigger(self, monkeypatch):
+        mgr, trigger_manager = self._arm(monkeypatch, AsyncMock(side_effect=RuntimeError("boom")))
+
+        await mgr._setup_event_trigger(_node("stripe-1", "stripeReceive"), "wf-prep")
+
+        trigger_manager.setup_event_trigger.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_unknown_node_type_is_armed_without_a_hook(self, monkeypatch):
+        from services import node_registry
+
+        mgr, trigger_manager = self._arm(monkeypatch, AsyncMock())
+        monkeypatch.setattr(node_registry, "get_node_class", lambda node_type: None)
+
+        await mgr._setup_event_trigger(_node("x-1", "notARegisteredType"), "wf-prep")
+
+        trigger_manager.setup_event_trigger.assert_awaited_once()

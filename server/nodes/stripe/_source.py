@@ -7,7 +7,8 @@ Two cooperating sources:
   captures the ``whsec_…`` signing secret from its stderr banner.
 * :class:`StripeWebhookSource` (WebhookSource) is the actual event
   producer — verifies the Stripe-Signature header on each forwarded
-  POST and turns the payload into a :class:`WorkflowEvent`.
+  POST, shapes the payload into the trigger's output, and hands it to
+  both the canvas-Run waiter and deployed listeners.
 
 Module-level singletons (``get_listen_source`` / ``get_webhook_source``)
 plug into the framework registries from ``__init__.py``.
@@ -34,6 +35,7 @@ from services.events import (
 )
 
 from ._credentials import StripeCredential
+from ._events import emit_stripe_event, stripe_event_received
 
 logger = get_logger(__name__)
 
@@ -130,6 +132,30 @@ class StripeListenSource(DaemonEventSource):
             logger.warning("[Stripe] persist secret failed: %s", e)
 
 
+def shape_stripe_event(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Flatten one Stripe event into the trigger's output.
+
+    Shaped here rather than in the node's ``shape_output``: a deployed trigger
+    hands downstream nodes ``event.data`` verbatim, so shaping on the node
+    would make Run and deploy disagree about the fields. The envelope used to
+    carry only Stripe's inner ``data``, which left ``created``, ``livemode``,
+    ``api_version`` and ``request`` (top-level Stripe fields) unreadable.
+    ``account`` is set only for Connect events.
+    """
+    request = payload.get("request")
+    nested = payload.get("data")
+    return {
+        "event_id": payload.get("id") or "",
+        "event_type": payload.get("type") or "unknown",
+        "created": payload.get("created"),
+        "livemode": payload.get("livemode"),
+        "api_version": payload.get("api_version"),
+        "request_id": request.get("id") if isinstance(request, dict) else request,
+        "account": payload.get("account"),
+        "data": nested if isinstance(nested, dict) else {},
+    }
+
+
 class StripeWebhookSource(WebhookSource):
     """HTTP receiver for Stripe-forwarded events."""
 
@@ -145,15 +171,16 @@ class StripeWebhookSource(WebhookSource):
             time = datetime.fromtimestamp(int(created), tz=timezone.utc) if created else datetime.now(timezone.utc)
         except (TypeError, ValueError):
             time = datetime.now(timezone.utc)
-        account = payload.get("account") or "default"
-        return WorkflowEvent(
-            id=payload.get("id") or "",
-            type=f"stripe.{payload.get('type', 'unknown')}",
-            source=f"stripe://{account}",
-            time=time,
-            data=payload.get("data") or {},
-            subject=payload.get("type"),
-        )
+        data = shape_stripe_event(payload)
+        return stripe_event_received(data, event_id=data["event_id"], account=data["account"], time=time)
+
+    async def handle(self, request: Request) -> WorkflowEvent:
+        # The base class verifies the signature, shapes the event and wakes a
+        # waiting canvas Run (and the Temporal-off deploy path). Deployed
+        # triggers on Temporal are reached only through emit.
+        event = await super().handle(request)
+        await emit_stripe_event(event)
+        return event
 
 
 _listen: Optional[StripeListenSource] = None

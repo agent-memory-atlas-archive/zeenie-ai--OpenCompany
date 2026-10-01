@@ -219,10 +219,12 @@ include it when reporting issues.
 
 ## Webhooks (`stripeReceive` trigger)
 
-When the Stripe daemon is connected (Credentials Modal → Stripe →
-Connect), every event Stripe sends is forwarded to OpenCompany and
-delivered to any active `stripeReceive` trigger nodes after
-HMAC-SHA256 signature verification (`Stripe-Signature` header).
+While the Stripe listen daemon runs, every event Stripe sends is
+forwarded to OpenCompany and delivered to any active `stripeReceive`
+trigger nodes after HMAC-SHA256 signature verification
+(`Stripe-Signature` header). The daemon starts when you log in with
+Stripe, when a workflow with a `stripeReceive` trigger starts, and on a
+canvas Run of the trigger.
 
 To test event delivery without making real payments, use the
 `trigger` command above. Events fire through the same path as real
@@ -298,8 +300,8 @@ and runs `stripe logout --all` to clear the config file.
 2. Credentials Modal → Stripe → **Login with Stripe** → a browser
    tab opens to the Stripe Dashboard with a pairing code. Authorise.
    The modal flips to "Connected" when the CLI's `login --complete`
-   subprocess returns and the listen daemon spins up
-   (`webhook_secret_captured: true`).
+   subprocess returns and the listen daemon spins up; the daemon
+   captures the webhook signing secret within a few seconds.
 3. The `Stripe` action node is connected to your agent's
    `input-tools` handle.
 4. (For webhook flows) A `stripeReceive` trigger node is wired into

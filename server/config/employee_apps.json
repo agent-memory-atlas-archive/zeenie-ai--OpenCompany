@@ -438,7 +438,7 @@
         "invoices",
         "refunds"
       ],
-      "_trigger_note": "stripeReceive is not a deployable trigger (constants.WORKFLOW_TRIGGER_TYPES), so Stripe is a tool only.",
+      "_trigger_note": "Stripe is a tool only here. stripeReceive deploys, but no hire uses it as a trigger yet.",
       "trigger": null,
       "reply": null,
       "notify_owner": null,

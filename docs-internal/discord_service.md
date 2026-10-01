@@ -250,7 +250,7 @@ whole plugin silently disappear rather than report anything.
 `WORKFLOW_TRIGGER_TYPES` is a silent failure: `TriggerManager.find_trigger_nodes`
 filters on it, so deploy ignores the node with no listener and no warning (see
 the comment inside `WORKFLOW_TRIGGER_TYPES` in [`constants.py`](../server/constants.py);
-`stripeReceive` is missing from it today). `EVENT_TRIGGER_TYPES` has no
+deploy once skipped `stripeReceive` exactly this way). `EVENT_TRIGGER_TYPES` has no
 production reader, but the tests assert membership in both.
 
 ## Testing

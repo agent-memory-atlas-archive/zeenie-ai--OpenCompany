@@ -59,6 +59,24 @@ def equivalent_event_types(event_type: str) -> tuple[str, ...]:
     return (event_type,)
 
 
+def event_type_matches(event_type: str, pattern: str) -> bool:
+    """Glob-style match on an event type. ``"all"``/empty matches any.
+
+    The pattern is matched against the type with the ``com.opencompany.``
+    reverse-DNS prefix stripped. ``"x.*"`` matches ``x`` and every type under
+    it; anything else must match exactly. :meth:`WorkflowEvent.matches_type`
+    applies this to an envelope's ``type``; a trigger whose events share one
+    CloudEvents type applies it to the type it carries in ``data``.
+    """
+    if not pattern or pattern == "all":
+        return True
+    normalized = _unprefixed_event_type(event_type or "")
+    if pattern.endswith(".*"):
+        prefix = pattern[:-2]
+        return normalized.startswith(prefix + ".") or normalized == prefix
+    return normalized == pattern
+
+
 def _dataschema_for(event_type: str) -> str:
     """Compute the ``dataschema`` URI for a given event ``type``.
 
@@ -617,10 +635,4 @@ class WorkflowEvent(BaseModel):
             "agent.*"                 matches "com.opencompany.agent.progress"
             "all" or ""               matches everything
         """
-        if not pattern or pattern == "all":
-            return True
-        normalized = _unprefixed_event_type(self.type or "")
-        if pattern.endswith(".*"):
-            prefix = pattern[:-2]
-            return normalized.startswith(prefix + ".") or normalized == prefix
-        return normalized == pattern
+        return event_type_matches(self.type or "", pattern)

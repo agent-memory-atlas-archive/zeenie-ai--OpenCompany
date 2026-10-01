@@ -69,6 +69,8 @@ server/nodes/<provider>/
 ├── __init__.py             # register_* calls only (zero logic)
 ├── _credentials.py         # Credential subclass (Stripe: StripeCredential(Credential))
 ├── _source.py              # DaemonEventSource + WebhookSource subclasses
+├── _events.py              # CloudEvents factory (the one type the trigger is canary-registered
+│                           #   for) + the dispatch.emit wrapper that reaches deployed listeners
 ├── _handlers.py            # WS_HANDLERS via make_lifecycle_handlers()
 ├── _install.py             # ensure_<provider>_cli() auto-downloader
 ├── <provider>_action.py    # ActionNode + AI tool — uses run_cli_command

@@ -48,6 +48,24 @@ class TriggerNode(BaseNode, abstract=True):
 
     # ---- subclass hooks ---------------------------------------------------
 
+    @classmethod
+    async def prepare_deployment(
+        cls,
+        *,
+        node_id: str,
+        workflow_id: str,
+        parameters: Dict[str, Any],
+    ) -> None:
+        """Called each time a deployment arms this trigger: at Start, and when
+        the boot re-arm restores a running or paused generation.
+
+        For a trigger whose events depend on something its plugin runs (the
+        ``stripe listen`` daemon), so deploying is the demand signal. Return
+        quickly and schedule slow work. The deployment manager logs anything
+        this raises and arms the trigger anyway. The default does nothing.
+        """
+        return None
+
     def build_filter(self, params: BaseModel) -> Callable[[Dict[str, Any]], bool]:
         """Event mode — return a callable that accepts an event dict
         and returns True if this trigger should fire. Default: match all.

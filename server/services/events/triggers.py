@@ -58,6 +58,9 @@ class WebhookTriggerNode(TriggerNode):
 
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
+        # The canvas Run's waiter key. A source whose ``shape`` returns
+        # envelopes of another type must have its trigger set ``event_type``
+        # to that type, or ``event_waiter.dispatch`` matches no waiter.
         if cls.webhook_source is not None and not getattr(cls, "event_type", ""):
             cls.event_type = cls.webhook_source.type
 
@@ -94,10 +97,21 @@ class WebhookTriggerNode(TriggerNode):
             return self._wrap_error(start_time=time.time(), error=err)
         result = await super().execute(node_id, parameters, context)
         if result.get("success"):
-            event = result.get("result") or {}
-            ev = event if isinstance(event, WorkflowEvent) else WorkflowEvent(**event)
-            result["result"] = self.shape_output(ev)
+            result["result"] = self.shape_output(self._as_event(result.get("result")))
         return result
+
+    def _as_event(self, value: Any) -> WorkflowEvent:
+        """Wrap what a resolved waiter returns back into an envelope.
+
+        The event waiter resolves with the envelope's ``data``, not the
+        envelope (``event_waiter._unpack_event``). Rebuilding a
+        ``WorkflowEvent`` from that dict raised, because a payload carries no
+        ``source`` or ``type``.
+        """
+        if isinstance(value, WorkflowEvent):
+            return value
+        path = self.webhook_source.path if self.webhook_source is not None else ""
+        return WorkflowEvent(source=f"webhook://{path}", type=self.event_type, data=value or {})
 
     def shape_output(self, event: WorkflowEvent) -> Dict[str, Any]:
         """Default: dump the CloudEvent. Override for provider-shaped output."""

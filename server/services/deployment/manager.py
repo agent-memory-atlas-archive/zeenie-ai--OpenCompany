@@ -557,6 +557,8 @@ class DeploymentManager:
         node_type = node.get("type", "")
         params = await self.database.get_node_parameters(node_id) or {}
 
+        await self._prepare_trigger_deployment(node_id, node_type, workflow_id, params)
+
         # Path 1: Wave 12 C1 canary — Temporal-durable listener.
         if await self._canary_listener_enabled_for(node_type):
             listener_id = await self._start_canary_listener(node, workflow_id, params)
@@ -599,6 +601,37 @@ class DeploymentManager:
 
         await trigger_manager.setup_event_trigger(node_id, node_type, params, on_event, self._broadcaster, workflow_id=workflow_id)
         return TriggerInfo(node_id, node_type)
+
+    @staticmethod
+    async def _prepare_trigger_deployment(
+        node_id: str,
+        node_type: str,
+        workflow_id: str,
+        params: Dict[str, Any],
+    ) -> None:
+        """Run the trigger class's ``prepare_deployment`` hook.
+
+        Orchestration never branches on node type: a plugin whose events need
+        something running (Stripe's listen daemon) starts it from the hook.
+        Start and the boot re-arm both arrive here. A failing hook is logged
+        and the trigger is armed anyway, so one plugin can never fail a Start
+        or a re-arm.
+        """
+        from services.node_registry import get_node_class
+
+        hook = getattr(get_node_class(node_type), "prepare_deployment", None)
+        if hook is None:
+            return
+        try:
+            await hook(node_id=node_id, workflow_id=workflow_id, parameters=params)
+        except Exception as exc:  # noqa: BLE001 — see docstring
+            logger.warning(
+                "Trigger prepare_deployment failed; arming the trigger anyway",
+                node_id=node_id,
+                node_type=node_type,
+                workflow_id=workflow_id,
+                error=str(exc),
+            )
 
     # =========================================================================
     # WAVE 12 C1 CANARY: TEMPORAL-DURABLE LISTENERS
