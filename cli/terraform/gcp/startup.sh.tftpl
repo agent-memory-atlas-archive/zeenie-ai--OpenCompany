@@ -66,7 +66,11 @@ EnvironmentFile=/etc/${resource_name}/opencompany.env
 ExecStart=$OPENCOMPANY_BIN serve
 Restart=on-failure
 RestartSec=5
-TimeoutStopSec=20
+# Must outlast the CLI's backend shutdown allowance with Temporal on
+# (backend_shutdown_grace_seconds in cli/_common.py), or systemd kills the
+# backend before it records a clean shutdown. cli/tests/test_backend_shutdown.py
+# checks it.
+TimeoutStopSec=150
 
 [Install]
 WantedBy=multi-user.target

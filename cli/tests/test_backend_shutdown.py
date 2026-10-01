@@ -1,5 +1,6 @@
 """Backend shutdown deadlines must cover every sequential teardown phase."""
 
+import re
 from dataclasses import replace
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -13,8 +14,20 @@ from cli._common import (
     free_all_ports,
 )
 from cli.commands import dev, serve, start, stop
-from cli.config import load_config
+from cli.config import _load_env_file, load_config
+from cli.platform_ import project_root
 from cli.ports import KillResult
+
+# The systemd units that run the backend on a VM: the two Terraform startup
+# templates and the manual GCP runbook.
+VM_UNITS = (
+    "cli/terraform/gcp/startup.sh.tftpl",
+    "cli/terraform/aws/startup.sh.tftpl",
+    "docs-internal/gcp_vm_deploy_runbook.md",
+)
+# Room after the CLI's allowance for the supervisor's wait after its own
+# tree-kill and for the processes to exit.
+UNIT_STOP_MARGIN_SECONDS = 10
 
 
 @pytest.mark.parametrize("temporal_grace", [1, 30, 80])
@@ -102,3 +115,25 @@ def test_stop_kills_only_this_installations_temporal(tmp_path: Path, monkeypatch
     ):
         stop.stop_command()
     kill_by_pattern.assert_called_once_with("temporal", within=tmp_path / "state")
+
+
+@pytest.mark.parametrize("rel", VM_UNITS)
+def test_vm_unit_outwaits_the_backend_shutdown_allowance(rel: str, monkeypatch: pytest.MonkeyPatch):
+    """systemd must not SIGKILL the backend before the CLI's own deadline.
+
+    Deployed VMs start with Temporal off, but the runbook documents turning it
+    on, so each unit covers the allowance with Temporal on and the template's
+    ``TEMPORAL_GRACEFUL_SHUTDOWN_SECONDS``. A shorter ``TimeoutStopSec`` kills
+    the backend before its shutdown hooks run, and with Temporal on the next
+    boot then treats the stop as a crash and pauses running deployments.
+    """
+    text = (project_root() / rel).read_text(encoding="utf-8")
+    timeouts = [int(value) for value in re.findall(r"^TimeoutStopSec=(\d+)\s*$", text, re.MULTILINE)]
+    assert len(timeouts) == 1, f"{rel}: expected one TimeoutStopSec line, found {timeouts}"
+    template = _load_env_file(project_root() / ".env.template")
+    monkeypatch.setenv("TEMPORAL_GRACEFUL_SHUTDOWN_SECONDS", template["TEMPORAL_GRACEFUL_SHUTDOWN_SECONDS"])
+    allowance = backend_shutdown_grace_seconds(replace(load_config(), temporal_enabled=True))
+    assert timeouts[0] >= allowance + UNIT_STOP_MARGIN_SECONDS, (
+        f"{rel}: TimeoutStopSec={timeouts[0]} does not outlast the CLI's backend shutdown "
+        f"allowance of {allowance:.0f}s plus {UNIT_STOP_MARGIN_SECONDS}s"
+    )

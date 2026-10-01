@@ -279,7 +279,10 @@ WorkingDirectory=$OPENCOMPANY_PACKAGE_DIR
 ExecStart=$OPENCOMPANY_BIN start
 Restart=on-failure
 RestartSec=5
-TimeoutStopSec=30
+# Must outlast the CLI's backend shutdown allowance with Temporal on
+# (backend_shutdown_grace_seconds in cli/_common.py), or systemd kills the
+# backend before it records a clean shutdown.
+TimeoutStopSec=150
 
 [Install]
 WantedBy=multi-user.target
