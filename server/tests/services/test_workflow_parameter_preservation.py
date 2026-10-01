@@ -56,7 +56,11 @@ class _ParameterRecordingDatabase:
         data: Dict[str, Any],
         description: Optional[str] = None,
         context_id_aliases: Optional[Dict[str, str]] = None,
+        *,
+        require_existing: bool = False,
     ) -> bool:
+        if require_existing and workflow_id not in self._rows:
+            return False
         self._rows[workflow_id] = SimpleNamespace(
             id=workflow_id,
             name=name,

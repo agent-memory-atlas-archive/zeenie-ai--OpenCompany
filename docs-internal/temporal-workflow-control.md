@@ -89,6 +89,14 @@ controller, and empty runtime namespace from the then-current saved canvas.
 Historical scopes therefore remain queryable without leaking state into the
 new run.
 
+Deleting a workflow uses Reset as its shutdown barrier
+([deletion.py](../server/services/workflow_storage/deletion.py)): a generation
+that is not `reset`, or a Workspace controller that exists, is Reset with the
+latest control revision before the graph is removed, and a legacy local
+deployment is cancelled. If shutdown fails, or a Start was admitted meanwhile,
+the delete is refused (`workflow_shutdown_failed`) and the graph stays. A
+workflow that never ran is deleted without connecting to Temporal.
+
 Reset quiesces every producer before its final strict Visibility sweep: local
 admission closes synchronously, the controller is told to close, cron Schedules
 are deleted, and legacy local resources are cancelled. `EventWorkflowId` is

@@ -169,6 +169,16 @@ async def _broadcast_renamed(workflow_id: str, name: str, slug: str, old_slug: s
     await _broadcast_lifecycle("renamed", workflow_id, name=name, slug=slug, old_slug=old_slug)
 
 
+async def _failed_workflow_save(database: Any, workflow_id: str, *, require_existing: bool) -> Dict[str, Any]:
+    """Report a vanished workflow separately from a storage failure."""
+    missing = require_existing and await database.get_workflow(workflow_id) is None
+    return {
+        "success": False,
+        "error": "workflow_not_found" if missing else "save_failed",
+        "workflow_id": workflow_id,
+    }
+
+
 async def handle_save_workflow(data: Dict[str, Any], websocket: WebSocket) -> Dict[str, Any]:
     """Save workflow. Re-slugs + renames workspace dir when name changes.
 
@@ -191,7 +201,7 @@ async def handle_save_workflow(data: Dict[str, Any], websocket: WebSocket) -> Di
     if is_new_marker:
         workflow_id = await database.allocate_workflow_id()
     elif existing is None:
-        return {"success": False, "error": "workflow_not_found"}
+        return {"success": False, "error": "workflow_not_found", "workflow_id": requested_id}
     else:
         workflow_id = requested_id
     name = data["name"]
@@ -261,41 +271,41 @@ async def handle_save_workflow(data: Dict[str, Any], websocket: WebSocket) -> Di
     }
     if _supports_context_archive_outbox(database):
         save_kwargs["context_id_aliases"] = normalization.aliases
+    if existing is not None:
+        save_kwargs["require_existing"] = True
     success = await database.save_workflow(
         **save_kwargs,
     )
-    if success:
-        await persist_parameter_aliases(
+    if not success:
+        return await _failed_workflow_save(database, workflow_id, require_existing=existing is not None)
+    await persist_parameter_aliases(
+        database,
+        aliases=normalization.aliases,
+        parameters=normalization.node_parameters,
+    )
+    if _supports_context_archive_outbox(database):
+        context_archives_completed, context_archives_pending = await _drain_context_archive_outbox(
             database,
-            aliases=normalization.aliases,
-            parameters=normalization.node_parameters,
+            workflow_id,
         )
-        if _supports_context_archive_outbox(database):
-            context_archives_completed, context_archives_pending = await _drain_context_archive_outbox(
-                database,
-                workflow_id,
-            )
-        else:
-            # Compatibility for isolated test doubles and older storage
-            # implementations. Production Database commits the outbox in the
-            # same transaction as the graph.
-            context_archives_completed = await archive_removed_contexts(
-                database,
-                workflow_id=workflow_id,
-                previous_nodes=((existing.data or {}).get("nodes") or [] if existing is not None else []),
-                normalized_nodes=normalization.nodes,
-                aliases=normalization.aliases,
-            )
-            context_archives_pending = 0
-        notify_graph_changed(workflow_id)
     else:
-        context_archives_completed = 0
+        # Compatibility for isolated test doubles and older storage
+        # implementations. Production Database commits the outbox in the
+        # same transaction as the graph.
+        context_archives_completed = await archive_removed_contexts(
+            database,
+            workflow_id=workflow_id,
+            previous_nodes=((existing.data or {}).get("nodes") or [] if existing is not None else []),
+            normalized_nodes=normalization.nodes,
+            aliases=normalization.aliases,
+        )
         context_archives_pending = 0
+    notify_graph_changed(workflow_id)
 
     if existing and existing.slug and existing.slug != slug:
         _move_workspace(existing.slug, slug)
         await _broadcast_renamed(workflow_id, name, slug, existing.slug)
-    elif success and existing is None:
+    elif existing is None:
         await _broadcast_lifecycle("created", workflow_id, name=name, slug=slug)
 
     return {
@@ -389,6 +399,7 @@ async def handle_get_workflow(data: Dict[str, Any], websocket: WebSocket) -> Dic
             if normalized_data != workflow_data:
                 save_kwargs = {
                     "workflow_id": workflow.id,
+                    "require_existing": True,
                     "name": workflow.name,
                     "slug": workflow.slug,
                     "description": getattr(
@@ -405,6 +416,8 @@ async def handle_get_workflow(data: Dict[str, Any], websocket: WebSocket) -> Dic
                 normalization_persisted = (
                     await database.save_workflow(**save_kwargs)
                 )
+                if not normalization_persisted:
+                    return await _failed_workflow_save(database, workflow.id, require_existing=True)
                 if normalization_persisted and _supports_context_archive_outbox(database):
                     drained, pending_archives = await _drain_context_archive_outbox(
                         database,
@@ -419,10 +432,6 @@ async def handle_get_workflow(data: Dict[str, Any], websocket: WebSocket) -> Dic
                         normalized_nodes=normalization.nodes,
                         aliases=normalization.aliases,
                     )
-                else:
-                    # Keep the response aligned with the authoritative row.
-                    # A later read retries normalization and outbox creation.
-                    normalized_data = sanitize_workflow_graph(workflow_data)
             if normalization_persisted:
                 await persist_parameter_aliases(
                     database,
@@ -445,7 +454,7 @@ async def handle_get_workflow(data: Dict[str, Any], websocket: WebSocket) -> Dic
             "context_archives_completed": recovered_archives,
             "context_archives_pending": pending_archives,
         }
-    return {"success": False, "error": "Workflow not found"}
+    return {"success": False, "error": "workflow_not_found", "workflow_id": workflow_id}
 
 
 async def handle_get_all_workflows(data: Dict[str, Any], websocket: WebSocket) -> Dict[str, Any]:
@@ -495,7 +504,13 @@ async def delete_workflow_with_context_archival(
     database: Any,
     workflow_id: str,
 ) -> Dict[str, Any]:
-    """Delete a workflow through the durable Context lifecycle boundary."""
+    """Stop runtime, then delete through the durable Context lifecycle boundary."""
+
+    from services.workflow_storage.deletion import stop_workflow_for_deletion
+
+    failure = await stop_workflow_for_deletion(database, workflow_id)
+    if failure is not None:
+        return failure
 
     if _supports_context_archive_outbox(database):
         # Production Database commits graph deletion and archive identities in
@@ -530,7 +545,7 @@ async def delete_workflow_with_context_archival(
 
 
 async def handle_delete_workflow(data: Dict[str, Any], websocket: WebSocket) -> Dict[str, Any]:
-    """Archive durable Context threads, then delete their workflow graph."""
+    """Stop the workflow, archive its durable Context threads, then delete the graph."""
     database = container.database()
     workflow_id = str(data["workflow_id"])
     return await delete_workflow_with_context_archival(

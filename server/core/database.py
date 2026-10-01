@@ -743,6 +743,8 @@ class Database:
         data: Dict[str, Any],
         description: Optional[str] = None,
         context_id_aliases: Optional[Dict[str, str]] = None,
+        *,
+        require_existing: bool = False,
     ) -> bool:
         """Save or update workflow.
 
@@ -753,6 +755,11 @@ class Database:
         :func:`services.workflow_naming.next_available_slug` before
         calling this method — the unique constraint on the column is
         the final check against collision.
+
+        ``require_existing`` makes this an update only: an editor save or
+        read-time migration must not recreate a workflow deleted since its
+        caller read the graph. The UPDATE checks the affected row count in
+        the same transaction as the Context archive intents.
         """
         try:
             async with self.get_session() as session:
@@ -762,11 +769,16 @@ class Database:
                 previous_context_ids = _workflow_context_node_ids(existing.data if existing is not None else {})
                 next_context_ids = _workflow_context_node_ids(data)
 
-                if existing:
-                    existing.name = name
-                    existing.slug = slug
-                    existing.description = description
-                    existing.data = data
+                if existing is not None:
+                    updated = await session.execute(
+                        update(Workflow)
+                        .where(Workflow.id == workflow_id)
+                        .values(name=name, slug=slug, description=description, data=data)
+                    )
+                    if updated.rowcount != 1:
+                        return False
+                elif require_existing:
+                    return False
                 else:
                     existing = Workflow(id=workflow_id, name=name, slug=slug, description=description, data=data)
                     session.add(existing)

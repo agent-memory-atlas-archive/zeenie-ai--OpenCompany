@@ -362,7 +362,9 @@ def test_save_owner_resolution_preserves_existing_backend_owner():
 async def test_workflow_delete_archives_context_before_graph(
     monkeypatch,
 ):
-    from services.workflow_storage import handlers
+    from services.workflow_storage import deletion, handlers
+
+    monkeypatch.setattr(deletion, "stop_workflow_for_deletion", AsyncMock(return_value=None))
 
     database = type("Database", (), {})()
     database.get_workflow = AsyncMock(

@@ -108,6 +108,9 @@ Unlike `save_workflow` this never replaces the graph, so it cannot drop what
 an editor saved meanwhile. An editor holding unsaved changes made before the
 push can still overwrite it on its next save (saves carry no revision check);
 adopting the batch into the editor's working copy narrows that window.
+Such a save cannot bring back a workflow deleted meanwhile: saving an
+existing workflow is an update only (`require_existing`), so it fails with
+`workflow_not_found`.
 
 ## Backend usage
 

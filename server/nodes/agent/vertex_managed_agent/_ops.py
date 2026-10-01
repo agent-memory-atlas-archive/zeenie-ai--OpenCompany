@@ -184,13 +184,17 @@ async def ensure_cloud_tool_nodes(
         data["edges"] = edges
         # Persist-then-broadcast: the DB write must land before any
         # consumer re-reads the canvas (agentBuilder invariant).
-        await database.save_workflow(
+        saved = await database.save_workflow(
             workflow_id=workflow_id,
             name=workflow.name,
             slug=workflow.slug,
             data=data,
             description=workflow.description,
+            require_existing=True,
         )
+        if not saved:
+            logger.warning("[Vertex Agent] cloud-tool graph save failed for %s", workflow_id)
+            return {}
         await broadcaster.broadcast(
             {
                 "type": _WIRE_ROUTING_KEY,

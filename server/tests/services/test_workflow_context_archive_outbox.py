@@ -5,6 +5,7 @@ import sys
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -17,7 +18,11 @@ from services.agent_context import (
 
 
 @pytest.fixture
-async def outbox_database():
+async def outbox_database(monkeypatch):
+    from services.workflow_storage import deletion
+
+    # These tests own only persistence; no workflow runtime is started.
+    monkeypatch.setattr(deletion, "stop_workflow_for_deletion", AsyncMock(return_value=None))
     # The root test configuration replaces core.database for fast contract
     # tests. Load the real implementation privately for transaction coverage.
     module_name = f"tests._real_workflow_outbox_database_{uuid.uuid4().hex}"
@@ -78,8 +83,10 @@ def _graph(*, with_context: bool) -> dict:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("require_existing", [False, True])
 async def test_graph_save_and_archive_intent_commit_atomically(
     outbox_database,
+    require_existing,
 ):
     database = outbox_database
     assert await database.save_workflow(
@@ -102,6 +109,7 @@ async def test_graph_save_and_archive_intent_commit_atomically(
         "First",
         "second",
         _graph(with_context=False),
+        require_existing=require_existing,
     )
     persisted = await database.get_workflow("1")
     assert persisted is not None
@@ -113,10 +121,86 @@ async def test_graph_save_and_archive_intent_commit_atomically(
         "First",
         "first",
         _graph(with_context=False),
+        require_existing=require_existing,
     )
     pending = await database.list_workflow_context_archive_outbox("1")
     assert len(pending) == 1
     assert pending[0]["context_node_id"] == "ctx"
+
+
+@pytest.mark.asyncio
+async def test_update_existing_does_not_insert_a_deleted_workflow(outbox_database):
+    database = outbox_database
+    assert await database.save_workflow("1", "Workflow", "workflow", _graph(with_context=False))
+    assert await database.delete_workflow("1")
+
+    assert not await database.save_workflow(
+        "1", "Stale workflow", "stale_workflow", _graph(with_context=False), require_existing=True
+    )
+    assert await database.get_workflow("1") is None
+    assert await database.list_workflow_context_archive_outbox("1") == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["save", "get"])
+@pytest.mark.parametrize("deleted", [True, False], ids=["deleted-during-request", "storage-failure"])
+async def test_failed_inflight_workflow_write_does_not_recreate_or_announce(
+    outbox_database, monkeypatch, operation, deleted
+):
+    from services import workflow_context_migration
+    from services.workflow_storage import handlers
+
+    database = outbox_database
+    # An old graph version makes get_workflow persist normalization, too.
+    assert await database.save_workflow("1", "Maya", "Maya_1", {"nodes": [], "edges": []})
+    monkeypatch.setattr(handlers.container, "database", lambda: database)
+
+    async def interleave_delete(*args, **kwargs):
+        # Both handlers have already read the workflow before this await.
+        if deleted:
+            assert await database.delete_workflow("1")
+        return []
+
+    monkeypatch.setattr(handlers, "_context_topology_errors", interleave_delete)
+    if not deleted:
+        monkeypatch.setattr(database, "save_workflow", AsyncMock(return_value=False))
+
+    persist_parameters = AsyncMock()
+    archive_contexts = AsyncMock()
+    graph_changed = MagicMock()
+    move_workspace = MagicMock()
+    broadcast = AsyncMock()
+    monkeypatch.setattr(workflow_context_migration, "persist_parameter_aliases", persist_parameters)
+    monkeypatch.setattr(workflow_context_migration, "archive_removed_contexts", archive_contexts)
+    monkeypatch.setattr(handlers, "notify_graph_changed", graph_changed)
+    monkeypatch.setattr(handlers, "_move_workspace", move_workspace)
+    monkeypatch.setattr(handlers, "_broadcast_lifecycle", broadcast)
+
+    if operation == "save":
+        result = await handlers.handle_save_workflow(
+            {"workflow_id": "1", "name": "Untitled Workflow", "data": {"nodes": [], "edges": []}},
+            websocket=None,
+        )
+    else:
+        result = await handlers.handle_get_workflow({"workflow_id": "1"}, websocket=None)
+
+    assert result == {
+        "success": False,
+        "error": "workflow_not_found" if deleted else "save_failed",
+        "workflow_id": "1",
+    }
+    persisted = await database.get_workflow("1")
+    if deleted:
+        assert persisted is None
+        assert await database.get_all_workflows() == []
+    else:
+        assert persisted.name == "Maya"
+        assert persisted.data == {"nodes": [], "edges": []}
+    persist_parameters.assert_not_awaited()
+    archive_contexts.assert_not_awaited()
+    graph_changed.assert_not_called()
+    move_workspace.assert_not_called()
+    broadcast.assert_not_awaited()
 
 
 @pytest.mark.asyncio

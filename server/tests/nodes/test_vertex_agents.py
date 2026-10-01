@@ -1218,6 +1218,7 @@ class TestCloudToolMinting:
 
         # Persisted node + edge with the minted id.
         save_kwargs = database.save_workflow.await_args.kwargs
+        assert save_kwargs["require_existing"] is True
         persisted_nodes = save_kwargs["data"]["nodes"]
         persisted_edges = save_kwargs["data"]["edges"]
         assert persisted_nodes[0]["id"] == minted_id
@@ -1240,6 +1241,28 @@ class TestCloudToolMinting:
 
         # Pulsing is the caller's concern now — mint emits no node_status.
         broadcaster.update_node_status.assert_not_awaited()
+
+    async def test_failed_graph_save_returns_no_nodes_and_does_not_broadcast(self):
+        from nodes.agent.vertex_managed_agent import _ops
+
+        database = MagicMock()
+        database.get_workflow = AsyncMock(return_value=self._workflow())
+        database.save_workflow = AsyncMock(return_value=False)
+        database.save_node_parameters = AsyncMock(return_value=True)
+        broadcaster = MagicMock()
+        broadcaster.broadcast = AsyncMock()
+
+        with (
+            patch.object(_ops, "get_database", return_value=database),
+            patch.object(_ops, "get_status_broadcaster", return_value=broadcaster),
+        ):
+            resolved = await _ops.ensure_cloud_tool_nodes(
+                workflow_id="wf-1", agent_node_id="vx-1", used={"fn:run_command": "run_command"}
+            )
+
+        assert resolved == {}
+        assert database.save_workflow.await_args.kwargs["require_existing"] is True
+        broadcaster.broadcast.assert_not_awaited()
 
     async def test_pulse_node_broadcasts_status(self):
         from nodes.agent.vertex_managed_agent import _ops

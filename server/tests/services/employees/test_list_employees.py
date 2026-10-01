@@ -263,8 +263,11 @@ async def test_list_is_newest_first_and_includes_every_workflow(real_database):
 
 async def test_deleting_the_workflow_removes_the_employee(real_database, monkeypatch):
     import services.employees as employees_package
+    from unittest.mock import AsyncMock
+    from services.workflow_storage import deletion
     from services.workflow_storage.handlers import delete_workflow_with_context_archival
 
+    monkeypatch.setattr(deletion, "stop_workflow_for_deletion", AsyncMock(return_value=None))
     frames = []
 
     async def capture(stage, **kwargs):

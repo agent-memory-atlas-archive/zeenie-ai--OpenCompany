@@ -44,7 +44,11 @@ class _FakeDatabase:
         slug: str,
         data: Dict[str, Any],
         description: Optional[str] = None,
+        *,
+        require_existing: bool = False,
     ) -> bool:
+        if require_existing and workflow_id not in self._rows:
+            return False
         self._rows[workflow_id] = SimpleNamespace(
             id=workflow_id,
             name=name,
