@@ -635,6 +635,8 @@ if use_parallel and self.settings.redis_enabled:
 return await self._execute_sequential(...)
 ```
 
+All three return the same Run fields, which the editor's Run dialog reads: `errors`, `error` (the first failure's message), `total_nodes` and `completed_nodes`. See [Temporal Architecture → The run result](./TEMPORAL_ARCHITECTURE.md#4-the-run-result).
+
 ---
 
 ## Comparison: Before vs After

@@ -43,6 +43,23 @@ _parallel_user_id: ContextVar[str] = ContextVar(
 )
 
 
+# A Run's result reports failures as ``errors`` plus their first message as
+# ``error`` on every path, because the editor's Run dialog shows only
+# ``error`` (docs-internal/TEMPORAL_ARCHITECTURE.md, "4. The run result").
+def _run_errors(result: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """A run's failures. A run-level ``error`` alone becomes the one entry."""
+    if result.get("errors"):
+        return list(result["errors"])
+    return [{"error": result["error"]}] if result.get("error") else []
+
+
+def _node_failure(node_id: str, result: Dict[str, Any]) -> Dict[str, Any]:
+    """One node's entry in ``errors``, shaped like MachinaWorkflow's."""
+    failure = {"node_id": node_id, "error": result.get("error") or "Unknown error"}
+    failure.update({key: result[key] for key in ("hint", "requires_user_action", "retryable") if key in result})
+    return failure
+
+
 class WorkflowService:
     """Workflow execution and deployment service.
 
@@ -453,6 +470,8 @@ class WorkflowService:
             "outputs": result.get("outputs", {}),
             "errors": result.get("errors", []),
             "error": result.get("error"),
+            "total_nodes": result.get("total_nodes", 0),
+            "completed_nodes": result.get("completed_nodes", 0),
             "execution_time": result.get("execution_time", time.time() - start_time),
             "temporal_execution": True,
             "timestamp": datetime.now().isoformat(),
@@ -486,12 +505,17 @@ class WorkflowService:
         finally:
             _parallel_user_id.reset(token)
 
+        errors = _run_errors(result)
+        nodes_executed = result.get("nodes_executed", [])
         return {
             "success": result.get("success", False),
             "execution_id": result.get("execution_id"),
-            "nodes_executed": result.get("nodes_executed", []),
+            "nodes_executed": nodes_executed,
             "outputs": result.get("outputs", {}),
-            "errors": result.get("errors", []),
+            "errors": errors,
+            "error": errors[0].get("error") if errors else None,
+            "total_nodes": result.get("total_nodes", 0),
+            "completed_nodes": len(nodes_executed),
             "execution_time": result.get("execution_time", time.time() - start_time),
             "parallel_execution": True,
             "timestamp": datetime.now().isoformat(),
@@ -591,11 +615,16 @@ class WorkflowService:
             if not result.get("success") and self._settings.get("stop_on_error"):
                 break
 
+        errors = [_node_failure(node_id, result) for node_id, result in results.items() if not result.get("success")]
         return {
             "success": all(r.get("success", False) for r in results.values()),
             "execution_id": execution_id,
             "nodes_executed": executed,
             "node_results": results,
+            "errors": errors,
+            "error": errors[0]["error"] if errors else None,
+            "total_nodes": len(execution_order),
+            "completed_nodes": len(executed) - len(errors),
             "execution_time": time.time() - start_time,
             "parallel_execution": False,
             "timestamp": datetime.now().isoformat(),

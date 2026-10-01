@@ -640,14 +640,19 @@ To reproduce the old failure on 3.12.8, run `kill_orphaned_opencompany_processes
 
 See the [cronScheduler card](./node-logic-flows/workflow_triggers/cronScheduler.md).
 
-## 31. A failed canvas Run says `Workflow failed: Unknown error`
+## 31. A canvas Run says `Workflow failed: Unknown error` when it fails, and `0/0 nodes completed` when it succeeds
 
-**Symptom**: Run a whole workflow with Temporal on (the default). When a node fails, the result dialog says `Workflow failed: Unknown error` and the response's `errors` list is empty, whatever the node's actual error was.
+**Symptom**: Run a whole workflow.
+- When a node fails, the result dialog says `Workflow failed: Unknown error`, whatever the node's actual error was. With Temporal on (the default), the response's `errors` list is empty too.
+- When the run succeeds, the dialog says `Workflow executed successfully. 0/0 nodes completed.`
 
-**Root cause**: `MachinaWorkflow.run` stops at the first failed node and returns that failure in `errors`, a list of `{node_id, error, ...}`. Only an empty graph returns a top-level `error`. `TemporalExecutor.execute_workflow` read only the top-level `error`, so it reported no errors, and `WorkflowService._execute_temporal` passed no `error` on at all. The dialog shows only `error`.
+**Root cause**: the dialog shows only `error` for a failure and only `completed_nodes` / `total_nodes` for a success, and no execution path filled them in.
+- `MachinaWorkflow.run` stops at the first failed node and returns that failure in `errors`, a list of `{node_id, error, ...}`. Only an empty graph returns a top-level `error`. `TemporalExecutor.execute_workflow` read only the top-level `error`, so it reported no errors, and `WorkflowService._execute_temporal` passed no `error` on at all.
+- Without Temporal, the sequential fallback reported failures only in `node_results`, and the Redis-only parallel path only in `errors`. Neither set `error`.
+- No path set `total_nodes` or `completed_nodes`, so the WebSocket handler's defaults of 0 reached the dialog.
 
-**Fix**: the executor keeps the workflow's `errors` and sets `error` to the first message; an empty graph or a failed Temporal call becomes `[{"error": ...}]`. `_execute_temporal` forwards `error`. Locked by `server/tests/temporal/test_run_errors.py`. The result contract is in [Temporal Architecture → The run result](./TEMPORAL_ARCHITECTURE.md#4-the-run-result).
+**Fix**:
+- `51774a77`: the Temporal executor keeps the workflow's `errors` and sets `error` to the first message; an empty graph or a failed Temporal call becomes `[{"error": ...}]`. `_execute_temporal` forwards `error`.
+- A follow-up gave the sequential and parallel paths the same `errors` and `error`, and made every path report `total_nodes` and `completed_nodes`. `MachinaWorkflow` now returns its `total_nodes`.
 
-**Still open**:
-- A successful Run's dialog says `0/0 nodes completed` on every path, because no path sets `total_nodes` or `completed_nodes`.
-- Without Temporal, a failed Run still says `Unknown error`. The sequential path reports failures only in `node_results`, and the Redis-only parallel path only in `errors`.
+Locked by `server/tests/temporal/test_run_errors.py` and `server/tests/services/test_workflow_run_result.py`. The result contract is in [Temporal Architecture → The run result](./TEMPORAL_ARCHITECTURE.md#4-the-run-result).

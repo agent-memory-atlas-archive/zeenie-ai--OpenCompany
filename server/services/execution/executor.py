@@ -171,6 +171,7 @@ class WorkflowExecutor:
                 "execution_id": ctx.execution_id,
                 "status": ctx.status.value,
                 "nodes_executed": ctx.get_completed_nodes(),
+                "total_nodes": len(ctx.node_executions),
                 "outputs": ctx.outputs,
                 "errors": ctx.errors,
                 "execution_time": time.time() - start_time,

@@ -188,6 +188,8 @@ class TemporalExecutor:
                 "outputs": result.get("outputs", {}),
                 "errors": errors,
                 "error": errors[0].get("error") if errors else None,
+                "total_nodes": result.get("total_nodes", 0),
+                "completed_nodes": len(result.get("execution_trace", [])),
                 "execution_time": execution_time,
                 "temporal_execution": True,
                 "timestamp": datetime.now().isoformat(),

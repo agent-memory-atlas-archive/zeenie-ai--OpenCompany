@@ -252,13 +252,23 @@ In the legacy path the server broadcasts status updates, tool-glow events, and p
 
 ### 4. The run result
 
-`MachinaWorkflow.run` returns `{success, outputs, execution_trace, errors}`. `success` is true only when no node failed and every node in the executable graph completed. The first node that fails stops the run. `errors` then holds that failure as `{node_id, error}`, plus whichever of `hint`, `requires_user_action` and `retryable` the node supplied, and it is `None` when nothing failed. Only an empty graph returns a top-level `error` ("No nodes provided") instead.
+`MachinaWorkflow.run` returns `{success, outputs, execution_trace, errors, total_nodes}`.
+- `total_nodes` is the size of the executable graph.
+- `execution_trace` lists every node the run completed, skipped or auto-completed.
+- `success` is true only when no node failed and every node in the executable graph completed.
+- The first node that fails stops the run. `errors` then holds that failure as `{node_id, error}`, plus whichever of `hint`, `requires_user_action` and `retryable` the node supplied. It is `None` when nothing failed.
+- Only an empty graph returns a top-level `error` ("No nodes provided") instead.
 
-`TemporalExecutor.execute_workflow` turns that into the Run response:
+`TemporalExecutor.execute_workflow` turns that into the Run response, and `WorkflowService._execute_temporal` forwards it:
 - `errors` is the workflow's list unchanged, or `[{"error": ...}]` for an empty graph or a failed Temporal call;
-- `error` is the first entry's message, or `None`.
+- `error` is the first entry's message, or `None`;
+- `total_nodes` is the workflow's count, and `completed_nodes` is the length of `execution_trace`.
 
-`WorkflowService._execute_temporal` forwards both. The editor's Run dialog shows only `error` ("Workflow failed: …"), so before both kept it, every failed Run said "Unknown error" ([Known Errors #31](./errors.md)). Locked by `server/tests/temporal/test_run_errors.py`.
+The in-process paths return the same four fields (`_run_errors` and `_node_failure` in `services/workflow.py`):
+- the sequential fallback counts the nodes reachable from the start node, which leaves out tools and other nodes wired into an agent;
+- the Redis-only parallel engine counts its node executions, which leave out config nodes and agent sub-nodes.
+
+The editor's Run dialog shows `error` when a run fails ("Workflow failed: …") and `completed_nodes` / `total_nodes` when it succeeds ("N/M nodes completed"). Before these fields were set, a failed Run said "Unknown error" and a successful one said "0/0 nodes completed" ([Known Errors #31](./errors.md)). Locked by `server/tests/temporal/test_run_errors.py` and `server/tests/services/test_workflow_run_result.py`.
 
 ## Connection Pooling
 

@@ -389,7 +389,8 @@ class MachinaWorkflow:
                 - tenant_id: Tenant identifier for multi-tenancy
 
         Returns:
-            Dict with success, outputs, execution_trace, and errors
+            Dict with success, outputs, execution_trace, errors, and
+            total_nodes (the size of the executable graph)
         """
         nodes = workflow_data.get("nodes", [])
         edges = workflow_data.get("edges", [])
@@ -732,6 +733,7 @@ class MachinaWorkflow:
             "outputs": outputs,
             "execution_trace": execution_trace,
             "errors": errors if errors else None,
+            "total_nodes": len(node_map),
         }
 
     def _get_node_inputs(

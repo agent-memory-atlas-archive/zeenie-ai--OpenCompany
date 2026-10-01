@@ -1,14 +1,16 @@
-"""A failed canvas Run on the Temporal path reports why it failed.
+"""A canvas Run on the Temporal path reports why it failed and what it ran.
 
 MachinaWorkflow returns per-node failures as ``errors`` (a list of
 ``{node_id, error, ...}``), and only an empty graph returns a top-level
-``error``. The Run response the editor shows reads ``error`` for its message
-and ``errors`` for detail, so both must survive TemporalExecutor and
-WorkflowService._execute_temporal.
+``error``. It also counts the nodes in its executable graph as
+``total_nodes``. The editor's Run dialog shows ``error`` when a run fails and
+``completed_nodes`` / ``total_nodes`` when it succeeds, so all of them must
+survive TemporalExecutor and WorkflowService._execute_temporal.
 """
 
 from __future__ import annotations
 
+import asyncio
 import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -63,7 +65,14 @@ async def test_a_successful_run_reports_no_error():
 
 
 @pytest.mark.asyncio
-async def test_the_workflow_service_passes_the_message_on():
+async def test_the_run_counts_its_nodes():
+    result = await _run({"success": True, "outputs": {}, "execution_trace": ["start-1", "py-1"], "total_nodes": 2})
+
+    assert (result["completed_nodes"], result["total_nodes"]) == (2, 2)
+
+
+@pytest.mark.asyncio
+async def test_the_workflow_service_passes_the_message_and_counts_on():
     from services.workflow import WorkflowService
 
     service = WorkflowService.__new__(WorkflowService)
@@ -71,7 +80,15 @@ async def test_the_workflow_service_passes_the_message_on():
     failure = {"node_id": "n1", "error": "boom"}
     service._temporal_executor = SimpleNamespace(
         execute_workflow=AsyncMock(
-            return_value={"success": False, "nodes_executed": [], "outputs": {}, "errors": [failure], "error": "boom"}
+            return_value={
+                "success": False,
+                "nodes_executed": ["start-1"],
+                "outputs": {},
+                "errors": [failure],
+                "error": "boom",
+                "total_nodes": 3,
+                "completed_nodes": 1,
+            }
         )
     )
 
@@ -79,3 +96,50 @@ async def test_the_workflow_service_passes_the_message_on():
 
     assert result["errors"] == [failure]
     assert result["error"] == "boom"
+    assert (result["completed_nodes"], result["total_nodes"]) == (1, 3)
+
+
+async def _run_machina_workflow(monkeypatch, failing=()):
+    """Run the real MachinaWorkflow body on start -> py-1 -> py-2 without a
+    Temporal server (the pattern of test_machina_workflow_loop.py)."""
+    from temporalio import workflow as temporal_workflow
+
+    from services.temporal.workflow import MachinaWorkflow
+
+    def start_activity(name, **kwargs):
+        node_id = kwargs["args"][0]["node_id"]
+        future = asyncio.get_event_loop().create_future()
+        future.set_result({"success": False, "error": f"{node_id} broke"} if node_id in failing else {"success": True, "result": {}})
+        return future
+
+    async def execute_activity(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(temporal_workflow, "logger", MagicMock())
+    monkeypatch.setattr(temporal_workflow, "patched", lambda _patch_id: True)
+    monkeypatch.setattr(temporal_workflow, "start_activity", start_activity)
+    monkeypatch.setattr(temporal_workflow, "execute_activity", execute_activity)
+    monkeypatch.setattr(
+        MachinaWorkflow,
+        "_resolve_dispatch",
+        lambda self, node_type, **_kwargs: {"kind": "activity", "name": f"node.{node_type}.v1", "queue": None},
+    )
+    ids = ["start-1", "py-1", "py-2"]
+    graph_nodes = [{"id": node_id, "type": "start" if node_id == "start-1" else "pythonExecutor", "data": {}} for node_id in ids]
+    edges = [
+        {"id": f"e{index}", "source": source, "target": target, "sourceHandle": "output-main", "targetHandle": "input-main"}
+        for index, (source, target) in enumerate(zip(ids, ids[1:]))
+    ]
+    return await MachinaWorkflow().run(
+        {"nodes": graph_nodes, "edges": edges, "session_id": "test", "workflow_id": "wf-1", "execution_id": "wf-1-run"}
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_workflow_counts_the_nodes_of_its_run(monkeypatch):
+    finished = await _run_machina_workflow(monkeypatch)
+    failed = await _run_machina_workflow(monkeypatch, failing={"py-1"})
+
+    assert (finished["success"], finished["execution_trace"], finished["total_nodes"]) == (True, ["start-1", "py-1", "py-2"], 3)
+    assert (failed["success"], failed["execution_trace"], failed["total_nodes"]) == (False, ["start-1"], 3)
+    assert failed["errors"] == [{"node_id": "py-1", "error": "py-1 broke"}]
