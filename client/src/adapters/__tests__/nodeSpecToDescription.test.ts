@@ -110,6 +110,41 @@ describe('nodeSpecToDescription contract', () => {
     expect(def.properties![0].type).toBe('string');
   });
 
+  it('reads options and bounds from the non-null branch of Optional[T]', () => {
+    // Pydantic writes Optional[Literal[...]] and Optional[float] with
+    // ge/le exactly like this: enum and bounds live on the anyOf branch.
+    // Reading them only from the top level gave every chat model's
+    // reasoning_effort an empty dropdown.
+    const spec: NodeSpec = {
+      type: 'optEnumNode',
+      displayName: 'Optional Enum Node',
+      icon: '🔵',
+      group: ['utility'],
+      version: 1,
+      inputs: {
+        properties: {
+          reasoning_effort: {
+            anyOf: [{ enum: ['low', 'medium', 'high'], type: 'string' }, { type: 'null' }],
+            default: null,
+          },
+          temperature: {
+            anyOf: [{ type: 'number', minimum: 0, maximum: 2 }, { type: 'null' }],
+          },
+        },
+      },
+    };
+    expectValid(spec);
+    const [effort, temperature] = nodeSpecToDescription(spec).properties!;
+    expect(effort.type).toBe('options');
+    expect(effort.options).toEqual([
+      { name: 'low', value: 'low' },
+      { name: 'medium', value: 'medium' },
+      { name: 'high', value: 'high' },
+    ]);
+    expect(temperature.type).toBe('number');
+    expect(temperature.typeOptions).toMatchObject({ minValue: 0, maxValue: 2 });
+  });
+
   it.each([
     ['code editor hint', { editor: 'code' }, 'code'],
     ['json editor hint', { editor: 'json' }, 'json'],

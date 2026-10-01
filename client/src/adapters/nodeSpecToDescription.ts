@@ -105,6 +105,15 @@ interface JsonSchemaProperty {
 type InodeType = INodeProperties['type'];
 
 /**
+ * The non-null branch of a Pydantic `Optional[T]`, which JSON Schema writes
+ * as `anyOf: [T, {type: 'null'}]`. `T`'s own keywords (`enum`, `minimum`,
+ * `maximum`) live on that branch, not on the property itself.
+ */
+function nonNullBranch(prop: JsonSchemaProperty): JsonSchemaProperty | undefined {
+  return prop.anyOf?.find(b => (b.type && b.type !== 'null') || (b.enum && b.enum.length > 0));
+}
+
+/**
  * Convert a JSON Schema property → INodeProperties.type value expected
  * by the parameter renderer. Prefers `enum` → `options`, then falls back
  * to the JSON Schema primitive type. Unknown shapes map to `string` so
@@ -129,10 +138,8 @@ function mapPropertyType(prop: JsonSchemaProperty): InodeType {
   if (widget === 'file' || prop.format === 'binary') return 'file';
   if (prop.format === 'date-time' || prop.format === 'date') return 'dateTime';
   // anyOf([T, null]) is the Pydantic Optional[T] pattern — take the non-null branch.
-  if (prop.anyOf) {
-    const nonNull = prop.anyOf.find(b => b.type && b.type !== 'null');
-    if (nonNull) return mapPropertyType(nonNull);
-  }
+  const nonNull = nonNullBranch(prop);
+  if (nonNull) return mapPropertyType(nonNull);
   const t = Array.isArray(prop.type) ? prop.type[0] : prop.type;
   switch (t) {
     case 'boolean':
@@ -156,12 +163,17 @@ function toInodeProperty(
   required: boolean,
 ): INodeProperties {
   const type = mapPropertyType(prop);
+  // An Optional[T] field keeps T's keywords on its non-null anyOf branch.
+  const branch = nonNullBranch(prop);
+  const enumValues = prop.enum ?? branch?.enum;
+  const minimum = prop.minimum ?? branch?.minimum;
+  const maximum = prop.maximum ?? branch?.maximum;
   // For `options`: prefer uiHints.options (richer labels) when supplied,
   // otherwise derive bare {name, value} pairs from JSON Schema enum.
   const richOptions = prop.uiHints?.options as INodeProperties['options'] | undefined;
   const options =
     richOptions ??
-    prop.enum?.map(v => ({ name: String(v), value: v as string | number | boolean }));
+    enumValues?.map(v => ({ name: String(v), value: v as string | number | boolean }));
   const out: INodeProperties = {
     displayName: (prop.uiHints?.displayName as string | undefined) || prop.title || name,
     name,
@@ -171,10 +183,10 @@ function toInodeProperty(
     options,
   };
   if (required) out.required = true;
-  if (prop.minimum !== undefined || prop.maximum !== undefined) {
+  if (minimum !== undefined || maximum !== undefined) {
     out.typeOptions = {
-      ...(prop.minimum !== undefined ? { minValue: prop.minimum } : {}),
-      ...(prop.maximum !== undefined ? { maxValue: prop.maximum } : {}),
+      ...(minimum !== undefined ? { minValue: minimum } : {}),
+      ...(maximum !== undefined ? { maxValue: maximum } : {}),
     };
   }
   // Lift Pydantic Field(json_schema_extra=...) hints. Pydantic merges
