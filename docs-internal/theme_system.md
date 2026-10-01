@@ -271,7 +271,7 @@ Result by theme (display font / tracking / case):
 2. **Whole-store Zustand destructure.** Always `useAppStore((s) => s.x)`, never `{ x } = useAppStore()`.
 3. **Ad-hoc opacity arithmetic on role/surface tokens.** Don't inline alpha (`bg-bg-app/10`, `bg-node-agent/30`, `bg-action-run/25`). Tailwind v4 *can* now color-mix `/opacity` on hex tokens, but the discipline is to reference a NAMED token: add/define a `-soft` / `-hover` / `-border` variant, or a `--tint-*` step in base.css, and use it by name.
 4. **Hardcoded colours.** No `bg-white`, `bg-black`, `text-gray-500`, `style={{ backgroundColor: '#fff' }}`. Use tokens.
-5. **`useAppTheme()` in new files.** Allowed only for surfaces that need JS-side hex values Tailwind can't express: canvas node components (`AIAgentNode`, `SquareNode`, `TriggerNode`, `StartNode`, `ToolkitNode`, `TeamMonitorNode`), `EdgeConditionEditor`, and the Google Maps SDK consumers (`GoogleMapsPicker`, `MapsPreviewPanel`) — note the map
+5. **`useAppTheme()` in new files.** Allowed only for surfaces that need JS-side hex values Tailwind can't express: canvas node components (`AIAgentNode`, `SquareNode`, `TriggerNode`, `StartNode`), `EdgeConditionEditor`, and the Google Maps SDK consumers (`GoogleMapsPicker`, `MapsPreviewPanel`) — note the map
 tiles themselves are deliberately left to Google's own styling; `useAppTheme` here covers only
 the surrounding chrome. Every other surface uses Tailwind + tokens. New themes contribute to `useAppTheme` via a `THEME_OVERRIDES` entry, never by importing `lightColors` / `darkColors` directly.
 6. **Hand-rolled modal backdrops.** Use `<Modal>` from `client/src/components/ui/Modal.tsx`.
@@ -338,7 +338,7 @@ Wave 15 added structural classNames across the React tree so the handoff CSS sel
 | Form field | `.input` | input.tsx, textarea.tsx |
 | Dropdown menu | `.menu-pop` (Content), `.menu-pop-item` (Item) | dropdown-menu.tsx |
 | Canvas host | `.canvas-host`, `.canvas` (alias) | Dashboard |
-| Generic canvas node | `.node`, `.selected` | AIAgentNode, GenericNode, TriggerNode, StartNode, ToolkitNode, TeamMonitorNode |
+| Generic canvas node | `.node`, `.selected` | AIAgentNode, GenericNode, TriggerNode, StartNode |
 | Agent node variant | `.node-agent` | AIAgentNode |
 | Trigger node variant | `.node-trigger` | TriggerNode |
 | Square canvas node | `.sq-node`, `.sq-node-box`, `.sq-node-pip`, `.sq-node-gear`, `.sq-node-handle.in`, `.sq-node-handle.out`, `.selected` | SquareNode |
@@ -373,7 +373,7 @@ Every canvas-node React component renders against pure CSS for visual styling. T
      style={{ '--node-color': accentColor, /* layout only */ } as NodeStyle}
    >
    ```
-   In `AIAgentNode`, `accentColor` is the plugin's colour from `useNodeSpec(type)` (NodeSpec `color`, from the plugin's `meta.json` or `visuals.json`). `SquareNode`, `TriggerNode`, `StartNode`, `ToolkitNode` and `TeamMonitorNode` use `definition?.defaults?.color`, which `nodeSpecToDescription` never fills, so they always fall back to their role token: `var(--node-model)`, `var(--node-trigger)`, `var(--node-workflow)`, `var(--node-tool)` and `var(--node-agent)` respectively. Plugin colours therefore do not reach those nodes today.
+   In `AIAgentNode`, `accentColor` is the plugin's colour from `useNodeSpec(type)` (NodeSpec `color`, from the plugin's `meta.json` or `visuals.json`). `SquareNode`, `TriggerNode` and `StartNode` use `definition?.defaults?.color`, which `nodeSpecToDescription` never fills, so they always fall back to their role token: `var(--node-model)`, `var(--node-trigger)` and `var(--node-workflow)` respectively. Plugin colours therefore do not reach those nodes today.
 
 2. **Keeping ONLY layout inline** — `position`, `padding`, `display`, `flex*`, `gap`, `width`, `height`, `transition`, `cursor`, `fontFamily`, `fontSize`. React Flow `<Handle>` positioning (`position: absolute; left/top/right/bottom`) MUST stay inline.
 
@@ -394,8 +394,8 @@ Two visually distinct node families, each with its own class hooks. Pick the rig
 
 | Family | Outer class | Inner box | Pip | Gear | Handle | Label | Used by |
 |---|---|---|---|---|---|---|---|
-| Square-icon | `.sq-node` | `.sq-node-box` | `.sq-node-pip` | `.sq-node-gear` | `.sq-node-handle.in` / `.sq-node-handle.out` | `.sq-node-label` | SquareNode, TriggerNode, StartNode, ToolkitNode |
-| Rectangular | `.node` (+ optional `.node-agent` / `.node-trigger` co-class for type-specific theming) | (none — single-div card) | `.node-pip` | `.node-gear` | `.node-handle.in` / `.node-handle.out` | `.node-label` | AIAgentNode, TeamMonitorNode (GenericNode was retired) |
+| Square-icon | `.sq-node` | `.sq-node-box` | `.sq-node-pip` | `.sq-node-gear` | `.sq-node-handle.in` / `.sq-node-handle.out` | `.sq-node-label` | SquareNode, TriggerNode, StartNode |
+| Rectangular | `.node` (+ optional `.node-agent` / `.node-trigger` co-class for type-specific theming) | (none — single-div card) | `.node-pip` | `.node-gear` | `.node-handle.in` / `.node-handle.out` | `.node-label` | AIAgentNode (GenericNode was retired) |
 
 Both families share the same status-pip data contract:
 

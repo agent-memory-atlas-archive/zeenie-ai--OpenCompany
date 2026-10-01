@@ -145,7 +145,7 @@ client/src/
 │   ├── brand/geometry.ts           # Mark + wordmark paths; the favicon and desktop icon embed MARK_PATH
 │   ├── shell/ModeToggle.tsx        # The Normal / Dev switch (editor toolbar + Home header)
 │   ├── auth/                       # Login page + protected route
-│   ├── SquareNode.tsx, StartNode.tsx, TriggerNode.tsx, AIAgentNode.tsx, ToolkitNode.tsx, TeamMonitorNode.tsx
+│   ├── SquareNode.tsx, StartNode.tsx, TriggerNode.tsx, AIAgentNode.tsx
 │   │                               # React Flow nodes with lucide icons
 │   └── APIKeyValidator.tsx         # Shadcn Input + Button + Tooltip composition
 │
@@ -558,7 +558,7 @@ Defined on `INodeTypeDescription.uiHints` ([client/src/types/INodeProperties.ts]
 | `hideOutputSection` | `ParameterPanel`, `OutputSection` | Skip the execution-results panel |
 | `hideRunButton` | `ParameterPanel` | Hide the Run button (skill / memory / tool nodes) |
 | `hasCodeEditor` | `MiddleSection` | Give the params block extra flex space for an embedded code editor |
-| `isMasterSkillEditor` | `MiddleSection`, `Dashboard` (component dispatch), `useAutoSkillEdges` | Render the MasterSkillEditor split panel; route to `ToolkitNode` on the canvas; identify Master Skill aggregators in the auto-skill edge dispatcher |
+| `isMasterSkillEditor` | `MiddleSection`, `useAutoSkillEdges` | Render the MasterSkillEditor split panel; identify Master Skill aggregators in the auto-skill edge dispatcher. On the canvas a Master Skill renders through `SquareNode` (`component_kind = "tool"`) |
 | `isMemoryPanel` | `MiddleSection` | **Legacy.** The pre-RFC-0002 combined markdown/transcript panel. `simpleMemory` no longer declares it; kept while `normalize_workflow_graph` upgrades `input-memory` graphs |
 | `isMemoryToolPanel` | `MiddleSection` | Render the durable Memory item browser (search, edit, forget, clear). Declared by `simpleMemory`, and selected *before* `isMemoryPanel` |
 | `isContextPanel` | `MiddleSection` | Render the Context inspector (journal, active replay, fork/export/clear). Read-only: it observes the agent's journal and must never alter execution |
@@ -694,4 +694,4 @@ This architecture is the post-migration state. Pre-migration was antd + `styled-
 
 **`useAppTheme()` powers the canvas + maps surface across all 12 themes.** The hook returns a `theme` object with the legacy `Colors` shape (`theme.colors.X`, `theme.isDarkMode`) so existing call sites don't change. Under non-light/dark themes it merges a per-theme overlay (primary, focus, action palette, edge stroke / selection / executing / completed / error) on top of the chosen base pack (`lightColors` for utopian-bright themes, `darkColors` for dystopian / dark themes). Adding a new theme overlay is a single entry in the `THEME_OVERRIDES` map in [hooks/useAppTheme.ts](../client/src/hooks/useAppTheme.ts).
 
-Read sites: every canvas node component (`AIAgentNode`, `SquareNode`, `TriggerNode`, `StartNode`, `ToolkitNode`, `TeamMonitorNode`), `Dashboard.tsx`, and the Maps surface (`GoogleMapsPicker`, `MapsPreviewPanel`) — they interpolate JS-side colour values that Tailwind classes can't express (`EdgeConditionEditor` no longer calls it). Of the node components, only `AIAgentNode` uses the plugin's own colour (NodeSpec `color`); the others read `definition.defaults.color`, which the NodeSpec adapter never fills, so they use their role token (`--node-model`, `--node-trigger`, `--node-workflow`, `--node-tool`, `--node-agent`). Every other surface uses Tailwind + the token tiers above and retints automatically through the per-theme `[data-theme="..."]` block.
+Read sites: every canvas node component (`AIAgentNode`, `SquareNode`, `TriggerNode`, `StartNode`), `Dashboard.tsx`, and the Maps surface (`GoogleMapsPicker`, `MapsPreviewPanel`) — they interpolate JS-side colour values that Tailwind classes can't express (`EdgeConditionEditor` no longer calls it). Of the node components, only `AIAgentNode` uses the plugin's own colour (NodeSpec `color`); the others read `definition.defaults.color`, which the NodeSpec adapter never fills, so they use their role token (`--node-model`, `--node-trigger`, `--node-workflow`). Every other surface uses Tailwind + the token tiers above and retints automatically through the per-theme `[data-theme="..."]` block.

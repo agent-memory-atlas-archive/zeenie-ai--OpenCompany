@@ -208,7 +208,7 @@ const SquareNode: React.FC<NodeProps<NodeData>> = ({ id, type, data, isConnectab
   // consumed by `.sq-node-pip[data-status="..."]` in base.css. Per-theme
   // CSS overrides these without fighting inline `backgroundColor`.
   // Buckets: 'idle' | 'executing' | 'waiting' | 'success' | 'error'.
-  // Matches TriggerNode/StartNode/ToolkitNode contract (Wave 26.B).
+  // Matches the TriggerNode/StartNode contract (Wave 26.B).
   const pipStatus: 'idle' | 'executing' | 'waiting' | 'success' | 'error' = (() => {
     if (executionStatus === 'executing' || executionStatus === 'waiting' || isGlowing) {
       return 'executing';

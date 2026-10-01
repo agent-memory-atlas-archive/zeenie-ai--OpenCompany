@@ -127,12 +127,9 @@ class TestExecutionBudgetIsServed:
 # a uiHint instead.
 _BASELINE_VIOLATIONS = frozenset(
     {
-        ("client/src/Dashboard.tsx", "teamMonitor"),
         ("client/src/Dashboard.tsx", "aiAgent"),
         ("client/src/Dashboard.tsx", "chatAgent"),
         ("client/src/components/LocationParameterPanel.tsx", "gmaps_create"),
-        ("client/src/components/TeamMonitorNode.tsx", "ai_employee"),
-        ("client/src/components/TeamMonitorNode.tsx", "orchestrator_agent"),
         ("client/src/components/TriggerNode.tsx", "whatsappReceive"),
         ("client/src/hooks/useDragAndDrop.ts", "aiAgent"),
         ("client/src/hooks/useDragAndDrop.ts", "chatAgent"),

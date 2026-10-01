@@ -20,8 +20,9 @@ descriptor, injects personality skills into the system prompt, and exposes
 standard skills through the dynamically bound `Skill` tool (progressive
 disclosure). The `isMasterSkillEditor` uiHint is what makes the frontend
 render the `MasterSkillEditor` split panel instead of a plain parameter
-list, route the canvas component to `ToolkitNode`, and recognise the node
-in the auto-add-skill edge dispatcher.
+list and recognise the node in the auto-add-skill edge dispatcher. On the
+canvas it renders through `SquareNode`, like every `component_kind = "tool"`
+node.
 
 ## Inputs (handles)
 
@@ -115,7 +116,7 @@ flowchart TD
 
 - **Credentials**: none.
 - **Services**: `services.plugin.edge_walker` (`register_master_skill_expander` / `get_master_skill_expander`), `services.skill_loader`, `services.skill_prompt`, `services.skill_runtime`, `services.auto_skill`, `services.workflow_ops`, `services.events.envelope.WorkflowEvent`.
-- **Frontend**: [`client/src/components/parameterPanel/MasterSkillEditor.tsx`](../../../client/src/components/parameterPanel/MasterSkillEditor.tsx) (dispatched by `MiddleSection` on `uiHints.isMasterSkillEditor`), `Dashboard.tsx` component dispatch to `ToolkitNode`, [`client/src/hooks/useAutoSkillEdges.ts`](../../../client/src/hooks/useAutoSkillEdges.ts), and the skill queries it shares with Home's Settings > Skills ([`useUserSkills.ts`](../../../client/src/hooks/useUserSkills.ts), [`useFolderSkills.ts`](../../../client/src/hooks/useFolderSkills.ts)).
+- **Frontend**: [`client/src/components/parameterPanel/MasterSkillEditor.tsx`](../../../client/src/components/parameterPanel/MasterSkillEditor.tsx) (dispatched by `MiddleSection` on `uiHints.isMasterSkillEditor`), [`client/src/hooks/useAutoSkillEdges.ts`](../../../client/src/hooks/useAutoSkillEdges.ts), and the skill queries it shares with Home's Settings > Skills ([`useUserSkills.ts`](../../../client/src/hooks/useUserSkills.ts), [`useFolderSkills.ts`](../../../client/src/hooks/useFolderSkills.ts)).
 - **Task queue**: `TaskQueue.DEFAULT` (never dispatched in practice). Annotations: `readonly`.
 
 ## Edge cases & known limits

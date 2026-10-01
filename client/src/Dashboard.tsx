@@ -19,8 +19,6 @@ import { prefetchAllNodeSpecs, listCachedNodeSpecs, cachedNodeSpecTypesKey } fro
 import AIAgentNode from './components/AIAgentNode';
 import SquareNode from './components/SquareNode';
 import TriggerNode from './components/TriggerNode';
-import ToolkitNode from './components/ToolkitNode';
-import TeamMonitorNode from './components/TeamMonitorNode';
 import StartNode from './components/StartNode';
 import ConditionalEdge from './components/ConditionalEdge';
 import NodeContextMenu from './components/ui/NodeContextMenu';
@@ -113,25 +111,14 @@ const COMPONENT_BY_KIND: Record<string, React.ComponentType<any>> = {
 };
 
 // Build the React Flow `nodeTypes` map: spec.componentKind → component.
-// Falls back to a small set of legacy hints for the few cases the spec
-// doesn't yet cover (skill nodes use ToolkitNode; teamMonitor has its
-// own live-display component). Once those are spec-driven too, the
-// fallback collapses to a single `SquareNode` default.
+// A kind missing from the map (or no kind) renders as SquareNode.
 const createNodeTypes = (): Record<string, React.ComponentType<any>> => {
   const types: Record<string, React.ComponentType<any>> = {};
   // Cache-driven enumeration: empty on cold boot, filled once
   // prefetchAllNodeSpecs resolves and the `specsKey` change rebuilds.
   listCachedNodeSpecs().forEach(spec => {
     const kind = spec.componentKind;
-    if (kind && COMPONENT_BY_KIND[kind]) {
-      types[spec.type] = COMPONENT_BY_KIND[kind];
-    } else if (spec.type === 'teamMonitor') {
-      types[spec.type] = TeamMonitorNode;
-    } else if ((spec.uiHints as any)?.isMasterSkillEditor === true) {
-      types[spec.type] = ToolkitNode;
-    } else {
-      types[spec.type] = SquareNode;
-    }
+    types[spec.type] = (kind && COMPONENT_BY_KIND[kind]) || SquareNode;
   });
   return types;
 };

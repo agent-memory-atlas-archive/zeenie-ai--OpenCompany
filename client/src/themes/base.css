@@ -342,11 +342,10 @@ html[data-page-hidden] *::after {
  * Default canvas-node visuals (Wave 21).
  *
  * Each node component sets `--node-color` inline. Only AIAgentNode passes
- * the plugin's accent (its NodeSpec `color`); SquareNode, TriggerNode,
- * StartNode, ToolkitNode and TeamMonitorNode read `defaults.color`, which
- * the NodeSpec adapter never fills, so they pass their role token
- * (`--node-model`, `--node-trigger`, `--node-workflow`, `--node-tool`,
- * `--node-agent`). These rules consume that custom property
+ * the plugin's accent (its NodeSpec `color`); SquareNode, TriggerNode and
+ * StartNode read `defaults.color`, which the NodeSpec adapter never fills,
+ * so they pass their role token (`--node-model`, `--node-trigger`,
+ * `--node-workflow`). These rules consume that custom property
  * to draw a sensible default border / gradient / shadow so light, dark,
  * and any theme that doesn't define its own `.node` rule still renders
  * correctly. Per-theme CSS in client/src/themes/<theme>.css overrides
