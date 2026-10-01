@@ -559,6 +559,91 @@ class TestCronExpression:
         assert _as_temporal_reads(TriggerManager.build_cron_expression(params)) == fires
 
 
+def _in_range(ranges, value: int) -> bool:
+    """Temporal's ScheduleRange: an end below the start is the start, a step of 0 is 1."""
+    return any(
+        r.start <= value <= max(r.start, r.end) and (value - r.start) % (r.step or 1) == 0 for r in ranges
+    )
+
+
+def _calendar_fires_at(calendar, moment) -> bool:
+    return (
+        _in_range(calendar.second, moment.second)
+        and _in_range(calendar.minute, moment.minute)
+        and _in_range(calendar.hour, moment.hour)
+        and _in_range(calendar.day_of_month, moment.day)
+        and _in_range(calendar.month, moment.month)
+        and (not calendar.year or _in_range(calendar.year, moment.year))
+        and _in_range(calendar.day_of_week, (moment.weekday() + 1) % 7)
+    )
+
+
+class TestCronScheduleSpec:
+    """The two values Temporal has no syntax for become a real ScheduleSpec."""
+
+    def test_once_is_a_schedule_with_no_times(self):
+        from services.deployment.triggers import TriggerManager
+        from services.temporal.schedules import CRON_ONCE, cron_schedule_spec
+
+        expression = TriggerManager.build_cron_expression({"frequency": "once"})
+        spec = cron_schedule_spec(expression, "UTC")
+
+        assert expression == CRON_ONCE
+        assert (spec.calendars, spec.cron_expressions, spec.intervals) == ([], [], [])
+
+    @pytest.mark.asyncio
+    async def test_once_runs_when_its_schedule_is_created(self):
+        from services.temporal.schedules import CRON_ONCE, create_cron_schedule
+
+        async def trigger_immediately(expression):
+            client = MagicMock()
+            client.create_schedule = AsyncMock()
+            await create_cron_schedule(
+                client,
+                workflow_id="wf-1",
+                workflow_slug="wf-1",
+                node_id="cron-1",
+                trigger_label="cron-1",
+                cron_expression=expression,
+                timezone="UTC",
+                listener_data={},
+            )
+            return client.create_schedule.await_args.kwargs["trigger_immediately"]
+
+        assert await trigger_immediately(CRON_ONCE) is True
+        assert await trigger_immediately("*/5 * * * *") is False
+
+    def test_the_last_day_of_the_month_fires_on_the_last_day_only(self):
+        import calendar
+        from datetime import date, datetime, time, timedelta
+
+        from services.deployment.triggers import TriggerManager
+        from services.employees.builder import schedule_params
+        from services.employees.hire_request import HireTrigger
+        from services.temporal.schedules import cron_schedule_spec
+
+        expression = TriggerManager.build_cron_expression({"frequency": "months", "month_day": "L", "monthly_time": "18:00"})
+        hire = schedule_params(
+            HireTrigger(kind="schedule", every="month", day="L", at="18:00"),
+            "UTC",
+            datetime(2026, 9, 25, 12, 0),
+        )
+        calendars = cron_schedule_spec(expression, "UTC").calendars
+
+        assert TriggerManager.build_cron_expression(hire) == expression
+        first = date(2025, 1, 1)
+        days = [first + timedelta(days=n) for n in range((date(2033, 1, 1) - first).days)]
+        # 2096 is a leap year; 2100, a century year, is not.
+        days += [date(year, 2, day) for year in (2096, 2100) for day in range(27, calendar.monthrange(year, 2)[1] + 1)]
+        for day in days:
+            is_last = day.day == calendar.monthrange(day.year, day.month)[1]
+            fires = any(_calendar_fires_at(c, datetime.combine(day, time(18, 0))) for c in calendars)
+            assert fires == is_last, day
+        assert not any(_calendar_fires_at(c, datetime(2026, 1, 31, 9, 0)) for c in calendars)
+        # A real Temporal server rejects calendar years outside 2000-2100.
+        assert all(2000 <= r.start <= max(r.start, r.end) <= 2100 for c in calendars for r in c.year)
+
+
 # ---------------------------------------------------------------------------
 # DeploymentManager cron canary integration
 # ---------------------------------------------------------------------------

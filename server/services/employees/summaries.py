@@ -86,6 +86,8 @@ def schedule_text(trigger: Mapping[str, Any]) -> str:
         return f"Every {day}{suffix}" if day else f"Every week{suffix}"
     if every == "month":
         day = str(trigger.get("day") or "").strip()
+        if day == "L":
+            return f"On the last day of every month{suffix}"
         return f"On day {day} of every month{suffix}" if day else f"Every month{suffix}"
     return "On a schedule"
 

@@ -152,6 +152,7 @@ async def test_a_browser_waiting_for_the_owner_is_the_task(real_database, monkey
         ({"kind": "schedule", "every": "week", "day": "monday", "at": "08:00"}, "Every Monday at 08:00"),
         ({"kind": "schedule", "every": "hour"}, "Every hour"),
         ({"kind": "schedule", "every": "month", "day": "1", "at": "10:00"}, "On day 1 of every month at 10:00"),
+        ({"kind": "schedule", "every": "month", "day": "L", "at": "09:00"}, "On the last day of every month at 09:00"),
         ({"kind": "schedule"}, "On a schedule"),
     ],
 )

@@ -22,16 +22,18 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import timedelta
-from typing import Any, Dict
+from typing import Any, Dict, List, Tuple
 
 from temporalio.client import (
     Client,
     Schedule,
     ScheduleActionStartWorkflow,
     ScheduleAlreadyRunningError,
+    ScheduleCalendarSpec,
     ScheduleIntervalSpec,  # noqa: F401 — re-exported for any caller that needs it
     ScheduleOverlapPolicy,
     SchedulePolicy,
+    ScheduleRange,
     ScheduleSpec,
     ScheduleUpdate,
 )
@@ -70,6 +72,63 @@ def cron_action_workflow_id(workflow_slug: str, trigger_label: str) -> str:
     return f"{workflow_slug}-{trigger_label}-{{{{.ScheduledStartTime}}}}"
 
 
+#: ``TriggerManager.build_cron_expression``'s value for the ``once``
+#: frequency. Temporal has no such shorthand: the Schedule gets no times and
+#: runs once, when it is created (``trigger_immediately``). Re-creating it on
+#: a restart updates it in place, so it does not run again.
+CRON_ONCE = "@once"
+
+#: Temporal rejects calendar years outside 2000-2100, so 2100 is the last
+#: year ``_last_day_of_month`` can name.
+_LAST_YEAR = 2100
+
+
+def cron_schedule_spec(cron_expression: str, timezone: str) -> ScheduleSpec:
+    """The ScheduleSpec for a string from ``TriggerManager.build_cron_expression``.
+
+    Temporal parses the string itself, except for two values it has no
+    syntax for: ``CRON_ONCE`` gets no times at all, and ``L`` in the
+    day-of-month field (the last day of the month) gets the calendars of
+    ``_last_day_of_month``.
+    """
+    zone = timezone or "UTC"
+    if cron_expression == CRON_ONCE:
+        return ScheduleSpec(time_zone_name=zone)
+    fields = cron_expression.split()
+    if len(fields) == 5 and fields[2] == "L" and fields[3:] == ["*", "*"]:
+        return ScheduleSpec(calendars=_last_day_of_month(int(fields[0]), int(fields[1])), time_zone_name=zone)
+    return ScheduleSpec(cron_expressions=[cron_expression], time_zone_name=zone)
+
+
+def _last_day_of_month(minute: int, hour: int) -> List[ScheduleCalendarSpec]:
+    """Calendars for the last day of every month at ``hour:minute``.
+
+    A Temporal calendar has no "last day", so this takes four, and Temporal
+    fires on any of them: the 31st of the 31-day months, the 30th of the
+    30-day months, 29 February (a date only leap years have) and 28 February
+    in the other years. Those are the years not divisible by 4, plus 2100.
+    Temporal's calendar years end at ``_LAST_YEAR``, so after 2100 February
+    has no last-day run.
+    """
+
+    def on(day: int, months: Tuple[int, ...], years: Tuple[ScheduleRange, ...] = ()) -> ScheduleCalendarSpec:
+        return ScheduleCalendarSpec(
+            minute=(ScheduleRange(minute),),
+            hour=(ScheduleRange(hour),),
+            day_of_month=(ScheduleRange(day),),
+            month=tuple(ScheduleRange(month) for month in months),
+            year=years,
+        )
+
+    non_leap_years = tuple(ScheduleRange(first, _LAST_YEAR, 4) for first in (2025, 2026, 2027)) + (ScheduleRange(2100),)
+    return [
+        on(31, (1, 3, 5, 7, 8, 10, 12)),
+        on(30, (4, 6, 9, 11)),
+        on(29, (2,)),
+        on(28, (2,), non_leap_years),
+    ]
+
+
 async def create_cron_schedule(
     client: Client,
     *,
@@ -104,6 +163,8 @@ async def create_cron_schedule(
             id and child workflow ids.
         cron_expression: Cron string with 5 fields, or 7 with the second
             first and the year last (Temporal reads 6 as minute through year).
+            ``CRON_ONCE`` and ``L`` in the day-of-month field are translated
+            by ``cron_schedule_spec``.
         timezone: IANA tz name (e.g. ``"America/New_York"``).
         listener_data: Frozen action args for the workflow run
             (deployment graph snapshot + cron metadata).
@@ -139,10 +200,7 @@ async def create_cron_schedule(
             task_queue=task_queue,
             typed_search_attributes=execution_search_attributes,
         ),
-        spec=ScheduleSpec(
-            cron_expressions=[cron_expression],
-            time_zone_name=timezone or "UTC",
-        ),
+        spec=cron_schedule_spec(cron_expression, timezone),
         # Wave 17.1: bound the catch-up burst after downtime. A laptop
         # asleep past firings gets at most 24h of make-up ticks on wake
         # (the SKIP overlap policy then collapses that burst to a single
@@ -168,6 +226,7 @@ async def create_cron_schedule(
             schedule_id,
             schedule,
             search_attributes=schedule_search_attributes,
+            trigger_immediately=cron_expression == CRON_ONCE,
         )
         logger.info(
             "Created Temporal cron Schedule",
@@ -340,7 +399,9 @@ async def set_cron_schedules_paused(
 
 
 __all__ = [
+    "CRON_ONCE",
     "cron_schedule_id",
+    "cron_schedule_spec",
     "create_cron_schedule",
     "delete_cron_schedules_for_deployment",
     "set_cron_schedules_paused",

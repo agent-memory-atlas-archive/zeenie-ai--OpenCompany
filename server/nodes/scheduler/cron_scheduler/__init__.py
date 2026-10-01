@@ -95,7 +95,9 @@ def _get_schedule_description(p: Dict[str, Any]) -> str:
             day_name = days[int(weekday)] if weekday.isdigit() else weekday
             return f"Weekly on {day_name} at {p.get('weekly_time', '09:00')}"
         case "months":
-            return f"Monthly on day {p.get('month_day', '1')} at {p.get('monthly_time', '09:00')}"
+            day = str(p.get("month_day", "1"))
+            on = "the last day" if day == "L" else f"day {day}"
+            return f"Monthly on {on} at {p.get('monthly_time', '09:00')}"
         case "once":
             return "Once (no repeat)"
         case _:

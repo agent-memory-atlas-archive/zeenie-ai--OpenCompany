@@ -634,11 +634,15 @@ To reproduce the old failure on 3.12.8, run `kill_orphaned_opencompany_processes
 
 **Deployments started before the fix**: when the backend starts, it re-arms running and paused deployments. Re-arming calls `create_cron_schedule`, which updates the existing Schedule in place and keeps it paused if it was. Reset followed by Start also rebuilds it.
 
-**Still open**: two settings cannot become a Schedule, so a deployment that uses either fails at Start:
-- `once`: the builder returns no expression, and the SDK rejects `None`.
+**Two settings that failed at Start**: until a follow-up, a deployment that used either of these never got a Schedule:
+- `once`: the builder returned no expression, and the SDK rejects `None`.
 - `month_day` `L`: the "last day of the month" a Home hire can ask for. Temporal's cron values are integers and month or weekday names only.
 
-See the [cronScheduler card](./node-logic-flows/workflow_triggers/cronScheduler.md).
+The follow-up has `services/temporal/schedules.py::cron_schedule_spec` translate both:
+- `once` becomes a Schedule with no times that runs once, when it is created, and not again when a restart re-creates it.
+- `L` becomes four calendars that land on the last day of each month. Temporal's calendar years end at 2100.
+
+A real Temporal dev server confirmed the matching times for every frequency, and for `once` a single run that re-creating the Schedule does not repeat. See the [cronScheduler card](./node-logic-flows/workflow_triggers/cronScheduler.md).
 
 ## 31. A canvas Run says `Workflow failed: Unknown error` when it fails, and `0/0 nodes completed` when it succeeds
 

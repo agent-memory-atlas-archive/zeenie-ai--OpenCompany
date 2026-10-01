@@ -1,214 +1,92 @@
 ---
 name: cron-scheduler-skill
-description: Schedule recurring tasks using cron expressions. Run workflows on schedules (daily, weekly, hourly, etc.).
+description: Wait a set time before the next step, or set a workflow's repeating schedule, with the Cron Scheduler (every few seconds up to monthly, in a chosen time zone).
 allowed-tools: cron_scheduler
 metadata:
   author: opencompany
-  version: "1.0"
+  version: "2.0"
   category: automation
 
 ---
 
-# Cron Scheduler Tool
+# Cron Scheduler
 
-Schedule recurring tasks using cron expressions.
+The **Cron Scheduler** node does two jobs:
 
-## How It Works
+- **Your `cron_scheduler` tool.** One call waits once for the time its fields describe, then returns. Use it to pause before the next step. It does not set up anything that repeats.
+- **A workflow trigger**, as the first node. Once the workflow is started, it runs the workflow on the schedule its fields describe, until the workflow is paused or reset.
 
-This skill provides instructions for the **Cron Scheduler** tool node. Connect the **Cron Scheduler** node to Zeenie's `input-tools` handle or use as a workflow trigger.
+There is no cron-expression field. Set `frequency`, then only the fields that frequency uses.
 
-## cron_scheduler Tool
+To give an agent the tool, connect the Cron Scheduler node to the agent's Tools input.
 
-Create recurring schedules using cron expressions.
+## Fields
 
-### Schema Fields
+| `frequency` | Fields it uses | One tool call waits |
+|---|---|---|
+| `seconds` | `interval`: 5 to 59 | `interval` seconds |
+| `minutes` | `interval_minutes`: 1 to 59 | that many minutes |
+| `hours` | `interval_hours`: 1 to 23 | that many hours |
+| `days` | `daily_time` | 24 hours |
+| `weeks` | `weekday`, `weekly_time` | 7 days |
+| `months` | `month_day`, `monthly_time` | 30 days |
+| `once` | none | no time at all |
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| expression | string | Yes | Cron expression (5 fields) |
-| timezone | string | No | Timezone (default: UTC) |
+- `daily_time` and `weekly_time`: `00:00`, `02:00`, `04:00`, `06:00`, `08:00`, `09:00`, `10:00`, `12:00`, `14:00`, `16:00`, `18:00`, `20:00` or `22:00`.
+- `weekday`: `"0"` (Sunday) to `"6"` (Saturday).
+- `month_day`: `"1"` to `"28"`, or `"L"` for the last day of the month.
+- `monthly_time`: `HH:MM`, default `09:00`.
+- `timezone`: `UTC` (the default), `America/New_York`, `America/Los_Angeles`, `Europe/London`, `Europe/Berlin`, `Asia/Tokyo` or `Asia/Kolkata`.
 
-### Cron Expression Format
+## As a tool
 
-```
-* * * * *
-│ │ │ │ │
-│ │ │ │ └── Day of week (0-7, Sun=0 or 7)
-│ │ │ └──── Month (1-12)
-│ │ └────── Day of month (1-31)
-│ └──────── Hour (0-23)
-└────────── Minute (0-59)
-```
+A call holds up your run for the whole wait. Keep it to `seconds` or `minutes`. `days`, `weeks` and `months` wait a day or more, which is longer than a run step may take.
 
-### Special Characters
-
-| Character | Meaning | Example |
-|-----------|---------|---------|
-| `*` | Any value | `* * * * *` (every minute) |
-| `,` | List of values | `1,15 * * * *` (minute 1 and 15) |
-| `-` | Range | `1-5 * * * *` (minutes 1-5) |
-| `/` | Step values | `*/15 * * * *` (every 15 minutes) |
-
-### Common Patterns
-
-| Pattern | Description | Cron Expression |
-|---------|-------------|-----------------|
-| Every minute | Runs each minute | `* * * * *` |
-| Every 5 minutes | Runs at :00, :05, :10... | `*/5 * * * *` |
-| Every 15 minutes | Runs at :00, :15, :30, :45 | `*/15 * * * *` |
-| Every hour | Runs at minute 0 | `0 * * * *` |
-| Every day at 9 AM | Morning job | `0 9 * * *` |
-| Every day at midnight | Nightly job | `0 0 * * *` |
-| Weekdays at 9 AM | Mon-Fri morning | `0 9 * * 1-5` |
-| Every Monday | Weekly on Monday | `0 0 * * 1` |
-| First of month | Monthly job | `0 0 1 * *` |
-| Every Sunday at 6 PM | Weekly Sunday evening | `0 18 * * 0` |
-| Multiple times daily | 8am, noon, 6pm | `0 8,12,18 * * *` |
-
-### Examples
-
-**Every day at 9 AM:**
-```json
-{
-  "expression": "0 9 * * *",
-  "timezone": "America/New_York"
-}
-```
-
-**Every 30 minutes:**
-```json
-{
-  "expression": "*/30 * * * *"
-}
-```
-
-**Weekdays at 6 PM:**
-```json
-{
-  "expression": "0 18 * * 1-5",
-  "timezone": "Europe/London"
-}
-```
-
-**Every Monday at 10 AM:**
-```json
-{
-  "expression": "0 10 * * 1",
-  "timezone": "Asia/Tokyo"
-}
-```
-
-**First day of each month:**
-```json
-{
-  "expression": "0 0 1 * *"
-}
-```
-
-### Response Format
-
-**Schedule created:**
-```json
-{
-  "success": true,
-  "message": "Cron schedule created",
-  "expression": "0 9 * * *",
-  "timezone": "America/New_York",
-  "next_run": "2025-01-31T09:00:00-05:00",
-  "description": "At 09:00 AM, every day"
-}
-```
-
-**Schedule triggered:**
-```json
-{
-  "success": true,
-  "triggered": true,
-  "message": "Cron schedule triggered",
-  "expression": "0 9 * * *",
-  "triggered_at": "2025-01-30T09:00:00Z"
-}
-```
-
-### Error Response
+Wait 30 seconds:
 
 ```json
-{
-  "error": "Invalid cron expression: too few fields"
-}
+{"frequency": "seconds", "interval": 30}
 ```
 
-## Timezone Reference
+Wait 10 minutes:
 
-| Timezone | Description |
-|----------|-------------|
-| `UTC` | Universal Time (default) |
-| `America/New_York` | Eastern US |
-| `America/Los_Angeles` | Pacific US |
-| `Europe/London` | UK |
-| `Europe/Paris` | Central Europe |
-| `Asia/Tokyo` | Japan |
-| `Asia/Shanghai` | China |
-| `Australia/Sydney` | Australia Eastern |
+```json
+{"frequency": "minutes", "interval_minutes": 10}
+```
 
-## Use Cases
+The result reports the wait:
 
-| Use Case | Expression | Description |
-|----------|------------|-------------|
-| Daily report | `0 9 * * *` | Generate daily reports |
-| Hourly sync | `0 * * * *` | Sync data hourly |
-| Weekly backup | `0 2 * * 0` | Sunday at 2 AM |
-| Business hours check | `*/30 9-17 * * 1-5` | Every 30 min, 9-5 Mon-Fri |
-| Monthly cleanup | `0 0 1 * *` | First of month |
+| Field | Meaning |
+|---|---|
+| `waited_seconds` | how long the call waited |
+| `scheduled_time`, `triggered_at` | when the wait was due to end, and when it ended |
+| `schedule` | the fields in words, such as "Every 10 minutes" |
+| `message` | a one-line summary |
 
-## Common Workflows
+## As a workflow trigger
 
-### Daily notification
+- Starting the workflow starts the schedule. Pause stops new runs, Resume continues them, and Reset removes the schedule.
+- `once` runs the workflow a single time, when it is started.
+- `seconds`, `minutes` and `hours` count from the top of the minute, hour or day. So every 7 minutes runs at :00, :07 ... :56, then at :00 again.
+- `days`, `weeks` and `months` run at their time in `timezone`. With `month_day` `"L"`, a run lands on the 31st, the 30th, or February's 28th or 29th, as each month needs.
+- There is no weekdays-only frequency. To work only on weekdays, use `days` and skip weekend runs in the workflow.
 
-1. Set cron for desired time (e.g., `0 9 * * *`)
-2. Cron triggers → workflow runs
-3. Send notification to user
+Each run starts with the trigger's output: `timestamp` (when it fired), `frequency`, `timezone`, `schedule` (the fields in words) and `cron_expression` (the schedule string it runs on).
 
-### Scheduled data sync
+Daily at 09:00, New York time:
 
-1. Set cron for sync interval (e.g., `0 * * * *`)
-2. Cron triggers → fetch data
-3. Process and store data
+```json
+{"frequency": "days", "daily_time": "09:00", "timezone": "America/New_York"}
+```
 
-### Weekly report
+Mondays at 10:00, Tokyo time:
 
-1. Set cron for weekly (e.g., `0 10 * * 1`)
-2. Cron triggers → generate report
-3. Send report via email/WhatsApp
+```json
+{"frequency": "weeks", "weekday": "1", "weekly_time": "10:00", "timezone": "Asia/Tokyo"}
+```
 
-## Workflow-Based Scheduling
+The last day of every month at 18:00:
 
-In this system, scheduling works through:
-
-1. **Trigger Node**: Use Cron Scheduler as workflow start
-2. **Deployment**: Deploy workflow to activate schedule
-3. **Cancellation**: Undeploy workflow to stop schedule
-
-Each trigger creates independent workflow runs.
-
-## Best Practices
-
-1. **Use UTC for global**: Avoid timezone confusion
-2. **Consider load**: Don't schedule many jobs at :00
-3. **Stagger jobs**: Use :05, :10 instead of all at :00
-4. **Test expressions**: Verify with online cron tools
-5. **Document schedules**: Keep track of what runs when
-
-## Limitations
-
-- Requires workflow deployment to activate
-- Cannot schedule past events
-- Minimum granularity is 1 minute
-- Complex conditions need multiple schedules
-
-## Setup Requirements
-
-1. Connect the **Cron Scheduler** node to Zeenie's `input-tools` handle
-2. Or use as workflow trigger (first node)
-3. Deploy workflow to activate the schedule
-4. Undeploy to cancel the schedule
+```json
+{"frequency": "months", "month_day": "L", "monthly_time": "18:00"}
+```

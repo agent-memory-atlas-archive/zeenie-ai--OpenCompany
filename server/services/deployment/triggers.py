@@ -256,13 +256,16 @@ class TriggerManager:
     # =========================================================================
 
     @staticmethod
-    def build_cron_expression(parameters: Dict[str, Any]) -> Optional[str]:
+    def build_cron_expression(parameters: Dict[str, Any]) -> str:
         """Build a Temporal Schedule cron string from user-friendly parameters.
 
         Temporal reads five fields as minute, hour, day, month, weekday and
         seven as second first and year last. Six fields are minute through
         year to Temporal, not seconds first, so a schedule with seconds gets
-        all seven.
+        all seven. Two values are ours, not Temporal's, and
+        ``services.temporal.schedules.cron_schedule_spec`` translates them:
+        ``CRON_ONCE`` for the ``once`` frequency, and ``L`` (the last day of
+        the month) in the day-of-month field.
         """
         frequency = parameters.get("frequency", "minutes")
 
@@ -303,7 +306,9 @@ class TriggerManager:
             day = parameters.get("month_day", "1")
 
         elif frequency == "once":
-            return None
+            from services.temporal.schedules import CRON_ONCE
+
+            return CRON_ONCE
 
         fields = f"{minute} {hour} {day} {month} {weekday}"
         return fields if second == "0" else f"{second} {fields} *"

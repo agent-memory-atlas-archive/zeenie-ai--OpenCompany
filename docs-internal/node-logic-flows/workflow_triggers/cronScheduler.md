@@ -135,10 +135,18 @@ flowchart TD
   `TriggerManager.build_cron_expression` (`services/deployment/triggers.py`):
   five fields, or seven (second first, year last) for `seconds`. Temporal
   reads six fields as minute through year, so the builder never emits six.
-  Two settings cannot become a Schedule yet: `once` builds no expression
-  (the SDK rejects `None`), and `month_day` `L` is not a value Temporal's
-  cron syntax accepts (integers and month or weekday names only). A
-  deployment using either fails at Start.
+  Temporal has no syntax for two settings, so
+  `services/temporal/schedules.py::cron_schedule_spec` translates them:
+  - `once` becomes `@once`: a Schedule with no times that runs once, when
+    it is created (`trigger_immediately`). Re-creating it when the backend
+    restarts updates it in place, so it does not run again.
+  - `month_day` `L` becomes four calendars: the 31st, the 30th of the
+    30-day months, 29 February, and 28 February in the years that are not
+    leap years. Temporal's calendar years end at 2100, so after 2100
+    February has no last-day run.
+
+  Checked against a real Temporal dev server on 2026-10-01 for every
+  frequency.
 - `iteration` is always `1`. The op does not loop; repeated firings
   come from the deployed Schedule firing per tick (deployment mode).
 - `interval`, `interval_minutes`, `interval_hours` are Pydantic-validated
