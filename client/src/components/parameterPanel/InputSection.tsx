@@ -324,8 +324,11 @@ const InputSection: React.FC<InputSectionProps> = ({ nodeId, visible = true }) =
           outputKey = `output_${handleName}`;
         }
 
+        // `get_node_output` returns the source node's stored result as it
+        // is (NodeExecutor stores `result`): a dict, list, string or
+        // number, and null when the node has not run.
         let executionData = await getNodeOutput(edge.source, outputKey);
-        if (!executionData && outputKey !== 'output_0') {
+        if (executionData == null && outputKey !== 'output_0') {
           executionData = await getNodeOutput(edge.source, 'output_0');
         }
         let inputData: any = null;
@@ -334,17 +337,15 @@ const InputSection: React.FC<InputSectionProps> = ({ nodeId, visible = true }) =
         // here only hid that from the reader. Matches `outputSchema` above.
         let hasExecutionData: boolean;
 
-        if (executionData && executionData[0] && executionData[0][0]) {
-          const rawData = executionData[0][0].json || executionData[0][0];
-          if (typeof rawData === 'object' && rawData !== null) {
-            inputData = rawData;
-            outputSchema = rawData;
-            hasExecutionData = true;
+        if (executionData != null) {
+          if (typeof executionData === 'object') {
+            inputData = executionData;
+            outputSchema = executionData;
           } else {
-            inputData = { value: rawData };
-            outputSchema = { value: typeof rawData };
-            hasExecutionData = true;
+            inputData = { value: executionData };
+            outputSchema = { value: typeof executionData };
           }
+          hasExecutionData = true;
         } else {
           hasExecutionData = false;
           const sourceSpec = nodeType ? getCachedNodeSpec(nodeType) : null;

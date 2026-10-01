@@ -163,19 +163,62 @@ describe('InputSection -- direct main edges', () => {
     await waitFor(() => expect(wsMock.getNodeOutput).toHaveBeenCalledWith('src-b', 'output_main'));
 
     await act(async () => {
-      resolveB([[{ json: { value: 'from-b' } }]]);
+      resolveB({ value: 'from-b' });
       await pendingB;
     });
     expect(await screen.findByText(/Source B/)).toBeInTheDocument();
 
     await act(async () => {
-      resolveA([[{ json: { value: 'from-a' } }]]);
+      resolveA({ value: 'from-a' });
       await pendingA;
     });
     await waitFor(() => {
       expect(screen.getByText(/Source B/)).toBeInTheDocument();
       expect(screen.queryByText(/Source A/)).not.toBeInTheDocument();
     });
+  });
+});
+
+
+describe('InputSection -- live output data', () => {
+  // get_node_output returns the stored result as it is (NodeExecutor stores
+  // `result`). The panel used to expect an n8n-style `[[{ json }]]` list, so
+  // a real dict never matched and the column always fell back to the schema.
+  function wireHttpIntoAgent() {
+    setWorkflow(
+      [
+        { id: 'src', type: 'httpRequest', data: { label: 'HTTP' }, position: { x: 0, y: 0 } },
+        { id: 'agent', type: 'aiAgent', data: { label: 'Agent' }, position: { x: 100, y: 0 } },
+      ],
+      [{ id: 'e1', source: 'src', target: 'agent', sourceHandle: 'output-main', targetHandle: 'input-main' }],
+    );
+  }
+
+  it('shows a stored dict result as live data', async () => {
+    wireHttpIntoAgent();
+    wsMock.getNodeOutput.mockResolvedValue({ status: 200, body: 'pong' });
+
+    render(<InputSection nodeId="agent" />);
+    expect(await screen.findByText('LIVE')).toBeInTheDocument();
+    expect(screen.queryByText('SCHEMA')).not.toBeInTheDocument();
+  });
+
+  it('shows a stored string result whole, not its first character', async () => {
+    wireHttpIntoAgent();
+    wsMock.getNodeOutput.mockResolvedValue('hello world');
+
+    const { container } = render(<InputSection nodeId="agent" />);
+    // Rows open on load, so Received Data is visible without a click.
+    expect(await screen.findByText('LIVE')).toBeInTheDocument();
+    await waitFor(() => expect(container.textContent).toContain('"value": "hello world"'));
+  });
+
+  it('falls back to the schema view when the node has not run', async () => {
+    wireHttpIntoAgent();
+    wsMock.getNodeOutput.mockResolvedValue(null);
+
+    render(<InputSection nodeId="agent" />);
+    expect(await screen.findByText('SCHEMA')).toBeInTheDocument();
   });
 });
 
