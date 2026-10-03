@@ -142,7 +142,7 @@ client/src/
 │   │
 │   ├── icons/                      # AI provider icons (SVG data URIs)
 │   ├── brand/Logo.tsx              # OcMark / OcLogo (inline SVG in the text colour, intro + pulse)
-│   ├── brand/geometry.ts           # Mark + wordmark paths; the favicon and desktop icon embed MARK_PATH
+│   ├── brand/geometry.ts           # Mark + wordmark paths; the favicon, desktop icon and media/brand/ SVGs embed MARK_PATH
 │   ├── shell/ModeToggle.tsx        # The Normal / Dev switch (editor toolbar + Home header)
 │   ├── auth/                       # Login page + protected route
 │   ├── SquareNode.tsx, StartNode.tsx, TriggerNode.tsx, AIAgentNode.tsx

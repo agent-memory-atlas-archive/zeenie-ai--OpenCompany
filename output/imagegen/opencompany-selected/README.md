@@ -20,4 +20,5 @@ the mark measured from [open-council-three.png](./open-council-three.png) and ma
 three-fold symmetric, and the wordmark set in Newsreader (SIL Open Font License 1.1) and
 converted to outlines. Both are one colour, the text colour: black on light themes, white on
 dark. The favicon and the desktop icon embed the same mark path; the Home orb is its 3D
-version. This PNG stays here as the reference.
+version. This PNG stays here as the reference. The mark on its own, without the name, is in
+[media/brand](../../../media/brand/) as SVG and PNG.

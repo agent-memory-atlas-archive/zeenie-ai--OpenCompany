@@ -12,9 +12,11 @@
  *   (radius 62, 344 from the centre) and a crescent that sweeps clockwise
  *   from it along the ring, 10 clear of the head.
  *
- * The favicon (client/public/opencompany-icon.svg) and the desktop icon
- * (desktop/build/icon.svg) embed MARK_PATH verbatim; brand/__tests__/appIcons
- * holds them to it, so a change here means pasting the new MARK_PATH there.
+ * The favicon (client/public/opencompany-icon.svg), the desktop icon
+ * (desktop/build/icon.svg) and the icon-only logo files in media/brand/ embed
+ * MARK_PATH verbatim; brand/__tests__/appIcons holds them to it, so a change
+ * here means pasting the new MARK_PATH there and rendering media/brand's PNGs
+ * again (media/brand/README.md says how).
  *
  * The wordmark is "OpenCompany" set in Newsreader (SIL Open Font License 1.1,
  * The Newsreader Project Authors) at weight 650, optical size 18, kerned,
