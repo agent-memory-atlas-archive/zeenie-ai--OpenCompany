@@ -1,0 +1,6 @@
+{"op":"add","path":"/root","value":"root"}
+{"op":"add","path":"/state","value":{"range":"30 days"}}
+{"op":"add","path":"/elements/root","value":{"type":"Stack","props":{"gap":"md"},"children":["stats","bars","note"]}}
+{"op":"add","path":"/elements/stats","value":{"type":"StatGrid","props":{"items":[{"label":"Questions this month","value":"184","delta":"+12% vs August","tone":"up"},{"label":"Booked after reply","value":"61%","delta":"+8 pts with two options","tone":"up"},{"label":"Avg reply time","value":"38s","delta":"4s faster","tone":"up"}]}}}
+{"op":"add","path":"/elements/bars","value":{"type":"BarChart","props":{"title":"What customers ask most","bars":[{"label":"Prices","value":42},{"label":"Availability","value":35},{"label":"Colour options","value":19},{"label":"Parking","value":8}]}}}
+{"op":"add","path":"/elements/note","value":{"type":"Callout","props":{"tone":"info","text":"Based on 184 WhatsApp conversations since 1 September."}}}

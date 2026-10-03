@@ -1,0 +1,165 @@
+{
+  "root": "root",
+  "state": {
+    "slot": "s2",
+    "service": "Colour",
+    "remind": true,
+    "note": ""
+  },
+  "elements": {
+    "root": {
+      "type": "Stack",
+      "props": {
+        "gap": "md"
+      },
+      "children": [
+        "slots",
+        "tooLong",
+        "details",
+        "acts"
+      ]
+    },
+    "slots": {
+      "type": "SlotPicker",
+      "props": {
+        "label": "Saturday 28 Sep",
+        "hint": "Free 2-hour slots",
+        "value": {
+          "$bindState": "/slot"
+        },
+        "options": [
+          {
+            "id": "s1",
+            "time": "12:00",
+            "detail": "Jordan"
+          },
+          {
+            "id": "s2",
+            "time": "14:30",
+            "detail": "Ana",
+            "recommended": true
+          },
+          {
+            "id": "s3",
+            "time": "16:30",
+            "detail": "Ana",
+            "unavailable": true,
+            "note": "Only 1h free"
+          },
+          {
+            "id": "s4",
+            "time": "17:00",
+            "detail": "Jordan"
+          }
+        ]
+      }
+    },
+    "tooLong": {
+      "type": "Callout",
+      "props": {
+        "tone": "warning",
+        "text": "Highlights take about 3 hours. Only the 12:00 slot with Jordan is long enough."
+      },
+      "visible": {
+        "$state": "/service",
+        "eq": "Highlights"
+      }
+    },
+    "details": {
+      "type": "Card",
+      "props": {
+        "title": "Booking details",
+        "description": "The WhatsApp draft below updates as you change these."
+      },
+      "children": [
+        "svc",
+        "rem",
+        "remWhen",
+        "note"
+      ]
+    },
+    "svc": {
+      "type": "Select",
+      "props": {
+        "label": "Service",
+        "value": {
+          "$bindState": "/service"
+        },
+        "options": [
+          "Colour",
+          "Colour & cut",
+          "Highlights"
+        ]
+      }
+    },
+    "rem": {
+      "type": "Toggle",
+      "props": {
+        "label": "Remind her the day before",
+        "checked": {
+          "$bindState": "/remind"
+        }
+      }
+    },
+    "remWhen": {
+      "type": "Text",
+      "props": {
+        "text": "Goes out on WhatsApp at 6pm on Friday."
+      },
+      "visible": {
+        "$state": "/remind"
+      }
+    },
+    "note": {
+      "type": "TextField",
+      "props": {
+        "label": "Note for the stylist",
+        "value": {
+          "$bindState": "/note"
+        },
+        "placeholder": "e.g. patch test done in June"
+      }
+    },
+    "acts": {
+      "type": "Row",
+      "props": {
+        "gap": "sm"
+      },
+      "children": [
+        "hold",
+        "sun"
+      ]
+    },
+    "hold": {
+      "type": "Button",
+      "props": {
+        "label": "Hold this slot for 15 min",
+        "variant": "primary"
+      },
+      "on": {
+        "press": {
+          "action": "holdSlot",
+          "params": {
+            "slot": {
+              "$state": "/slot"
+            }
+          }
+        }
+      }
+    },
+    "sun": {
+      "type": "Button",
+      "props": {
+        "label": "Show Sunday instead"
+      },
+      "on": {
+        "press": {
+          "action": "ask",
+          "params": {
+            "text": "What does Sunday look like?"
+          }
+        }
+      }
+    }
+  }
+}
