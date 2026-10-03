@@ -11,13 +11,15 @@
  * Render is two states:
  *   - editing: an <Input> wired to the rename keymap
  *   - idle:    a div that calls onActivate on double-click (the parent owns
- *              the activation gesture; it usually pipes into setRenamingNodeId)
+ *              the activation gesture; it usually pipes into setRenamingNodeId),
+ *              unless the canvas is locked, which the editor's guard reports
  */
 
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import { useAppStore } from '../../store/useAppStore';
+import { useCanvasEditGuard } from '../../contexts/canvasEditGuard';
 
 export interface EditableNodeLabelProps {
   /** React Flow node id; the global rename state is keyed on this. */
@@ -45,6 +47,7 @@ const EditableNodeLabel: React.FC<EditableNodeLabelProps> = ({
 }) => {
   const renamingNodeId = useAppStore((s) => s.renamingNodeId);
   const setRenamingNodeId = useAppStore((s) => s.setRenamingNodeId);
+  const guardCanvasEdit = useCanvasEditGuard();
 
   const [isRenaming, setIsRenaming] = useState(false);
   const [editLabel, setEditLabel] = useState('');
@@ -83,6 +86,11 @@ const EditableNodeLabel: React.FC<EditableNodeLabelProps> = ({
     setRenamingNodeId(null);
   }, [setRenamingNodeId]);
 
+  // A rename is a canvas edit: the same lock as F2 and the context menu.
+  const handleActivate = useCallback(() => {
+    if (onActivate && guardCanvasEdit()) onActivate();
+  }, [onActivate, guardCanvasEdit]);
+
   if (isRenaming) {
     return (
       <Input
@@ -111,7 +119,7 @@ const EditableNodeLabel: React.FC<EditableNodeLabelProps> = ({
 
   return (
     <div
-      onDoubleClick={onActivate}
+      onDoubleClick={handleActivate}
       title="Double-click to rename"
       className={cn(
         // Both `sq-node-label` and `node-label` co-classes always emit so

@@ -836,6 +836,8 @@ Three methods for renaming nodes, following n8n UX patterns:
 - **Double-click on Label**: Click the node label twice to edit inline
 - **Right-click Context Menu**: "Rename" option in the context menu
 
+All three are canvas edits and obey the canvas lock: F2 and the menu call Dashboard's `guardCanvasEdit`, and `EditableNodeLabel` reads the same guard through `contexts/canvasEditGuard.ts`, which Dashboard provides around `<ReactFlow>`.
+
 #### Architecture
 ```
 Global State (useAppStore)          Node Components

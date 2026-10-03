@@ -16,6 +16,7 @@ import {
 import { featureFlags } from './lib/featureFlags';
 import { deriveCanvasLock } from './lib/canvasLock';
 import { AGENT_PHASE } from './lib/agentPhases';
+import { CanvasEditGuardContext } from './contexts/canvasEditGuard';
 import { prefetchAllNodeSpecs, listCachedNodeSpecs, cachedNodeSpecTypesKey } from './lib/nodeSpec';
 import AIAgentNode from './components/AIAgentNode';
 import SquareNode from './components/SquareNode';
@@ -1256,6 +1257,7 @@ const DashboardContent: React.FC = () => {
               }}
             >
               <ErrorBoundary>
+                <CanvasEditGuardContext.Provider value={guardCanvasEdit}>
                 <ReactFlow
                   nodes={styledNodes}
                   edges={styledEdges}
@@ -1295,6 +1297,7 @@ const DashboardContent: React.FC = () => {
                 >
                   <Controls />
                 </ReactFlow>
+                </CanvasEditGuardContext.Provider>
               </ErrorBoundary>
             </div>
             
