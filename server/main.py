@@ -166,6 +166,11 @@ async def lifespan(app: FastAPI):
     # runs on workflow delete, and the employee_lifecycle summary builder.
     import services.employees  # noqa: F401
 
+    # services/chat/__init__.py self-registers the chat commands
+    # (send_chat_message / get_chat_messages / chat_subscribe / ...) and the
+    # disconnect listener that drops a closed socket's run subscriptions.
+    import services.chat  # noqa: F401
+
     # Wave 13.8: services/pricing_handlers.py self-registers the 3
     # pricing handlers (get_pricing_config / save_pricing_config /
     # get_api_usage_summary). Flat module (sibling to services/pricing.py)
@@ -187,6 +192,13 @@ async def lifespan(app: FastAPI):
     await container.database().startup()
     await container.cache().startup()
     _startup_log("Database + cache started")
+
+    # Ends chat runs nothing will finish (never picked up, or their run
+    # closed without finishing them). Its first sweep runs now.
+    from services.chat.watchdog import ChatRunWatchdog
+
+    chat_watchdog = ChatRunWatchdog(container.database())
+    chat_watchdog.start()
 
     # Initialize credentials database (creates tables if not exist)
     credentials_db = container.credentials_database()
@@ -502,6 +514,9 @@ async def lifespan(app: FastAPI):
         except Exception as exc:
             logger.debug("[CLI MCP] lifespan shutdown: %s", exc)
     _startup_log("Lifespan shutdown: CLI MCP lifespan exited")
+
+    await chat_watchdog.stop()
+    _startup_log("Lifespan shutdown: chat run watchdog stopped")
 
     # Drain cached native SDK clients before credentials/database teardown.
     await container.chat_unifier().aclose()

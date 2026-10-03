@@ -296,3 +296,130 @@ async def test_memory_panel_scope_is_resolved_from_workflow_and_auth(
     assert scope.memory_node_id == "memory-1"
     assert scope.owner_id == "authenticated-user"
     assert scope.namespace_id != "client-chosen-namespace"
+
+
+class _LockedModeParams(BaseModel):
+    query: str = ""
+    mode: str = "safe"
+
+
+class _LockedModeOutput(BaseModel):
+    query: str
+    mode: str
+
+
+class _LockedLegacyToolNode(ToolNode, abstract=True):
+    type = "_testLockedLegacyTool"
+    display_name = "Locked Legacy Tool Test"
+    group = ("tool",)
+    description = "Test-only locked field on a ToolInput-is-Params tool"
+    handles = _ConfiguredToolNode.handles
+    ui_hints = {"hideRunButton": True}
+    Params = _LockedModeParams
+    ToolInput = _LockedModeParams
+    Output = _LockedModeOutput
+    server_controlled_fields = frozenset({"mode"})
+
+    @Operation("run")
+    async def run(self, ctx: NodeContext, params: _LockedModeParams) -> _LockedModeOutput:
+        return _LockedModeOutput(query=params.query, mode=params.mode)
+
+
+class _LockedDualPurposeActionNode(ActionNode, abstract=True):
+    type = "_testLockedDualPurposeAction"
+    usable_as_tool = True
+    Params = _LockedModeParams
+    Output = _LockedModeOutput
+    server_controlled_fields = frozenset({"mode"})
+
+    @Operation("run")
+    async def run(self, ctx: NodeContext, params: _LockedModeParams) -> _LockedModeOutput:
+        return _LockedModeOutput(query=params.query, mode=params.mode)
+
+
+async def test_locked_field_falls_back_to_its_default_not_the_model():
+    result = await _LockedLegacyToolNode().execute_as_tool(
+        {"query": "hello", "mode": "unsafe"},
+        {},
+        NodeContext(node_id="locked-tool", node_type=_LockedLegacyToolNode.type, raw={}),
+    )
+    assert result == {"query": "hello", "mode": "safe"}
+
+
+@pytest.mark.parametrize("saved", [{"mode": "saved"}, {}])
+async def test_action_node_tools_cannot_set_locked_fields(saved):
+    result = await _LockedDualPurposeActionNode().execute_as_tool(
+        {"query": "hello", "mode": "unsafe"},
+        saved,
+        NodeContext(node_id="locked-action", node_type=_LockedDualPurposeActionNode.type, raw={}),
+    )
+    assert result == {"query": "hello", "mode": saved.get("mode", "safe")}
+
+
+def _capture_dispatch(harness, monkeypatch):
+    captured: dict = {}
+
+    async def fake_dispatch(node_id, node_type, params, ctx):
+        captured["params"] = params
+        captured["ctx"] = ctx
+        return {"success": True, "result": {}}
+
+    monkeypatch.setattr(harness.executor, "_dispatch", fake_dispatch)
+    return captured
+
+
+@pytest.mark.parametrize(
+    ("node_type", "field", "saved", "model"),
+    [
+        ("discordSend", "account_id", "default", "attacker-bot"),
+        ("browser", "interaction", "read_only", "full"),
+        ("browser", "profile_id", "owner-profile", "someone-elses-profile"),
+    ],
+)
+async def test_temporal_tool_calls_cannot_override_locked_settings(harness, monkeypatch, node_type, field, saved, model):
+    # The agent workflow hands the per-type activity ``{**tool params, **call
+    # args}`` plus the raw call args as ``tool_args``; the saved setting must win.
+    harness.database.get_node_parameters = AsyncMock(return_value={field: saved})
+    captured = _capture_dispatch(harness, monkeypatch)
+    model_args = {field: model, "note": "from the model"}
+
+    await harness.executor.execute(
+        node_id="tool-1",
+        node_type=node_type,
+        parameters=dict(model_args),
+        context=harness.build_context(extra={"tool_args": dict(model_args)}),
+    )
+
+    assert captured["params"][field] == saved
+    assert captured["params"]["note"] == "from the model"
+    assert field not in captured["ctx"]["tool_args"]
+    assert captured["ctx"]["tool_args"]["note"] == "from the model"
+
+
+async def test_temporal_tool_call_drops_a_locked_field_that_was_never_saved(harness, monkeypatch):
+    harness.database.get_node_parameters = AsyncMock(return_value={})
+    captured = _capture_dispatch(harness, monkeypatch)
+
+    await harness.executor.execute(
+        node_id="discord-1",
+        node_type="discordSend",
+        parameters={"account_id": "attacker-bot"},
+        context=harness.build_context(extra={"tool_args": {"account_id": "attacker-bot"}}),
+    )
+
+    assert "account_id" not in captured["params"]
+
+
+async def test_locked_fields_bind_only_tool_calls(harness, monkeypatch):
+    # A canvas run or a workflow edge is the operator's own configuration.
+    harness.database.get_node_parameters = AsyncMock(return_value={"account_id": "default"})
+    captured = _capture_dispatch(harness, monkeypatch)
+
+    await harness.executor.execute(
+        node_id="discord-1",
+        node_type="discordSend",
+        parameters={"account_id": "ops-bot"},
+        context=harness.build_context(),
+    )
+
+    assert captured["params"]["account_id"] == "ops-bot"

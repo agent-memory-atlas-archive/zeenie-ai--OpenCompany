@@ -9,6 +9,13 @@ which stamps the live generation and announces ``chat.updated``.
 A message that is empty, or exactly NO_REPLY (the agent had nothing to
 say), posts nothing.
 
+In a run the owner's chat message started, the reply is that chat run's
+answer (``run_scope``, set by MachinaWorkflow): it is saved under the run's
+reply id through ``services/chat/ledger.py``, so a retried step saves it
+once, and the run reports it when it finishes. A run whose conversation was
+reset or cleared meanwhile posts nothing: its answer belongs to a thread
+that no longer exists.
+
 The thread ends with the workflow's generation: a Reset (every restart)
 clears it through ``reset_execution_state``, as the Context node forgets
 the conversation in the same Reset, and deleting the workflow deletes it
@@ -52,6 +59,9 @@ class ChatReplyOutput(BaseModel):
     #: False when there was nothing to post.
     posted: bool = False
     message: Optional[str] = None
+    #: The saved message's id, and the chat run it answers (if any).
+    message_id: Optional[str] = None
+    run_id: Optional[str] = None
 
     model_config = ConfigDict(extra="allow")
 
@@ -81,9 +91,30 @@ class ChatReplyNode(ActionNode):
             return ChatReplyOutput(posted=False)
         if not ctx.workflow_id:
             raise NodeUserError("Reply in Chat posts to the workflow's chat: save the workflow first.")
-        if not await record_chat_message(get_database(), ctx.workflow_id, "assistant", text):
+        database = get_database()
+        scope = ctx.raw.get("run_scope") if isinstance(ctx.raw, dict) else None
+        run_id = scope.get("run_id") if isinstance(scope, dict) else None
+        if isinstance(run_id, str) and run_id:
+            return await self._reply_to_run(database, ctx, run_id, text)
+        saved = await record_chat_message(database, ctx.workflow_id, "assistant", text)
+        if not saved:
             raise RuntimeError("The reply could not be saved to the chat")
-        return ChatReplyOutput(posted=True, message=text)
+        return ChatReplyOutput(posted=True, message=text, message_id=_message_id(saved))
+
+    async def _reply_to_run(self, database, ctx: NodeContext, run_id: str, text: str) -> ChatReplyOutput:
+        from services.chat import ledger
+        from services.chat_thread import announce_chat_updated, chat_execution_id
+
+        run = await ledger.get_run(database, run_id)
+        if run is None or run.session_id != ctx.workflow_id:
+            # Reset or Clear removed the conversation this run answered.
+            return ChatReplyOutput(posted=False, run_id=run_id)
+        control = await database.get_latest_workflow_control(run.session_id)
+        saved = await ledger.post_reply(
+            database, run=run, node_id=ctx.node_id, text=text, execution_id=chat_execution_id(control)
+        )
+        await announce_chat_updated(run.session_id, "assistant")
+        return ChatReplyOutput(posted=True, message=text, message_id=saved.get("uid"), run_id=run_id)
 
     @classmethod
     async def reset_execution_state(
@@ -104,6 +135,10 @@ class ChatReplyNode(ActionNode):
 
         cleared = await clear_chat_thread(database, str(workflow_id))
         return {"reset": bool(cleared), "cleared_chat_messages": cleared}
+
+
+def _message_id(saved: Any) -> Optional[str]:
+    return saved.get("uid") if isinstance(saved, dict) else None
 
 
 # The thread belongs to its workflow: deleting the workflow deletes it.

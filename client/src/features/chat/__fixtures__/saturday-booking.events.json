@@ -1,0 +1,1009 @@
+[
+  {
+    "type": "chat_run_event",
+    "data": {
+      "specversion": "1.0",
+      "id": "r_8f2a1c:1",
+      "source": "opencompany://services/chat",
+      "type": "com.opencompany.chat.run.started",
+      "subject": "r_8f2a1c",
+      "time": "2026-09-27T14:02:01.000Z",
+      "datacontenttype": "application/json",
+      "data": {
+        "workflow_id": "wf_salon",
+        "session_id": "wf_salon",
+        "run_id": "r_8f2a1c",
+        "seq": 1,
+        "hub_epoch": "e_fixture",
+        "kind": "message",
+        "user_message_id": "m_owner_1",
+        "reply_message_id": "a_r_8f2a1c",
+        "started_at": "2026-09-27T14:02:00.000Z"
+      }
+    }
+  },
+  {
+    "type": "chat_run_event",
+    "data": {
+      "specversion": "1.0",
+      "id": "r_8f2a1c:2",
+      "source": "opencompany://services/chat",
+      "type": "com.opencompany.chat.run.step.started",
+      "subject": "r_8f2a1c",
+      "time": "2026-09-27T14:02:02.000Z",
+      "datacontenttype": "application/json",
+      "data": {
+        "workflow_id": "wf_salon",
+        "session_id": "wf_salon",
+        "run_id": "r_8f2a1c",
+        "seq": 2,
+        "hub_epoch": "e_fixture",
+        "step_id": "step_1",
+        "step_name": "Checked Google Calendar",
+        "agent_node_id": "wf_salon:aiAgent:1",
+        "attempt": 1
+      }
+    }
+  },
+  {
+    "type": "chat_run_event",
+    "data": {
+      "specversion": "1.0",
+      "id": "r_8f2a1c:3",
+      "source": "opencompany://services/chat",
+      "type": "com.opencompany.chat.run.step.finished",
+      "subject": "r_8f2a1c",
+      "time": "2026-09-27T14:02:03.000Z",
+      "datacontenttype": "application/json",
+      "data": {
+        "workflow_id": "wf_salon",
+        "session_id": "wf_salon",
+        "run_id": "r_8f2a1c",
+        "seq": 3,
+        "hub_epoch": "e_fixture",
+        "step_id": "step_1",
+        "step_name": "Checked Google Calendar",
+        "state": "done",
+        "duration_ms": 640
+      }
+    }
+  },
+  {
+    "type": "chat_run_event",
+    "data": {
+      "specversion": "1.0",
+      "id": "r_8f2a1c:4",
+      "source": "opencompany://services/chat",
+      "type": "com.opencompany.chat.run.step.started",
+      "subject": "r_8f2a1c",
+      "time": "2026-09-27T14:02:04.000Z",
+      "datacontenttype": "application/json",
+      "data": {
+        "workflow_id": "wf_salon",
+        "session_id": "wf_salon",
+        "run_id": "r_8f2a1c",
+        "seq": 4,
+        "hub_epoch": "e_fixture",
+        "step_id": "step_2",
+        "step_name": "Read the WhatsApp thread with Priya",
+        "agent_node_id": "wf_salon:aiAgent:1",
+        "attempt": 1
+      }
+    }
+  },
+  {
+    "type": "chat_run_event",
+    "data": {
+      "specversion": "1.0",
+      "id": "r_8f2a1c:5",
+      "source": "opencompany://services/chat",
+      "type": "com.opencompany.chat.run.step.finished",
+      "subject": "r_8f2a1c",
+      "time": "2026-09-27T14:02:05.000Z",
+      "datacontenttype": "application/json",
+      "data": {
+        "workflow_id": "wf_salon",
+        "session_id": "wf_salon",
+        "run_id": "r_8f2a1c",
+        "seq": 5,
+        "hub_epoch": "e_fixture",
+        "step_id": "step_2",
+        "step_name": "Read the WhatsApp thread with Priya",
+        "state": "done",
+        "duration_ms": 640
+      }
+    }
+  },
+  {
+    "type": "chat_run_event",
+    "data": {
+      "specversion": "1.0",
+      "id": "r_8f2a1c:6",
+      "source": "opencompany://services/chat",
+      "type": "com.opencompany.chat.run.step.started",
+      "subject": "r_8f2a1c",
+      "time": "2026-09-27T14:02:06.000Z",
+      "datacontenttype": "application/json",
+      "data": {
+        "workflow_id": "wf_salon",
+        "session_id": "wf_salon",
+        "run_id": "r_8f2a1c",
+        "seq": 6,
+        "hub_epoch": "e_fixture",
+        "step_id": "step_3",
+        "step_name": "Compared stylist availability",
+        "agent_node_id": "wf_salon:aiAgent:1",
+        "attempt": 1
+      }
+    }
+  },
+  {
+    "type": "chat_run_event",
+    "data": {
+      "specversion": "1.0",
+      "id": "r_8f2a1c:7",
+      "source": "opencompany://services/chat",
+      "type": "com.opencompany.chat.run.step.finished",
+      "subject": "r_8f2a1c",
+      "time": "2026-09-27T14:02:07.000Z",
+      "datacontenttype": "application/json",
+      "data": {
+        "workflow_id": "wf_salon",
+        "session_id": "wf_salon",
+        "run_id": "r_8f2a1c",
+        "seq": 7,
+        "hub_epoch": "e_fixture",
+        "step_id": "step_3",
+        "step_name": "Compared stylist availability",
+        "state": "done",
+        "duration_ms": 640
+      }
+    }
+  },
+  {
+    "type": "chat_run_event",
+    "data": {
+      "specversion": "1.0",
+      "id": "r_8f2a1c:8",
+      "source": "opencompany://services/chat",
+      "type": "com.opencompany.chat.run.text.started",
+      "subject": "r_8f2a1c",
+      "time": "2026-09-27T14:02:08.000Z",
+      "datacontenttype": "application/json",
+      "data": {
+        "workflow_id": "wf_salon",
+        "session_id": "wf_salon",
+        "run_id": "r_8f2a1c",
+        "seq": 8,
+        "hub_epoch": "e_fixture",
+        "message_id": "r_8f2a1c.1.1",
+        "role": "assistant",
+        "agent_node_id": "wf_salon:aiAgent:1"
+      }
+    }
+  },
+  {
+    "type": "chat_run_event",
+    "data": {
+      "specversion": "1.0",
+      "id": "r_8f2a1c:9",
+      "source": "opencompany://services/chat",
+      "type": "com.opencompany.chat.run.text.content",
+      "subject": "r_8f2a1c",
+      "time": "2026-09-27T14:02:09.000Z",
+      "datacontenttype": "application/json",
+      "data": {
+        "workflow_id": "wf_salon",
+        "session_id": "wf_salon",
+        "run_id": "r_8f2a1c",
+        "seq": 9,
+        "hub_epoch": "e_fixture",
+        "message_id": "r_8f2a1c.1.1",
+        "delta": "Saturday is fairly full, but there’s a clean 2h 15m gap with Ana from 2:30pm."
+      }
+    }
+  },
+  {
+    "type": "chat_run_event",
+    "data": {
+      "specversion": "1.0",
+      "id": "r_8f2a1c:10",
+      "source": "opencompany://services/chat",
+      "type": "com.opencompany.chat.run.text.ended",
+      "subject": "r_8f2a1c",
+      "time": "2026-09-27T14:02:10.000Z",
+      "datacontenttype": "application/json",
+      "data": {
+        "workflow_id": "wf_salon",
+        "session_id": "wf_salon",
+        "run_id": "r_8f2a1c",
+        "seq": 10,
+        "hub_epoch": "e_fixture",
+        "message_id": "r_8f2a1c.1.1",
+        "final": true,
+        "reply_message_id": "a_r_8f2a1c"
+      }
+    }
+  },
+  {
+    "type": "chat_run_event",
+    "data": {
+      "specversion": "1.0",
+      "id": "r_8f2a1c:11",
+      "source": "opencompany://services/chat",
+      "type": "com.opencompany.chat.run.activity.snapshot",
+      "subject": "r_8f2a1c",
+      "time": "2026-09-27T14:02:11.000Z",
+      "datacontenttype": "application/json",
+      "data": {
+        "workflow_id": "wf_salon",
+        "session_id": "wf_salon",
+        "run_id": "r_8f2a1c",
+        "seq": 11,
+        "hub_epoch": "e_fixture",
+        "message_id": "p_ui_1",
+        "activity_type": "json_render",
+        "content": {
+          "root": "",
+          "state": {},
+          "elements": {}
+        },
+        "replace": true
+      }
+    }
+  },
+  {
+    "type": "chat_run_event",
+    "data": {
+      "specversion": "1.0",
+      "id": "r_8f2a1c:12",
+      "source": "opencompany://services/chat",
+      "type": "com.opencompany.chat.run.activity.delta",
+      "subject": "r_8f2a1c",
+      "time": "2026-09-27T14:02:12.000Z",
+      "datacontenttype": "application/json",
+      "data": {
+        "workflow_id": "wf_salon",
+        "session_id": "wf_salon",
+        "run_id": "r_8f2a1c",
+        "seq": 12,
+        "hub_epoch": "e_fixture",
+        "message_id": "p_ui_1",
+        "activity_type": "json_render",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/root",
+            "value": "root"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "chat_run_event",
+    "data": {
+      "specversion": "1.0",
+      "id": "r_8f2a1c:13",
+      "source": "opencompany://services/chat",
+      "type": "com.opencompany.chat.run.activity.delta",
+      "subject": "r_8f2a1c",
+      "time": "2026-09-27T14:02:13.000Z",
+      "datacontenttype": "application/json",
+      "data": {
+        "workflow_id": "wf_salon",
+        "session_id": "wf_salon",
+        "run_id": "r_8f2a1c",
+        "seq": 13,
+        "hub_epoch": "e_fixture",
+        "message_id": "p_ui_1",
+        "activity_type": "json_render",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/state",
+            "value": {
+              "slot": "s2",
+              "service": "Colour",
+              "remind": true,
+              "note": ""
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "chat_run_event",
+    "data": {
+      "specversion": "1.0",
+      "id": "r_8f2a1c:14",
+      "source": "opencompany://services/chat",
+      "type": "com.opencompany.chat.run.activity.delta",
+      "subject": "r_8f2a1c",
+      "time": "2026-09-27T14:02:14.000Z",
+      "datacontenttype": "application/json",
+      "data": {
+        "workflow_id": "wf_salon",
+        "session_id": "wf_salon",
+        "run_id": "r_8f2a1c",
+        "seq": 14,
+        "hub_epoch": "e_fixture",
+        "message_id": "p_ui_1",
+        "activity_type": "json_render",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/elements/root",
+            "value": {
+              "type": "Stack",
+              "props": {
+                "gap": "md"
+              },
+              "children": [
+                "slots",
+                "tooLong",
+                "details",
+                "acts"
+              ]
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "chat_run_event",
+    "data": {
+      "specversion": "1.0",
+      "id": "r_8f2a1c:15",
+      "source": "opencompany://services/chat",
+      "type": "com.opencompany.chat.run.activity.delta",
+      "subject": "r_8f2a1c",
+      "time": "2026-09-27T14:02:15.000Z",
+      "datacontenttype": "application/json",
+      "data": {
+        "workflow_id": "wf_salon",
+        "session_id": "wf_salon",
+        "run_id": "r_8f2a1c",
+        "seq": 15,
+        "hub_epoch": "e_fixture",
+        "message_id": "p_ui_1",
+        "activity_type": "json_render",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/elements/slots",
+            "value": {
+              "type": "SlotPicker",
+              "props": {
+                "label": "Saturday 28 Sep",
+                "hint": "Free 2-hour slots",
+                "value": {
+                  "$bindState": "/slot"
+                },
+                "options": [
+                  {
+                    "id": "s1",
+                    "time": "12:00",
+                    "detail": "Jordan"
+                  },
+                  {
+                    "id": "s2",
+                    "time": "14:30",
+                    "detail": "Ana",
+                    "recommended": true
+                  },
+                  {
+                    "id": "s3",
+                    "time": "16:30",
+                    "detail": "Ana",
+                    "unavailable": true,
+                    "note": "Only 1h free"
+                  },
+                  {
+                    "id": "s4",
+                    "time": "17:00",
+                    "detail": "Jordan"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "chat_run_event",
+    "data": {
+      "specversion": "1.0",
+      "id": "r_8f2a1c:16",
+      "source": "opencompany://services/chat",
+      "type": "com.opencompany.chat.run.activity.delta",
+      "subject": "r_8f2a1c",
+      "time": "2026-09-27T14:02:16.000Z",
+      "datacontenttype": "application/json",
+      "data": {
+        "workflow_id": "wf_salon",
+        "session_id": "wf_salon",
+        "run_id": "r_8f2a1c",
+        "seq": 16,
+        "hub_epoch": "e_fixture",
+        "message_id": "p_ui_1",
+        "activity_type": "json_render",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/elements/tooLong",
+            "value": {
+              "type": "Callout",
+              "props": {
+                "tone": "warning",
+                "text": "Highlights take about 3 hours. Only the 12:00 slot with Jordan is long enough."
+              },
+              "visible": {
+                "$state": "/service",
+                "eq": "Highlights"
+              }
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "chat_run_event",
+    "data": {
+      "specversion": "1.0",
+      "id": "r_8f2a1c:17",
+      "source": "opencompany://services/chat",
+      "type": "com.opencompany.chat.run.activity.delta",
+      "subject": "r_8f2a1c",
+      "time": "2026-09-27T14:02:17.000Z",
+      "datacontenttype": "application/json",
+      "data": {
+        "workflow_id": "wf_salon",
+        "session_id": "wf_salon",
+        "run_id": "r_8f2a1c",
+        "seq": 17,
+        "hub_epoch": "e_fixture",
+        "message_id": "p_ui_1",
+        "activity_type": "json_render",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/elements/details",
+            "value": {
+              "type": "Card",
+              "props": {
+                "title": "Booking details",
+                "description": "The WhatsApp draft below updates as you change these."
+              },
+              "children": [
+                "svc",
+                "rem",
+                "remWhen",
+                "note"
+              ]
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "chat_run_event",
+    "data": {
+      "specversion": "1.0",
+      "id": "r_8f2a1c:18",
+      "source": "opencompany://services/chat",
+      "type": "com.opencompany.chat.run.activity.delta",
+      "subject": "r_8f2a1c",
+      "time": "2026-09-27T14:02:18.000Z",
+      "datacontenttype": "application/json",
+      "data": {
+        "workflow_id": "wf_salon",
+        "session_id": "wf_salon",
+        "run_id": "r_8f2a1c",
+        "seq": 18,
+        "hub_epoch": "e_fixture",
+        "message_id": "p_ui_1",
+        "activity_type": "json_render",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/elements/svc",
+            "value": {
+              "type": "Select",
+              "props": {
+                "label": "Service",
+                "value": {
+                  "$bindState": "/service"
+                },
+                "options": [
+                  "Colour",
+                  "Colour & cut",
+                  "Highlights"
+                ]
+              }
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "chat_run_event",
+    "data": {
+      "specversion": "1.0",
+      "id": "r_8f2a1c:19",
+      "source": "opencompany://services/chat",
+      "type": "com.opencompany.chat.run.activity.delta",
+      "subject": "r_8f2a1c",
+      "time": "2026-09-27T14:02:19.000Z",
+      "datacontenttype": "application/json",
+      "data": {
+        "workflow_id": "wf_salon",
+        "session_id": "wf_salon",
+        "run_id": "r_8f2a1c",
+        "seq": 19,
+        "hub_epoch": "e_fixture",
+        "message_id": "p_ui_1",
+        "activity_type": "json_render",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/elements/rem",
+            "value": {
+              "type": "Toggle",
+              "props": {
+                "label": "Remind her the day before",
+                "checked": {
+                  "$bindState": "/remind"
+                }
+              }
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "chat_run_event",
+    "data": {
+      "specversion": "1.0",
+      "id": "r_8f2a1c:20",
+      "source": "opencompany://services/chat",
+      "type": "com.opencompany.chat.run.activity.delta",
+      "subject": "r_8f2a1c",
+      "time": "2026-09-27T14:02:20.000Z",
+      "datacontenttype": "application/json",
+      "data": {
+        "workflow_id": "wf_salon",
+        "session_id": "wf_salon",
+        "run_id": "r_8f2a1c",
+        "seq": 20,
+        "hub_epoch": "e_fixture",
+        "message_id": "p_ui_1",
+        "activity_type": "json_render",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/elements/remWhen",
+            "value": {
+              "type": "Text",
+              "props": {
+                "text": "Goes out on WhatsApp at 6pm on Friday."
+              },
+              "visible": {
+                "$state": "/remind"
+              }
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "chat_run_event",
+    "data": {
+      "specversion": "1.0",
+      "id": "r_8f2a1c:21",
+      "source": "opencompany://services/chat",
+      "type": "com.opencompany.chat.run.activity.delta",
+      "subject": "r_8f2a1c",
+      "time": "2026-09-27T14:02:21.000Z",
+      "datacontenttype": "application/json",
+      "data": {
+        "workflow_id": "wf_salon",
+        "session_id": "wf_salon",
+        "run_id": "r_8f2a1c",
+        "seq": 21,
+        "hub_epoch": "e_fixture",
+        "message_id": "p_ui_1",
+        "activity_type": "json_render",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/elements/note",
+            "value": {
+              "type": "TextField",
+              "props": {
+                "label": "Note for the stylist",
+                "value": {
+                  "$bindState": "/note"
+                },
+                "placeholder": "e.g. patch test done in June"
+              }
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "chat_run_event",
+    "data": {
+      "specversion": "1.0",
+      "id": "r_8f2a1c:22",
+      "source": "opencompany://services/chat",
+      "type": "com.opencompany.chat.run.activity.delta",
+      "subject": "r_8f2a1c",
+      "time": "2026-09-27T14:02:22.000Z",
+      "datacontenttype": "application/json",
+      "data": {
+        "workflow_id": "wf_salon",
+        "session_id": "wf_salon",
+        "run_id": "r_8f2a1c",
+        "seq": 22,
+        "hub_epoch": "e_fixture",
+        "message_id": "p_ui_1",
+        "activity_type": "json_render",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/elements/acts",
+            "value": {
+              "type": "Row",
+              "props": {
+                "gap": "sm"
+              },
+              "children": [
+                "hold",
+                "sun"
+              ]
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "chat_run_event",
+    "data": {
+      "specversion": "1.0",
+      "id": "r_8f2a1c:23",
+      "source": "opencompany://services/chat",
+      "type": "com.opencompany.chat.run.activity.delta",
+      "subject": "r_8f2a1c",
+      "time": "2026-09-27T14:02:23.000Z",
+      "datacontenttype": "application/json",
+      "data": {
+        "workflow_id": "wf_salon",
+        "session_id": "wf_salon",
+        "run_id": "r_8f2a1c",
+        "seq": 23,
+        "hub_epoch": "e_fixture",
+        "message_id": "p_ui_1",
+        "activity_type": "json_render",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/elements/hold",
+            "value": {
+              "type": "Button",
+              "props": {
+                "label": "Hold this slot for 15 min",
+                "variant": "primary"
+              },
+              "on": {
+                "press": {
+                  "action": "holdSlot",
+                  "params": {
+                    "slot": {
+                      "$state": "/slot"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "chat_run_event",
+    "data": {
+      "specversion": "1.0",
+      "id": "r_8f2a1c:24",
+      "source": "opencompany://services/chat",
+      "type": "com.opencompany.chat.run.activity.delta",
+      "subject": "r_8f2a1c",
+      "time": "2026-09-27T14:02:24.000Z",
+      "datacontenttype": "application/json",
+      "data": {
+        "workflow_id": "wf_salon",
+        "session_id": "wf_salon",
+        "run_id": "r_8f2a1c",
+        "seq": 24,
+        "hub_epoch": "e_fixture",
+        "message_id": "p_ui_1",
+        "activity_type": "json_render",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/elements/sun",
+            "value": {
+              "type": "Button",
+              "props": {
+                "label": "Show Sunday instead"
+              },
+              "on": {
+                "press": {
+                  "action": "ask",
+                  "params": {
+                    "text": "What does Sunday look like?"
+                  }
+                }
+              }
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "chat_run_event",
+    "data": {
+      "specversion": "1.0",
+      "id": "r_8f2a1c:25",
+      "source": "opencompany://services/chat",
+      "type": "com.opencompany.chat.run.tool_call.started",
+      "subject": "r_8f2a1c",
+      "time": "2026-09-27T14:02:25.000Z",
+      "datacontenttype": "application/json",
+      "data": {
+        "workflow_id": "wf_salon",
+        "session_id": "wf_salon",
+        "run_id": "r_8f2a1c",
+        "seq": 25,
+        "hub_epoch": "e_fixture",
+        "tool_call_id": "call_8f2a1c",
+        "tool_call_name": "whatsapp_send",
+        "parent_message_id": "a_r_8f2a1c",
+        "label": "WhatsApp"
+      }
+    }
+  },
+  {
+    "type": "chat_run_event",
+    "data": {
+      "specversion": "1.0",
+      "id": "r_8f2a1c:26",
+      "source": "opencompany://services/chat",
+      "type": "com.opencompany.chat.run.tool_call.args",
+      "subject": "r_8f2a1c",
+      "time": "2026-09-27T14:02:26.000Z",
+      "datacontenttype": "application/json",
+      "data": {
+        "workflow_id": "wf_salon",
+        "session_id": "wf_salon",
+        "run_id": "r_8f2a1c",
+        "seq": 26,
+        "hub_epoch": "e_fixture",
+        "tool_call_id": "call_8f2a1c",
+        "delta": "{\"phone\": \"Priya Shah\", \"message\": \"Hi Priya! Saturday at 14:30 is free for a colour with Ana (about 2 hours). Shall I book you in? I’ll send you a reminder the day before.\"}"
+      }
+    }
+  },
+  {
+    "type": "chat_run_event",
+    "data": {
+      "specversion": "1.0",
+      "id": "r_8f2a1c:27",
+      "source": "opencompany://services/chat",
+      "type": "com.opencompany.chat.run.tool_call.ended",
+      "subject": "r_8f2a1c",
+      "time": "2026-09-27T14:02:27.000Z",
+      "datacontenttype": "application/json",
+      "data": {
+        "workflow_id": "wf_salon",
+        "session_id": "wf_salon",
+        "run_id": "r_8f2a1c",
+        "seq": 27,
+        "hub_epoch": "e_fixture",
+        "tool_call_id": "call_8f2a1c"
+      }
+    }
+  },
+  {
+    "type": "chat_run_event",
+    "data": {
+      "specversion": "1.0",
+      "id": "r_8f2a1c:28",
+      "source": "opencompany://services/chat",
+      "type": "com.opencompany.chat.run.activity.snapshot",
+      "subject": "r_8f2a1c",
+      "time": "2026-09-27T14:02:28.000Z",
+      "datacontenttype": "application/json",
+      "data": {
+        "workflow_id": "wf_salon",
+        "session_id": "wf_salon",
+        "run_id": "r_8f2a1c",
+        "seq": 28,
+        "hub_epoch": "e_fixture",
+        "message_id": "p_approval_1",
+        "activity_type": "approval",
+        "content": {
+          "approval_id": "ap_1",
+          "tool_call_id": "call_8f2a1c",
+          "status": "pending"
+        },
+        "replace": true
+      }
+    }
+  },
+  {
+    "type": "chat_run_event",
+    "data": {
+      "specversion": "1.0",
+      "id": "r_8f2a1c:29",
+      "source": "opencompany://services/chat",
+      "type": "com.opencompany.chat.run.finished",
+      "subject": "r_8f2a1c",
+      "time": "2026-09-27T14:02:29.000Z",
+      "datacontenttype": "application/json",
+      "data": {
+        "workflow_id": "wf_salon",
+        "session_id": "wf_salon",
+        "run_id": "r_8f2a1c",
+        "seq": 29,
+        "hub_epoch": "e_fixture",
+        "outcome": {
+          "type": "interrupt",
+          "interrupts": [
+            {
+              "id": "ap_1",
+              "reason": "tool_call",
+              "message": "Maya wants to send a message",
+              "tool_call_id": "call_8f2a1c",
+              "response_schema": {
+                "type": "object",
+                "properties": {
+                  "approved": {
+                    "type": "boolean"
+                  },
+                  "edited_args": {
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "approved"
+                ]
+              },
+              "expires_at": "2026-10-04T14:02:00.000Z"
+            }
+          ]
+        },
+        "result": {
+          "reply_message_id": "a_r_8f2a1c"
+        },
+        "duration_ms": 9000,
+        "step_count": 3
+      }
+    }
+  },
+  {
+    "type": "chat_run_event",
+    "data": {
+      "specversion": "1.0",
+      "id": "r_9b3d2e:1",
+      "source": "opencompany://services/chat",
+      "type": "com.opencompany.chat.run.started",
+      "subject": "r_9b3d2e",
+      "time": "2026-09-27T14:02:30.000Z",
+      "datacontenttype": "application/json",
+      "data": {
+        "workflow_id": "wf_salon",
+        "session_id": "wf_salon",
+        "run_id": "r_9b3d2e",
+        "seq": 1,
+        "hub_epoch": "e_fixture",
+        "kind": "resume",
+        "parent_run_id": "r_8f2a1c",
+        "reply_message_id": "a_r_8f2a1c",
+        "started_at": "2026-09-27T14:03:10.000Z"
+      }
+    }
+  },
+  {
+    "type": "chat_run_event",
+    "data": {
+      "specversion": "1.0",
+      "id": "r_9b3d2e:2",
+      "source": "opencompany://services/chat",
+      "type": "com.opencompany.chat.run.tool_call.result",
+      "subject": "r_9b3d2e",
+      "time": "2026-09-27T14:02:31.000Z",
+      "datacontenttype": "application/json",
+      "data": {
+        "workflow_id": "wf_salon",
+        "session_id": "wf_salon",
+        "run_id": "r_9b3d2e",
+        "seq": 2,
+        "hub_epoch": "e_fixture",
+        "message_id": "t_call_8f2a1c",
+        "tool_call_id": "call_8f2a1c",
+        "content": "{\"status\": \"sent\", \"approved_by\": \"user\"}",
+        "role": "tool"
+      }
+    }
+  },
+  {
+    "type": "chat_run_event",
+    "data": {
+      "specversion": "1.0",
+      "id": "r_9b3d2e:3",
+      "source": "opencompany://services/chat",
+      "type": "com.opencompany.chat.run.activity.delta",
+      "subject": "r_9b3d2e",
+      "time": "2026-09-27T14:02:32.000Z",
+      "datacontenttype": "application/json",
+      "data": {
+        "workflow_id": "wf_salon",
+        "session_id": "wf_salon",
+        "run_id": "r_9b3d2e",
+        "seq": 3,
+        "hub_epoch": "e_fixture",
+        "message_id": "p_approval_1",
+        "activity_type": "approval",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/status",
+            "value": "sent"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "chat_run_event",
+    "data": {
+      "specversion": "1.0",
+      "id": "r_9b3d2e:4",
+      "source": "opencompany://services/chat",
+      "type": "com.opencompany.chat.run.finished",
+      "subject": "r_9b3d2e",
+      "time": "2026-09-27T14:02:33.000Z",
+      "datacontenttype": "application/json",
+      "data": {
+        "workflow_id": "wf_salon",
+        "session_id": "wf_salon",
+        "run_id": "r_9b3d2e",
+        "seq": 4,
+        "hub_epoch": "e_fixture",
+        "outcome": {
+          "type": "success"
+        },
+        "result": {
+          "reply_message_id": "a_r_8f2a1c"
+        },
+        "duration_ms": 5200,
+        "step_count": 0
+      }
+    }
+  }
+]

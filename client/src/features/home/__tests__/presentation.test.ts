@@ -33,13 +33,26 @@ describe('presentEmployee', () => {
     ['working', { state: 'running' }, 'Working', 'working', 'pause'],
     ['paused', { state: 'paused' }, 'Paused', 'paused', 'resume'],
     ['attention', { state: 'paused' }, 'Needs attention', 'attention', 'resume'],
-    ['attention', { state: 'failed', can_resume: false }, 'Needs attention', 'attention', 'open_workflow'],
+    ['attention', { state: 'failed', can_resume: false }, 'Needs attention', 'attention', 'start'],
+    ['attention', { state: 'pausing', can_resume: false }, 'Needs attention', 'attention', 'open_workflow'],
     ['ready', { state: 'never_started' }, 'Ready', 'ready', 'start'],
   ])('%s (%o) shows %s and offers %s', (status, control, label, tone, action) => {
     const view = presentEmployee(employee({ status }, control));
     expect(view.pill).toEqual({ label, tone });
     expect(view.primary.kind).toBe(action);
     expect(view.pulse).toBe(status === 'working');
+  });
+
+  // start_employee resets a failed employee before starting it again.
+  it('offers Start again after a failure', () => {
+    const view = presentEmployee(employee({ status: 'attention' }, { state: 'failed', can_resume: false }));
+    expect(view.primary).toEqual({ kind: 'start', again: true });
+    expect(primaryActionLabel(view.primary)).toBe('Start again');
+  });
+
+  it('asks for what a failed employee is missing before starting it again', () => {
+    const view = presentEmployee(employee({ status: 'attention', missing_apps: [whatsapp] }, { state: 'failed', can_resume: false }));
+    expect(view.primary.kind).toBe('connect_app');
   });
 
   it('asks to connect the first missing app before anything else', () => {

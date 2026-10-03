@@ -64,6 +64,7 @@ async def emit(
     event: WorkflowEvent,
     *,
     wire_routing_key: Optional[str] = None,
+    broadcast: bool = True,
 ) -> WorkflowEvent:
     """Route ``event`` to running consumer workflows + in-process WS clients.
 
@@ -75,6 +76,10 @@ async def emit(
             field on the WS frame). Defaults to the generic
             ``cloudevent`` channel; plugin emitters override per their
             existing wire key (e.g. ``"telegram_message_received"``).
+        broadcast: ``False`` skips the WebSocket fan-out. The broadcast
+            reaches every connected socket, so an event whose payload is
+            one owner's content (a chat message) must not ride it; its
+            consumers are the workflows signalled here.
 
     Returns:
         The envelope unchanged — callers may chain.
@@ -94,11 +99,10 @@ async def emit(
     # broadcast to in-process WS clients. asyncio.gather lets the
     # broadcast happen even if the Temporal Visibility query fails (and
     # vice versa).
-    await asyncio.gather(
-        _signal_running_consumers(event),
-        _broadcast_in_process(event, wire_routing_key or _DEFAULT_WIRE_ROUTING_KEY),
-        return_exceptions=False,
-    )
+    deliveries = [_signal_running_consumers(event)]
+    if broadcast:
+        deliveries.append(_broadcast_in_process(event, wire_routing_key or _DEFAULT_WIRE_ROUTING_KEY))
+    await asyncio.gather(*deliveries, return_exceptions=False)
     return event
 
 

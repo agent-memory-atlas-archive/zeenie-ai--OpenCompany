@@ -242,7 +242,17 @@ The first multipart endpoint in the repo, on either side of the wire.
   never trust `Content-Length`, which is attacker-controlled. The cap is
   enforced on bytes **actually read**, so an oversize body aborts before it has
   all arrived.
-- Returns a serialized `AudioRef`, which `coerce_file_param` already accepts.
+- A write, so stricter than the file route: only the workflow's owner may
+  upload (the saved graph's `owner_id` against the caller the auth middleware
+  resolved), and an id that does not resolve is a 404 rather than a write into
+  the shared anonymous workspace (`resolve_workspace_root(...,
+  allow_default=False)`). Both refusals are 404, like the file route's.
+- Audio comes back as a serialized `AudioRef` (`write_audio` probes the
+  container). Anything else comes back as a `FileRef` from `write_media`,
+  whose kind follows `preview_kind`: `image`, `video`, `document` for a PDF,
+  otherwise `file`, so script-bearing types such as SVG and HTML are plain
+  files. The media type comes from the stored filename, the same signal the
+  file route serves by. `coerce_file_param` accepts both.
 
 ### Auth
 

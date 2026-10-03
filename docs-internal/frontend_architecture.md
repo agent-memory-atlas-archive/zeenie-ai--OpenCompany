@@ -210,6 +210,10 @@ client/src/
 │   │                               # 1 ms under reduced motion or a hidden page, no loops then
 │   ├── pageActivity.ts / useReducedMotion.ts # Whether anyone can see the page; the motion preference
 │   ├── debouncedInvalidate.ts      # Trailing-edge query invalidation (broadcast bursts)
+│   ├── jsonRender/                 # Generated-UI glue around json-render (hire setup screen, chat replies):
+│   │                               # sanitize (no prototype paths; no watch/repeat/slots/$computed/confirm),
+│   │                               # guard (props through the catalogue schema, live-only entrance),
+│   │                               # reveal (spec -> patch stream, paced), uiState (guarded store)
 │   └── utils.ts                    # cn() = clsx + tailwind-merge (shadcn convention)
 ├── schemas/workflowSchema.ts       # Structural pre-flight for workflow export (backend is the schema authority)
 ├── stores/
@@ -443,7 +447,8 @@ dispatch is what removes the whole class of it.
 
 `case 'file'` POSTs to `/api/workspace/{workflow_id}/uploads` via
 [`lib/workspaceUpload.ts`](../client/src/lib/workspaceUpload.ts) and stores the
-returned `AudioRef` (~400 bytes). Do **not** set `Content-Type` on that fetch —
+returned reference (~400 bytes: an `AudioRef` for audio, otherwise a file
+reference). Do **not** set `Content-Type` on that fetch —
 the browser must set it so the multipart boundary is generated.
 
 The legacy base64 envelope (`{type: 'upload', data: '<base64>'}`) survives only

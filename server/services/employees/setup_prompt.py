@@ -13,7 +13,10 @@ additions:
   with a schedule's time one of the catalogue's ``trigger.times``) and
   ``sendsVia`` (the app they answer or report through). No kind of trigger
   is preferred: every employee can be talked to on Home, so one that works
-  when the owner messages them is as good as any.
+  when the owner messages them is as good as any;
+- the spec is in json-render's shape (catalogue ``spec_version`` 2): a
+  Toggle binds ``checked``, and a Button names its action in the element's
+  ``on.press`` (``{"action", "params"}``) beside its props.
 
 The component and action lines come from config/genui_catalog.json, which
 the client's renderer is held to; a component the client inserts itself
@@ -61,21 +64,25 @@ def catalog_prompt(catalog: Optional[Dict[str, Any]] = None) -> str:
         '2) Plan titled "Their routine" with 3-5 steps; the first step has role "trigger" (e.g. "When a message '
         'arrives", "Every weekday at 08:00"). Step titles are short present-tense actions. A step that uses an app '
         'names it in "app".',
-        f'3) Card titled "Ground rules" containing 2-3 Toggles bound to state under "{paths["rules"]}" (always '
-        f'include "{ask_first}" bound to "{paths["askFirst"]}", true in "state") and optionally one Choice bound '
-        f'under "{paths["choices"]}" (e.g. how often to report).',
-        '4) If a needed app is not connected: a Card with tone "trigger" saying so, with a Button (connect_app).',
-        '5) A horizontal Stack with Button "Hire {name}" (primary, action hire_employee, actionParams {name, role, '
-        'apps, trigger, sendsVia}) and Button "Change something" (secondary, action refine).',
+        f'3) Card titled "Ground rules" containing 2-3 Toggles bound to state under "{paths["rules"]}" through '
+        f'"checked" (always include "{ask_first}" bound to "{paths["askFirst"]}", true in "state") and optionally '
+        f'one Choice bound under "{paths["choices"]}" (e.g. how often to report).',
+        '4) If a needed app is not connected: a Card with tone "trigger" saying so, with a Button whose on.press '
+        "runs connect_app.",
+        '5) A horizontal Stack with Button "Hire {name}" (primary, on.press {"action": "hire_employee", "params": '
+        '{name, role, apps, trigger, sendsVia}}) and Button "Change something" (secondary, on.press {"action": '
+        '"refine"}).',
         f'"trigger" is {{"kind": {kinds}, "app"?, "every"?: {every}, "at"?: {times}, "day"?}}: '
         '"app_event" when a new message or email in an app starts the work, "schedule" for routine work at set '
         'times, "manual" when the owner gives them work by messaging them. "at" is the owner\'s local time; "day" '
         'is a weekday name for "week", or a day of the month from 1 to 28 for "month". "sendsVia" is the app they '
         "answer or report through.",
         'UISpec is flat: {"root": id, "state": {initial values}, "elements": {id: {"type", "props", "children": '
-        '[ids], "visible"?: condition}}}. Max 12 elements. Every child id must exist.',
+        '[ids], "visible"?: condition, "on"?: {"press": {"action", "params"?}}}}}. Max 12 elements. Every child id '
+        "must exist.",
         'Each element looks like {"type":"Text","props":{"text":"…"},"children":[]} — all component props go '
-        'INSIDE "props".',
+        'INSIDE "props". A Button\'s action goes in "on", beside "props": '
+        '{"type":"Button","props":{"label":"…"},"on":{"press":{"action":"refine"}},"children":[]}.',
         'Every Stack and Card MUST list its child ids in "children" — elements not listed as someone\'s child are '
         "not shown.",
         'Keep it compact: single-line minified JSON, no code fences, short ids ("a","b","c"…), every string under '
@@ -93,7 +100,7 @@ def catalog_prompt(catalog: Optional[Dict[str, Any]] = None) -> str:
         '{"$cond":{"$state":"/x","eq":"y"},"$then":a,"$else":b}. Conditions: {"$state":"/path"} with optional '
         '"eq" or "not":true.'
     )
-    lines.append("Button actions:")
+    lines.append('Actions (the "action" of a Button\'s on.press, with these "params"):')
     lines += [f"- {name} {description}" for name, description in c["actions"].items()]
     lines.append("When asked to change the setup, return the full updated JSON in the same format.")
     return "\n".join(lines)

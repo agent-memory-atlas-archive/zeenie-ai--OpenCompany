@@ -1,7 +1,39 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { animate, dur, ease, finished, invalidateMotionTokens, loop, motionSuppressed, parseDuration, stagger } from '../motion';
+import {
+  animate,
+  dur,
+  DUR_FALLBACK,
+  ease,
+  finished,
+  invalidateMotionTokens,
+  loop,
+  motionSuppressed,
+  parseDuration,
+  stagger,
+  STAGGER_FALLBACK,
+  staggerStep,
+} from '../motion';
 import { pageActivity } from '../pageActivity';
 import { installWaapiStub, setReducedMotion } from '../../test/waapi';
+
+describe('fallbacks mirror themes/base.css', () => {
+  const baseCss = readFileSync(join(__dirname, '..', '..', 'themes', 'base.css'), 'utf8');
+  const tokenMs = (name: string): number | null => {
+    const match = new RegExp(`^\\s*${name}:\\s*([^;]+);`, 'm').exec(baseCss);
+    return match ? parseDuration(match[1]) : null;
+  };
+
+  it.each(Object.entries(DUR_FALLBACK))('--dur-%s', (name, ms) => {
+    expect(tokenMs(`--dur-${name}`)).toBe(ms);
+  });
+
+  it.each(Object.entries(STAGGER_FALLBACK))('--stagger-%s', (name, ms) => {
+    expect(tokenMs(`--stagger-${name}`)).toBe(ms);
+  });
+});
 
 const root = document.documentElement;
 
@@ -41,6 +73,12 @@ describe('token reads', () => {
     expect(dur('theme-reveal')).toBe(760);
     setToken('--dur-theme-reveal', 'soon');
     expect(dur('theme-reveal')).toBe(760);
+  });
+
+  it('reads a stagger token, falling back to the base.css step', () => {
+    expect(staggerStep('follow')).toBe(70);
+    setToken('--stagger-follow', '40ms');
+    expect(staggerStep('follow')).toBe(40);
   });
 
   it('reads an easing token, falling back to the base.css curve', () => {

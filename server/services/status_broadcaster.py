@@ -184,10 +184,16 @@ class StatusBroadcaster:
         )
 
     async def disconnect(self, websocket: WebSocket):
-        """Remove a WebSocket connection."""
+        """Remove a WebSocket connection, then tell the disconnect listeners
+        (``register_disconnect_listener``)."""
         async with self._lock:
             self._connections.discard(websocket)
         logger.info(f"[StatusBroadcaster] Client disconnected. Total: {len(self._connections)}")
+        for listener in list(_DISCONNECT_LISTENERS):
+            try:
+                listener(websocket)
+            except Exception:
+                logger.warning("[StatusBroadcaster] Disconnect listener failed", exc_info=True)
 
     async def _refresh_all_services(self):
         """Fan out plugin-registered refresh callbacks.
@@ -1342,6 +1348,18 @@ def register_service_refresh(callback: _ServiceRefreshCallback) -> None:
     startup; client connects do not trigger one (see :meth:`connect`).
     """
     _SERVICE_REFRESH_FANOUT.register(callback)
+
+
+_DisconnectListener = _typing.Callable[[WebSocket], None]
+_DISCONNECT_LISTENERS: _typing.List[_DisconnectListener] = []
+_DISCONNECT_FANOUT: _IdempotentList[_DisconnectListener] = _IdempotentList("disconnect", items=_DISCONNECT_LISTENERS)
+
+
+def register_disconnect_listener(listener: _DisconnectListener) -> None:
+    """Call ``listener(websocket)`` after a status socket disconnects, so a
+    service that keeps per-socket state (chat's run subscriptions) can drop
+    it. Synchronous and must not block. Idempotent on re-import."""
+    _DISCONNECT_FANOUT.register(listener)
 
 
 # Global singleton instance

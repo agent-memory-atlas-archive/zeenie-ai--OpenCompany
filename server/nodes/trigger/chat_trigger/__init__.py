@@ -9,6 +9,12 @@ A Reset clears the workflow's chat thread (``reset_execution_state``), as
 Talk resets on that graph before adding the reply) must not carry its old
 messages into the next generation.
 
+The owner's message reaches it from ``services/chat/handlers.py``
+(``send_chat_message``), which saves it and signals it through
+``services/chat/events.py``. Its output names the saved message
+(``message_id``) and, when the message started a chat run, the run
+(``run_id``): the run that answers it is that chat run.
+
 Replaces:
 - ``nodes/triggers.py:chatTrigger`` metadata-only registration.
 - ``event_waiter.build_chat_filter`` stays wired until the generic
@@ -37,6 +43,8 @@ class ChatTriggerOutput(BaseModel):
     message: Optional[str] = None
     timestamp: Optional[str] = None
     session_id: Optional[str] = None
+    message_id: Optional[str] = None
+    run_id: Optional[str] = None
 
     model_config = ConfigDict(extra="allow")
 
@@ -94,7 +102,7 @@ class ChatTriggerNode(TriggerNode):
 
 # Wave 12 C1 rollout #1: opt this trigger into the TriggerListenerWorkflow
 # consumer path. Producer side: dispatch_chat_message_received in
-# ./_events.py calls dispatch.emit unconditionally; the canary registry
-# tells DeploymentManager to start a listener for this type. See
+# services/chat/events.py calls dispatch.emit; the canary registry tells
+# DeploymentManager to start a listener for this type. See
 # services/deployment/canary_registry.py.
 register_canary_trigger_type(ChatTriggerNode.type, "com.opencompany.chat.message.received")

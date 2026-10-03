@@ -275,12 +275,14 @@ The shortest path:
    `tool_description` class variables.
 4. (Optional) Add a special schema clause to `_get_tool_schema` only when the
    plugin's `Params` model is not the correct invocation contract.
-5. (Optional) Override `execute_as_tool` on the plugin class when the
-   model's arguments need adjusting before the operation runs —
-   `AccountScopedNode` in `nodes/discord/_base.py` strips its
-   `server_controlled_fields` this way. Do not add a clause to
-   `_dispatch_tool`: its plugin fast path already runs `execute_as_tool`
-   for every registered plugin.
+5. (Optional) List settings the model must never choose (an account, a
+   profile, a mount) in `server_controlled_fields`. The framework keeps them
+   out of the model's reach on every path: `execute_as_tool` strips them from
+   the model's arguments, and `NodeExecutor` restores the saved value on the
+   Temporal path. Override `execute_as_tool` only when the model's arguments
+   need some other adjustment. Do not add a clause to `_dispatch_tool`: its
+   plugin fast path already runs `execute_as_tool` for every registered
+   plugin.
 
 Steps 4-5 are usually unnecessary — most new tools are fully described by
 their plugin class.

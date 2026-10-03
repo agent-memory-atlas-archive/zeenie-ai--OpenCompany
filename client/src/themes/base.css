@@ -181,6 +181,30 @@
   --h-settings: 760px;
   --w-settings-nav: 224px;
 
+  /* ── Chat (Home Talk and Dev's console Chat pane share it) — design
+   * handoff design_handoff_opencompany_home/chat (2026-10-03). Loop
+   * durations feed the opencompany-* helpers in animations.css; the rest
+   * are read by lib/motion.ts. ──────────────────────────────────────── */
+  --w-chat-column: 760px;          /* thread column; the text measure is this minus its padding */
+  --h-chat-composer-max: 220px;    /* the message box grows with its text up to this */
+  --dur-chat-rise: 560ms;          /* thread and empty-state entrance */
+  --dur-genui-enter: 420ms;        /* one generated-UI element arriving */
+  --dur-follow-in: 460ms;          /* approval card and follow-up chips */
+  --stagger-follow: 70ms;
+  --dur-version-swap: 360ms;       /* switching reply versions or branches */
+  --dur-popover-in: 220ms;         /* slash-command menu */
+  --dur-chip-pop: 360ms;           /* an attachment chip arriving */
+  --dur-bar-grow: 900ms;           /* BarChart bars */
+  --dur-check-draw: 420ms;         /* the drawn "sent" tick */
+  --dur-spinner: 800ms;
+  --dur-live-ring: 1200ms;         /* ring around a working employee's avatar */
+  --dur-shimmer: 1600ms;           /* skeleton lines and slots */
+  --dur-shimmer-text: 1800ms;      /* the "Working…" label */
+  --dur-dots: 1200ms;              /* status-line dots */
+  --dur-caret: 1000ms;             /* streaming caret */
+  --tint-scrim-soft: 88%;          /* drop overlay: how much app surface covers the thread */
+  --bg-scrim-soft: color-mix(in srgb, var(--bg-app) var(--tint-scrim-soft), transparent);
+
   /* ── Employee status (Normal mode). The dot is the raw role colour; the
    * pill tints it (fill 12%, border 45%) and reads in the role's ink, which
    * the light family darkens. working=tool, ready=model, attention=trigger,

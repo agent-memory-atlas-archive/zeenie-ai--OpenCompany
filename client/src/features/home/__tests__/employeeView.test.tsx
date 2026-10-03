@@ -170,10 +170,14 @@ describe('EmployeeView', () => {
     });
   });
 
-  it('keeps the stopped notice without offering Open in Dev mode when no normal action is available', () => {
-    renderPage(summary({ status: 'attention', talk: TALK_ON }, { state: 'failed', can_resume: false }));
+  it('offers Start again above the message box after a failure', () => {
+    actions.startEmployee.mockReturnValue(new Promise(() => {}));
+    renderPage(summary({ status: 'attention', talk: TALK_ON }, { state: 'failed', can_resume: false, revision: 7 }));
     expect(screen.queryByRole('button', { name: 'Open in Dev mode' })).not.toBeInTheDocument();
     expect(screen.getByText('Maya isn’t running, so they can’t read messages right now.')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start again' }));
+    expect(actions.startEmployee).toHaveBeenCalledWith('w1', 7);
     expect(enterDev).not.toHaveBeenCalled();
   });
 

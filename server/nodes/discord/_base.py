@@ -29,18 +29,16 @@ logger = get_logger(__name__)
 class AccountScopedNode(ActionNode, abstract=True):
     """ActionNode whose ``server_controlled_fields`` survive the tool path.
 
-    ``BaseNode.execute_as_tool`` enforces ``server_controlled_fields`` only in
-    its ToolNode branch. A dual-purpose ActionNode takes an earlier return
-    that merges ``{**node_params, **tool_args}`` with model arguments winning,
-    so the declaration alone protects nothing here.
-
-    That matters because inbound Discord messages are the realistic source of
-    hostile tool arguments, and ``account_id`` selects which bot identity
-    sends. Stripping the locked fields from the model's arguments before the
-    merge is what makes the declaration real. whatsapp_business solves the
-    same problem by sourcing its sending number from the credential instead;
-    that is not available here, because choosing between several stored
-    accounts is the point.
+    ``account_id`` selects which bot identity sends, and inbound Discord
+    messages are the realistic source of hostile tool arguments, so each
+    subclass lists ``account_id`` in ``server_controlled_fields``. The
+    framework enforces that on every tool path (``BaseNode.execute_as_tool``
+    strips locked fields from the model's arguments, and ``NodeExecutor``
+    restores the saved value on the Temporal path); this override strips them
+    again so the guarantee stays local to the nodes that depend on it.
+    whatsapp_business solves the same problem by taking its sending number
+    from the credential instead; that is not available here, because
+    choosing between several stored accounts is the point.
     """
 
     async def execute_as_tool(

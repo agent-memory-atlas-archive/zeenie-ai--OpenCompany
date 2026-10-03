@@ -12,9 +12,10 @@
 
 Fires when the user sends a chat message: from the editor's chat pane
 (Console Panel chat tab), or from Talk on an employee's Home page. The
-producer [`server/nodes/trigger/chat_trigger/_events.py`](../../../server/nodes/trigger/chat_trigger/_events.py)
-emits a CloudEvents `WorkflowEvent` (`type: com.opencompany.chat.message.received`)
-via `dispatch.emit`. `chatTrigger` is canary-registered
+producer [`server/services/chat/events.py`](../../../server/services/chat/events.py)
+emits a CloudEvents `WorkflowEvent` (`type: com.opencompany.chat.message.received`,
+source `opencompany://services/chat`) via `dispatch.emit`, never broadcast to
+sockets. `chatTrigger` is canary-registered
 (`register_canary_trigger_type`), so `DeploymentManager` starts a
 `TriggerListenerWorkflow` for it; the listener receives the event via Temporal
 Signal and spawns a child `MachinaWorkflow` per matching event. Any `chatTrigger`
@@ -53,17 +54,23 @@ trigger that Hire and Turn on Talk add beside another worker) has
 
 ### Output payload
 
-`routers/websocket.py::handle_send_chat_message` builds the event as:
+`services/chat/handlers.py::handle_send_chat_message` builds the event as:
 
 ```ts
 {
   message: string;
   timestamp: string;   // ISO 8601; the client's, else the server's time (UTC)
   session_id: string;
+  message_id: string;  // the saved message's id
+  run_id?: string;     // the chat run the message started, when one did
 }
 ```
 
-Wrapped in the standard envelope.
+Wrapped in the standard envelope, whose id is the run id when there is one.
+A run spawned from it claims that chat run (MachinaWorkflow,
+`machina-chat-run-v1`) and passes `run_scope` to every node, so
+[`chatReply`](../chat_utility/chatReply.md) saves its answer as the run's reply.
+See [chat_protocol.md](../../chat_protocol.md#runs).
 
 ## Logic Flow
 
@@ -71,8 +78,8 @@ Wrapped in the standard envelope.
 flowchart TD
   P[chat pane or Home Talk sends a message] --> V{workflow session with no<br/>controller to read it?}
   V -- yes --> X[not_running: nothing saved or sent]
-  V -- no --> W[chat_thread.record_chat_message]
-  W --> Q[_events.py dispatch.emit<br/>WorkflowEvent com.opencompany.chat.message.received]
+  V -- no --> W[chat ledger: save the message,<br/>and its run when a chat trigger answers the session]
+  W --> Q[services/chat/events.py dispatch.emit<br/>WorkflowEvent com.opencompany.chat.message.received]
   Q --> R[TriggerListenerWorkflow receives via Temporal Signal]
   R --> S[ChatTriggerNode.build_filter:<br/>if session_id != 'default' require exact match]
   S -- match --> T[spawn child MachinaWorkflow<br/>trigger pre-executed with event payload]
@@ -95,16 +102,17 @@ flowchart TD
 ## Side Effects
 
 - **Database writes**: none while it fires. (`send_chat_message` keeps the
-  message in the session's thread first, through
-  `services/chat_thread.record_chat_message`, which stamps the live generation
-  and broadcasts `chat.updated`.) On a workflow Reset its
+  message in the session's thread first, with its chat run, through
+  `services/chat/ledger.admit_message`, stamped with the live generation, and
+  announces `chat.updated`.) On a workflow Reset its
   `reset_execution_state` clears the workflow's own thread (session = the
   workflow id, never a custom `session_id` another workflow may share),
   as `chatReply`'s does: the conversation ended with the generation. It
   matters for a graph with a trigger and no reply yet, such as the one
   Turn on Talk resets before its new reply node runs.
 - **Broadcasts**: the producer emits a CloudEvents `WorkflowEvent` via
-  `dispatch.emit` (Temporal Signal fan-out + in-process WS broadcast). The
+  `dispatch.emit` (Temporal Signal fan-out only: `broadcast=False`, since the
+  envelope carries the owner's text). The
   `TriggerListenerWorkflow` emits firing-pulse status via
   `broadcast_trigger_status_activity` before/after each child spawn.
 - **External API calls**: none.
@@ -124,8 +132,10 @@ flowchart TD
   per trigger is the only way to scope messages to a specific node.
 - When multiple `chatTrigger` nodes exist with the same session ID, all of
   them fire for a matching message, so one message starts one run per
-  trigger. Hire and Turn on Talk never add a second trigger on a workflow's
-  own session: a chat hire's "Chat" trigger is already its talk line.
+  trigger; the first run to start claims the chat run and the others run
+  untracked. Hire and Turn on Talk never add a second trigger on a
+  workflow's own session: a chat hire's "Chat" trigger is already its talk
+  line.
 - The handler has no timeout; it waits forever until an event arrives or
   the run is cancelled.
 - For a workflow's session, `send_chat_message` first reads the latest
@@ -134,7 +144,9 @@ flowchart TD
   and starts a run on Resume (`delivery: "queued"`). In any other state the
   handler answers `not_running` and neither saves nor dispatches the message.
   Session `'default'` is saved and dispatched as before, so a message there is
-  stored even when no `chatTrigger` is waiting.
+  stored even when no `chatTrigger` is waiting. A workflow's message starts a
+  chat run only when a deployed `chatTrigger` accepts its session; while a run
+  is live the next message is refused with `run_in_progress`.
 
 ## Related
 

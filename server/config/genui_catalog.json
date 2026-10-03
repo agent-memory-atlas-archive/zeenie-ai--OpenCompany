@@ -1,6 +1,6 @@
 {
-  "_comment": "Normal mode's setup-screen vocabulary: what a model may use when it writes a new employee's setup screen. The prompt (services/employees/setup_prompt.py) is generated from this file; the client's renderer (client/src/features/home/genui/catalog.ts, hirePayload.ts) must list the same components, actions, tones, roles, state paths, limits and trigger lists, which tests/test_genui_catalog_sync.py checks. A component marked `inserted` is added by the client's normalizer, never by the model, so the prompt leaves it out. `trigger.times` are the times a schedule can run at (services/employees/builder.py SCHEDULE_TIMES).",
-  "spec_version": 1,
+  "_comment": "Normal mode's setup-screen vocabulary: what a model may use when it writes a new employee's setup screen. The prompt (services/employees/setup_prompt.py) is generated from this file; the client's renderer (client/src/features/home/genui/catalog.ts, hirePayload.ts) must list the same components, actions, tones, roles, state paths, limits and trigger lists, which tests/test_genui_catalog_sync.py checks. A component marked `inserted` is added by the client's normalizer, never by the model, so the prompt leaves it out. `trigger.times` are the times a schedule can run at (services/employees/builder.py SCHEDULE_TIMES). spec_version 2 is json-render's shape: a Toggle binds `checked`, and a Button's action is the element's `on.press` ({action, params}); the client still reads the older `value` and `action`/`actionParams` a model may write.",
+  "spec_version": 2,
   "components": {
     "Stack": {
       "props": "{direction:\"vertical\"|\"horizontal\", gap:\"sm\"|\"md\"|\"lg\"}",
@@ -56,7 +56,7 @@
       "description": "Progress or usage bar."
     },
     "Toggle": {
-      "props": "{label, description?, value:{\"$bindState\":\"/rules/<key>\"}}",
+      "props": "{label, description?, checked:{\"$bindState\":\"/rules/<key>\"}}",
       "description": "On/off ground rule, bound to state under /rules."
     },
     "Choice": {
@@ -68,8 +68,8 @@
       "description": "Short text field, bound to state under /inputs."
     },
     "Button": {
-      "props": "{label, variant:\"primary\"|\"secondary\", action, actionParams?}",
-      "description": "Runs an action."
+      "props": "{label, variant:\"primary\"|\"secondary\"}",
+      "description": "Runs an action, named beside its props: \"on\":{\"press\":{\"action\", \"params\"?}}."
     },
     "Divider": {
       "props": "{}",

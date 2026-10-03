@@ -49,7 +49,15 @@ export type DurName =
   | 'theme-fade'
   | 'glow'
   | 'pip-loop'
-  | 'switch';
+  | 'switch'
+  | 'chat-rise'
+  | 'genui-enter'
+  | 'follow-in'
+  | 'version-swap'
+  | 'popover-in'
+  | 'chip-pop';
+
+export type StaggerName = 'intro' | 'settings' | 'follow';
 
 /** Used when a token is unreadable (no DOM, or a theme that omits it).
  *  Mirrors themes/base.css; keep the two in step. */
@@ -61,7 +69,9 @@ const EASE_FALLBACK: Record<EaseName, string> = {
   reveal: 'cubic-bezier(0.65, 0, 0.35, 1)',
 };
 
-const DUR_FALLBACK: Record<DurName, number> = {
+/** Mirrors the `--dur-*` values in themes/base.css; a test reads that file
+ *  and fails when the two drift apart. */
+export const DUR_FALLBACK: Record<DurName, number> = {
   fast: 90,
   default: 180,
   slow: 320,
@@ -85,6 +95,19 @@ const DUR_FALLBACK: Record<DurName, number> = {
   glow: 1400,
   'pip-loop': 1600,
   switch: 280,
+  'chat-rise': 560,
+  'genui-enter': 420,
+  'follow-in': 460,
+  'version-swap': 360,
+  'popover-in': 220,
+  'chip-pop': 360,
+};
+
+/** Mirrors the `--stagger-*` values in themes/base.css. */
+export const STAGGER_FALLBACK: Record<StaggerName, number> = {
+  intro: 80,
+  settings: 30,
+  follow: 70,
 };
 
 let cacheTheme: string | null = null;
@@ -130,6 +153,11 @@ export function ease(name: EaseName): string {
 
 export function dur(name: DurName): number {
   return parseDuration(readToken(`--dur-${name}`)) ?? DUR_FALLBACK[name];
+}
+
+/** The delay between consecutive elements of a staggered entrance, ms. */
+export function staggerStep(name: StaggerName): number {
+  return parseDuration(readToken(`--stagger-${name}`)) ?? STAGGER_FALLBACK[name];
 }
 
 /** True when motion should be skipped right now: the user asked for reduced

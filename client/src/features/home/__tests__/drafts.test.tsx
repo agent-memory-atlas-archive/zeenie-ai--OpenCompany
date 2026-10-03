@@ -110,6 +110,30 @@ describe('DraftsSection', () => {
     renderSection(true);
     expect(await screen.findByText('Sends when you resume Maya.')).toBeInTheDocument();
   });
+
+  // The card leaves the page the moment the owner decides, before the
+  // server answers; the confirmation must still show.
+  it('confirms a send after the card has gone', async () => {
+    renderSection();
+    fireEvent.click(await screen.findByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(pillToast).toHaveBeenCalledWith('Sent to Priya'));
+    expect(screen.queryByRole('button', { name: 'Send' })).toBeNull();
+  });
+
+  it('confirms a discard after the card has gone', async () => {
+    renderSection();
+    fireEvent.click(await screen.findByRole('button', { name: 'Discard' }));
+    await waitFor(() => expect(pillToast).toHaveBeenCalledWith('Draft discarded', { tone: 'info' }));
+  });
+
+  it('says a send waits for Resume when the server holds it', async () => {
+    renderSection(true);
+    sendRequest.mockImplementation(async (type: string) =>
+      type === 'decide_approval' ? { success: true, will_send_on_resume: true } : { success: true, approvals: [] },
+    );
+    fireEvent.click(await screen.findByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(pillToast).toHaveBeenCalledWith('Sends when you resume Maya'));
+  });
 });
 
 describe('applyApprovalLifecycle', () => {

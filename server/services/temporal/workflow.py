@@ -42,6 +42,17 @@ CONDITIONAL_EDGES_PATCH = "machina-conditional-edges-v1"
 # it (which end without that activity) still replay.
 RUN_RECORD_PATCH = "machina-run-record-v1"
 
+# A run that the owner's chat message spawned claims its chat run when it
+# starts and finishes it at its end (services/chat/ledger.py), so Talk and
+# the editor's chat follow the answer while it is worked on. Gated: the two
+# activities are new commands.
+CHAT_RUN_PATCH = "machina-chat-run-v1"
+# The source and type services/chat/events.py gives the owner's message. A
+# chat run id is trusted only from an event with both, never from what
+# another producer put in its event data.
+CHAT_MESSAGE_SOURCE = "opencompany://services/chat"
+CHAT_MESSAGE_TYPE = "com.opencompany.chat.message.received"
+
 # Config handles - nodes connecting via these are config nodes (not executed)
 # AI Agent handles: input-context, input-tools, input-model, input-task, input-teammates
 # Zeenie handles: input-skill, input-tools
@@ -304,6 +315,75 @@ class MachinaWorkflow:
         except Exception as exc:  # noqa: BLE001 — cosmetic relative to the run result
             workflow.logger.warning(f"run-record activity failed (non-fatal): {exc}")
 
+    @staticmethod
+    def _chat_run_id(nodes: List[Dict[str, Any]]) -> Optional[str]:
+        """The chat run the firing trigger's event started, or None.
+
+        Read from the event envelope the trigger listener attached to the
+        trigger's output, and only when the chat service produced it. Depends
+        on the workflow input alone, so it is deterministic."""
+        for node in nodes:
+            if not node.get("_pre_executed"):
+                continue
+            output = node.get("_trigger_output")
+            if not isinstance(output, dict) or output.get("not_triggered"):
+                continue
+            envelope = output.get("_event_envelope")
+            if not isinstance(envelope, dict):
+                continue
+            if envelope.get("source") != CHAT_MESSAGE_SOURCE or envelope.get("type") != CHAT_MESSAGE_TYPE:
+                continue
+            data = envelope.get("data")
+            run_id = data.get("run_id") if isinstance(data, dict) else None
+            if isinstance(run_id, str) and run_id:
+                return run_id
+        return None
+
+    async def _start_chat_run(self, run_id: str, session_id: str) -> Optional[Dict[str, Any]]:
+        """Claim the chat run; returns the run scope node contexts carry, or
+        None when this run does not hold it (another chat trigger in the
+        graph claimed it, or it ended) and runs untracked."""
+        info = workflow.info()
+        try:
+            claimed = await workflow.execute_activity(
+                "chat_run.start",
+                {"run_id": run_id, "temporal_workflow_id": info.workflow_id, "temporal_run_id": info.run_id},
+                start_to_close_timeout=timedelta(seconds=30),
+                retry_policy=DEFAULT_ACTIVITY_RETRY,
+            )
+        except Exception as exc:  # noqa: BLE001 — the answer matters more than its tracking
+            workflow.logger.warning(f"chat run start failed (running untracked): {exc}")
+            return None
+        if not (isinstance(claimed, dict) and claimed.get("claimed")):
+            return None
+        return {"run_id": run_id, "session_id": session_id}
+
+    async def _finish_chat_run(self, run_scope: Dict[str, Any], success: bool, errors: List[Dict]) -> None:
+        """End the claimed chat run with the run's outcome. Non-fatal: the
+        watchdog ends a run whose finish never arrived."""
+        info = workflow.info()
+        payload: Dict[str, Any] = {
+            "run_id": run_scope["run_id"],
+            "temporal_workflow_id": info.workflow_id,
+            "temporal_run_id": info.run_id,
+            "success": success,
+        }
+        if errors:
+            failure = errors[0] or {}
+            payload["error"] = str(failure.get("error") or "run_failed")[:500]
+            for key in ("hint", "requires_user_action"):
+                if failure.get(key) is not None:
+                    payload[key] = failure[key]
+        try:
+            await workflow.execute_activity(
+                "chat_run.finish",
+                payload,
+                start_to_close_timeout=timedelta(seconds=30),
+                retry_policy=DEFAULT_ACTIVITY_RETRY,
+            )
+        except Exception as exc:  # noqa: BLE001 — cosmetic relative to the run result
+            workflow.logger.warning(f"chat run finish failed (non-fatal): {exc}")
+
     @workflow.signal
     async def on_event(self, event_payload: Dict[str, Any]) -> None:
         """Wave 12 A7: receive an event from ``services.events.dispatch.emit``.
@@ -490,6 +570,15 @@ class MachinaWorkflow:
 
         workflow.logger.info(f"Pre-executed: {pre_executed_count}, To execute: {len(node_map) - pre_executed_count}")
 
+        # The owner's chat message started a chat run: claim it. The patch
+        # check comes after the eligibility test, which reads only the
+        # workflow input, so it is deterministic.
+        run_scope: Optional[Dict[str, Any]] = None
+        chat_run_id = self._chat_run_id(nodes)
+        if chat_run_id is not None and workflow.patched(CHAT_RUN_PATCH):
+            await self._wait_until_resumed()
+            run_scope = await self._start_chat_run(chat_run_id, session_id)
+
         # 5. Retry policy for node activities. Wave 12 D1: imported
         # shared constant declares ``non_retryable_error_types`` so
         # NodeUserError fails fast instead of burning 3 retries on
@@ -596,6 +685,8 @@ class MachinaWorkflow:
                     )
                 if "user_id" in workflow_data:
                     context["user_id"] = workflow_data.get("user_id")
+                if run_scope is not None:
+                    context["run_scope"] = dict(run_scope)
                 context["temporal_worker_pool_enabled"] = bool(
                     frozen_routing.get("worker_pool_enabled")
                 )
@@ -722,6 +813,8 @@ class MachinaWorkflow:
         # Build final result
         success = len(errors) == 0 and len(completed) == len(node_map)
 
+        if run_scope is not None:
+            await self._finish_chat_run(run_scope, success, errors)
         if errors:
             await self._pause_deployment_on_failure(workflow_data, nodes, errors)
         await self._record_run_completion(workflow_data, nodes, success)

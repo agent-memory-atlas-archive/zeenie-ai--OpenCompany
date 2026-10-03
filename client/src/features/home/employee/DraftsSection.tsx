@@ -15,7 +15,6 @@ import { cn } from '@/lib/utils';
 import { useApprovalsQuery, useDecideApproval, type Approval } from '../approvals/data';
 import { DraftMessagePreview } from '../genui';
 import { MicroLabel } from '../ui/primitives';
-import { pillToast } from '../ui/pillToast';
 
 function DraftCard({ approval, employeeName, paused }: { approval: Approval; employeeName: string; paused: boolean }) {
   const decide = useDecideApproval();
@@ -25,16 +24,7 @@ function DraftCard({ approval, employeeName, paused }: { approval: Approval; emp
   const tooLong = trimmed.length > approval.max_length;
   const busy = decide.isPending;
 
-  const send = () =>
-    decide.mutate(
-      { approval, decision: 'send', text: editing ? trimmed : undefined },
-      {
-        onSuccess: (result) =>
-          pillToast(
-            result.will_send_on_resume ? `Sends when you resume ${employeeName}` : `Sent to ${approval.recipient_label || approval.recipient}`,
-          ),
-      },
-    );
+  const send = () => decide.mutate({ approval, decision: 'send', text: editing ? trimmed : undefined, employeeName });
 
   return (
     <div data-approval={approval.approval_id} className="flex flex-col gap-2.5">
@@ -68,7 +58,7 @@ function DraftCard({ approval, employeeName, paused }: { approval: Approval; emp
         <Button
           variant="quiet"
           disabled={busy}
-          onClick={() => decide.mutate({ approval, decision: 'discard' }, { onSuccess: () => pillToast('Draft discarded', { tone: 'info' }) })}
+          onClick={() => decide.mutate({ approval, decision: 'discard', employeeName })}
           className="h-8.5 rounded-row border-border-default px-3.5 font-semibold text-fg-default"
         >
           Discard

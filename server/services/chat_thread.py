@@ -14,13 +14,18 @@ Talk, and the editor shows it in its chat pane.
 - ``record_chat_message``: add a row stamped with the session's live
   generation (``root_execution_id``, as ``chat_execution_id`` says; the
   editor's chat reads one generation, so a row without it would never show
-  there), then announce it.
-- ``clear_chat_thread``: delete the session's rows, every generation, then
-  announce it when there were any.
-- ``clear_chat_session``: the owner's Clear. The thread goes, and the
-  listeners registered with ``register_chat_cleared_listener`` forget what
-  it held: the Context plugin clears the workflow's conversations, so the
-  agent starts over with the chat.
+  there), then announce it. A reply names its chat run (``run_id``) and is
+  saved under the run's reply id, so a retried save writes it once. The
+  owner's messages are written with their runs by ``services/chat/ledger.py``,
+  which announces them the same way.
+- ``clear_chat_thread``: delete the session's rows, every generation, and
+  its chat runs, then announce it when there were any. Subscribers watching
+  a run that was still live are told it ended (``reset``).
+- ``clear_chat_session``: the owner's Clear. The thread goes (live runs end
+  with ``cleared``), and the listeners registered with
+  ``register_chat_cleared_listener`` forget what it held: the Context plugin
+  clears the workflow's conversations, so the agent starts over with the
+  chat.
 
 A workflow's thread lives as long as its generation and its workflow. A
 Reset (every restart, Home's Apply and Turn on Talk included) clears it
@@ -43,7 +48,7 @@ query that matches nothing on every message (the same reason as
 
 from __future__ import annotations
 
-from typing import Any, Awaitable, Callable, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from core.logging import get_logger
 from services.events.envelope import WorkflowEvent
@@ -100,7 +105,9 @@ def chat_updated(*, session_id: str, role: Optional[str]) -> WorkflowEvent:
     )
 
 
-async def _announce(session_id: str, role: Optional[str]) -> None:
+async def announce_chat_updated(session_id: str, role: Optional[str]) -> None:
+    """Send ``chat.updated`` for a session: a message was added (``role``)
+    or the thread was cleared (``role`` None). Never raises."""
     from services.status_broadcaster import get_status_broadcaster
 
     event = chat_updated(session_id=session_id, role=role)
@@ -110,24 +117,48 @@ async def _announce(session_id: str, role: Optional[str]) -> None:
         logger.warning("chat.updated broadcast failed", session_id=session_id, exc_info=True)
 
 
-async def record_chat_message(database: Any, session_id: str, role: str, message: str) -> bool:
+async def record_chat_message(
+    database: Any,
+    session_id: str,
+    role: str,
+    message: str,
+    *,
+    uid: Optional[str] = None,
+    run_id: Optional[str] = None,
+    kind: str = "text",
+    status: str = "complete",
+    parts: Optional[Dict[str, Any]] = None,
+) -> Optional[Dict[str, Any]]:
     """Add ``message`` to the thread, in the session's live generation, and
-    announce it. False when the row could not be saved (nothing is
-    announced)."""
+    announce it. Returns the saved row, or None when it could not be saved
+    (nothing is announced). A ``uid`` already saved returns that row; the
+    repeated announcement only makes clients read the thread again."""
     control = await database.get_latest_workflow_control(session_id)
-    saved = await database.add_chat_message(session_id, role, message, execution_id=chat_execution_id(control))
+    saved = await database.add_chat_message(
+        session_id, role, message, execution_id=chat_execution_id(control),
+        uid=uid, run_id=run_id, kind=kind, status=status, parts=parts,
+    )
     if saved:
-        await _announce(session_id, role)
-    return bool(saved)
+        await announce_chat_updated(session_id, role)
+    return saved or None
 
 
-async def clear_chat_thread(database: Any, session_id: str) -> int:
-    """Delete the thread, every generation of it, and announce it when there
-    was anything to delete (a Reset runs one clear per chat node). Returns
-    the rows deleted."""
+async def clear_chat_thread(database: Any, session_id: str, *, reason: str = "reset") -> int:
+    """Delete the thread, every generation of it, with its chat runs, and
+    announce it when there was anything to delete (a Reset runs one clear
+    per chat node). Runs still live end for their subscribers with
+    ``reason`` as the error code. Returns the messages deleted."""
+    from services.chat import ledger
+
+    try:
+        live = await ledger.live_runs(database, session_id)
+    except Exception:
+        logger.warning("Could not read live chat runs before a clear", session_id=session_id, exc_info=True)
+        live = []
     count = await database.clear_chat_messages(session_id)
+    ledger.publish_cleared(live, code=reason)
     if count:
-        await _announce(session_id, None)
+        await announce_chat_updated(session_id, None)
     return count
 
 
@@ -145,7 +176,7 @@ async def clear_chat_session(database: Any, session_id: str) -> int:
     session has listeners to tell (``"default"`` is no workflow's). A
     failing listener is logged and never fails the clear. Returns the rows
     deleted."""
-    count = await clear_chat_thread(database, session_id)
+    count = await clear_chat_thread(database, session_id, reason="cleared")
     if session_id == DEFAULT_SESSION:
         return count
     for listener in list(_CLEARED_LISTENERS):
@@ -165,6 +196,7 @@ __all__ = [
     "DEFAULT_SESSION",
     "WIRE_KEY",
     "ChatClearedListener",
+    "announce_chat_updated",
     "chat_execution_id",
     "chat_updated",
     "clear_chat_session",

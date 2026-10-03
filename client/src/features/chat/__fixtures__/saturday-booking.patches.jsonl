@@ -1,0 +1,13 @@
+{"op":"add","path":"/root","value":"root"}
+{"op":"add","path":"/state","value":{"slot":"s2","service":"Colour","remind":true,"note":""}}
+{"op":"add","path":"/elements/root","value":{"type":"Stack","props":{"gap":"md"},"children":["slots","tooLong","details","acts"]}}
+{"op":"add","path":"/elements/slots","value":{"type":"SlotPicker","props":{"label":"Saturday 28 Sep","hint":"Free 2-hour slots","value":{"$bindState":"/slot"},"options":[{"id":"s1","time":"12:00","detail":"Jordan"},{"id":"s2","time":"14:30","detail":"Ana","recommended":true},{"id":"s3","time":"16:30","detail":"Ana","unavailable":true,"note":"Only 1h free"},{"id":"s4","time":"17:00","detail":"Jordan"}]}}}
+{"op":"add","path":"/elements/tooLong","value":{"type":"Callout","props":{"tone":"warning","text":"Highlights take about 3 hours. Only the 12:00 slot with Jordan is long enough."},"visible":{"$state":"/service","eq":"Highlights"}}}
+{"op":"add","path":"/elements/details","value":{"type":"Card","props":{"title":"Booking details","description":"The WhatsApp draft below updates as you change these."},"children":["svc","rem","remWhen","note"]}}
+{"op":"add","path":"/elements/svc","value":{"type":"Select","props":{"label":"Service","value":{"$bindState":"/service"},"options":["Colour","Colour & cut","Highlights"]}}}
+{"op":"add","path":"/elements/rem","value":{"type":"Toggle","props":{"label":"Remind her the day before","checked":{"$bindState":"/remind"}}}}
+{"op":"add","path":"/elements/remWhen","value":{"type":"Text","props":{"text":"Goes out on WhatsApp at 6pm on Friday."},"visible":{"$state":"/remind"}}}
+{"op":"add","path":"/elements/note","value":{"type":"TextField","props":{"label":"Note for the stylist","value":{"$bindState":"/note"},"placeholder":"e.g. patch test done in June"}}}
+{"op":"add","path":"/elements/acts","value":{"type":"Row","props":{"gap":"sm"},"children":["hold","sun"]}}
+{"op":"add","path":"/elements/hold","value":{"type":"Button","props":{"label":"Hold this slot for 15 min","variant":"primary"},"on":{"press":{"action":"holdSlot","params":{"slot":{"$state":"/slot"}}}}}}
+{"op":"add","path":"/elements/sun","value":{"type":"Button","props":{"label":"Show Sunday instead"},"on":{"press":{"action":"ask","params":{"text":"What does Sunday look like?"}}}}}

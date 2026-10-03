@@ -181,14 +181,21 @@ export default defineConfig(({ mode }) => {
           //   vendor-query    — TanStack Query + persistence
           //   vendor-markdown — markdown rendering stack (chat / docs panels)
           //   vendor-three    — WebGL for Normal mode's orb, loaded on demand
+          //   vendor-genui    — json-render, for generated UIs (the hire
+          //                     setup screen), loaded with the first one
           //   vendor-misc     — small but heavyweight utilities
           // Anything not listed falls into the default route/entry chunks.
+          // A listed module's unlisted dependencies join its chunk, so zod
+          // (json-render's one dependency, used eagerly by forms and
+          // stores) is listed with the form runtime: left out, it would
+          // move into vendor-genui and drag that chunk into the first load.
           manualChunks: {
             'vendor-react': [
               'react',
               'react-dom',
               'react-hook-form',
               '@hookform/resolvers',
+              'zod',
             ],
             'vendor-flow': ['reactflow'],
             'vendor-radix': ['radix-ui'],
@@ -208,6 +215,7 @@ export default defineConfig(({ mode }) => {
               '@uiw/react-json-view',
             ],
             'vendor-three': ['three'],
+            'vendor-genui': ['@json-render/core', '@json-render/react'],
             'vendor-misc': [
               'idb-keyval',
               'fuzzysort',

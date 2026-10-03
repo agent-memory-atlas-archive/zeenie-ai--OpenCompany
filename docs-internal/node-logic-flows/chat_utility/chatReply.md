@@ -48,8 +48,10 @@ like `console`. It does not carry console's `isConsoleSink` hint.
 ```ts
 // ChatReplyOutput (model_config extra="allow")
 {
-  posted: boolean;   // false when there was nothing to post
-  message?: string;  // the trimmed text, when posted
+  posted: boolean;      // false when there was nothing to post
+  message?: string;     // the trimmed text, when posted
+  message_id?: string;  // the saved message's id
+  run_id?: string;      // the chat run it answered, in a run the owner's message started
 }
 ```
 
@@ -62,7 +64,12 @@ flowchart TD
   C -- yes --> D[Return posted=false: nothing written or broadcast]
   C -- no --> E{ctx.workflow_id set?}
   E -- no --> F[Raise NodeUserError: save the workflow first]
-  E -- yes --> G[services.chat_thread.record_chat_message<br/>session = workflow id, role = assistant]
+  E -- yes --> R{run_scope in the context?}
+  R -- yes --> S{the chat run still exists?}
+  S -- no --> T[Return posted=false: the conversation was reset or cleared]
+  S -- yes --> U[services.chat.ledger.post_reply<br/>id a_run id, linked to the run]
+  U --> J
+  R -- no --> G[services.chat_thread.record_chat_message<br/>session = workflow id, role = assistant]
   G --> H{row saved?}
   H -- no --> I[Raise RuntimeError: the reply could not be saved]
   H -- yes --> J[broadcast chat.updated]
@@ -79,6 +86,15 @@ flowchart TD
   nothing to send) posts nothing and succeeds with `posted: false`. The edges
   the builders wire into the node carry the same `result.response neq NO_REPLY`
   condition, so normally the node does not run then at all.
+- **Chat runs**: in a run the owner's chat message started, MachinaWorkflow
+  passes `run_scope {run_id, session_id}` in the context
+  ([chat_protocol.md → Runs](../../chat_protocol.md#runs)). The reply is then
+  saved through `services.chat.ledger.post_reply` as that run's answer: the
+  first reply takes the run's reply id `a_<run id>`, another reply node in the
+  same run `a_<run id>.<n>`, and a retried step returns the row it saved. When
+  the run no longer exists (a Reset or the owner's Clear removed the
+  conversation it answered) nothing is posted and the node succeeds with
+  `posted: false`.
 - **Generation**: `record_chat_message` stamps the row with the latest
   control's `root_execution_id` (`chat_thread.chat_execution_id`; none when
   nothing was started since the last Reset). The editor's chat pane reads the
@@ -107,8 +123,9 @@ flowchart TD
 
 - **Database writes**: one `chat_messages` row: `session_id` = the workflow id,
   `role` = `assistant`, `message` = the trimmed text, `execution_id` = the
-  live generation. On a Reset or a workflow delete, every row of the
-  workflow's thread is deleted.
+  live generation, appended after the thread's last message; in a chat run,
+  `run_id` and `uid` name the run and its reply. On a Reset or a workflow
+  delete, every row of the workflow's thread is deleted, with its chat runs.
 - **Broadcasts**: `chat.updated` (CloudEvents `com.opencompany.chat.updated`,
   data `{workflow_id, session_id, role: "assistant"}`), sent directly through
   the status broadcaster, not `services.events.dispatch.emit`. Home's thread
@@ -120,7 +137,7 @@ flowchart TD
 ## External Dependencies
 
 - **Credentials**: none.
-- **Services**: `services.chat_thread` (`record_chat_message`), the database
+- **Services**: `services.chat_thread` (`record_chat_message`), `services.chat.ledger` (`get_run`, `post_reply`), the database
   (`services.plugin.deps.get_database`), `StatusBroadcaster`.
 - **Python packages**: stdlib only (`json`).
 - **Environment variables**: none.

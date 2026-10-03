@@ -15,7 +15,6 @@ import asyncio
 import uuid
 import weakref
 from typing import Dict, Any, Callable, Awaitable, Optional, Set
-from datetime import datetime, timezone
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from services.status_broadcaster import get_status_broadcaster
@@ -455,6 +454,11 @@ async def handle_execute_node(data: Dict[str, Any], websocket: WebSocket) -> Dic
         )
         if key in data
     }
+    # A chat run's scope links what a node produces to the owner's chat, so
+    # only the worker relaying MachinaWorkflow's context may set it.
+    socket_scope = getattr(websocket, "scope", None) or {}
+    if "run_scope" in data and isinstance(socket_scope, dict) and socket_scope.get("path") == "/ws/internal":
+        invocation_extras["run_scope"] = data["run_scope"]
     user_id = execution_principal(data, websocket)
 
     await broadcaster.update_node_status(
@@ -1071,113 +1075,11 @@ async def handle_get_ai_models(data: Dict[str, Any], websocket: WebSocket) -> Di
 
 
 # ============================================================================
-# Chat Message Handler (for chatTrigger nodes)
+# Chat — moved to services/chat/handlers.py with the chat run runtime
 # ============================================================================
-
-
-@ws_handler("message")
-async def handle_send_chat_message(data: Dict[str, Any], websocket: WebSocket) -> Dict[str, Any]:
-    """Send a chat message to a workflow's chatTrigger nodes, and keep it in
-    the workflow's thread (services/chat_thread.py).
-
-    A workflow's session (``session_id`` = its id) takes a message only
-    while a deployment would read it: the response's ``delivery`` is
-    ``"now"`` while it runs, ``"queued"`` while it is paused (it runs on
-    Resume). Otherwise the answer is ``not_running`` and nothing is saved
-    or sent. Session ``"default"`` (no workflow open) is saved and
-    broadcast to every deployment, as it always was.
-    """
-    # Wave 12 B7: route through chat_trigger plugin _events.py wrapper —
-    # the chat_message_received event wire shape lives with the plugin,
-    # not in this central WS router.
-    from nodes.trigger.chat_trigger._events import dispatch_chat_message_received
-    from services.chat_thread import delivery_for, record_chat_message
-
-    message = data["message"]
-    role = data.get("role", "user")
-    session_id = data.get("session_id", "default")
-    timestamp = data.get("timestamp") or datetime.now(timezone.utc).isoformat()
-
-    # Chat is inherently workflow-scoped: the panel is bound to ONE
-    # workflow and its ``session_id`` IS that workflow's id ("default"
-    # only when no workflow is open — that legacy session keeps broadcast
-    # semantics). The scope rides the envelope's ``workflow_id`` so
-    # ``dispatch.emit`` signals only this workflow's consumers via the
-    # EventWorkflowId Search Attribute; without it, one workflow's chat
-    # message fired EVERY deployed workflow's chatTrigger. The scoping
-    # decision lives here (core router) and the narrowing in core
-    # dispatch — the plugin factory only carries the field.
-    workflow_scope = session_id if session_id and session_id != "default" else None
-
-    database = container.database()
-    delivery = None
-    if workflow_scope is not None:
-        delivery = delivery_for(await database.get_latest_workflow_control(session_id))
-        if delivery is None:
-            return {"success": False, "error": "not_running"}
-
-    # Kept in the thread, stamped with the live generation.
-    await record_chat_message(database, session_id, role, message)
-
-    # Build event data matching chatTrigger output schema
-    event_data = {"message": message, "timestamp": timestamp, "session_id": session_id}
-
-    # Dispatch via canary CloudEvents path — Visibility-query Signal
-    # fan-out to running TriggerListenerWorkflow consumers + in-process
-    # WS broadcast on ``chat_message_received``.
-    await dispatch_chat_message_received(event_data, workflow_id=workflow_scope)
-
-    logger.info(f"[ChatMessage] Dispatched canary event for session={session_id}")
-
-    response = {"success": True, "message": "Chat message sent", "timestamp": timestamp}
-    if delivery is not None:
-        response["delivery"] = delivery
-    return response
-
-
-@ws_handler()
-async def handle_get_chat_messages(data: Dict[str, Any], websocket: WebSocket) -> Dict[str, Any]:
-    """A session's messages, oldest first, the newest ``limit`` of them:
-    ``{id, role, message, timestamp, run_key}``. ``run_key`` is the
-    generation the message was written in. The live generation's only,
-    unless ``all_generations`` (Home's thread, which also shows a message
-    from before a Start). A Reset clears a workflow's thread (the chat
-    nodes' Reset hook), so generations rarely mix."""
-    session_id = data.get("session_id", "default")
-    limit = data.get("limit")  # Optional limit
-
-    database = container.database()
-    if data.get("all_generations"):
-        rows = await database.get_chat_messages(session_id, limit)
-    else:
-        control = await database.get_latest_workflow_control(session_id)
-        if control is not None and control.status == "reset":
-            rows = []
-        else:
-            rows = await database.get_chat_messages(
-                session_id, limit,
-                execution_id=control.root_execution_id if control is not None else None,
-            )
-    messages = [
-        {"id": row["id"], "role": row["role"], "message": row["message"], "timestamp": row["timestamp"], "run_key": row["execution_id"]}
-        for row in rows
-    ]
-
-    return {"success": True, "messages": messages, "session_id": session_id}
-
-
-@ws_handler()
-async def handle_clear_chat_messages(data: Dict[str, Any], websocket: WebSocket) -> Dict[str, Any]:
-    """Clear a session's chat, every generation of it. For a workflow's
-    session the agent forgets the conversation too
-    (``services.chat_thread.clear_chat_session``: the Context plugin clears
-    the workflow's conversations), so it starts over with the chat."""
-    from services.chat_thread import clear_chat_session
-
-    session_id = data.get("session_id", "default")
-    count = await clear_chat_session(container.database(), session_id)
-
-    return {"success": True, "message": f"Cleared {count} chat messages", "cleared_count": count}
+# send_chat_message / get_chat_messages / chat_subscribe / chat_unsubscribe /
+# get_chat_run / clear_chat_messages / save_chat_message self-register via
+# services/chat/__init__.py.
 
 
 @ws_handler()
@@ -1242,26 +1144,6 @@ async def handle_clear_console_logs(data: Dict[str, Any], websocket: WebSocket) 
         "cleared_count": count,
         "workflow_id": workflow_id,
     }
-
-
-@ws_handler("message", "role")
-async def handle_save_chat_message(data: Dict[str, Any], websocket: WebSocket) -> Dict[str, Any]:
-    """Save a single chat message (used for assistant responses)."""
-    from services.chat_thread import record_chat_message
-
-    session_id = data.get("session_id", "default")
-    success = await record_chat_message(container.database(), session_id, data["role"], data["message"])
-
-    return {"success": success, "message": "Chat message saved" if success else "Failed to save chat message"}
-
-
-@ws_handler()
-async def handle_get_chat_sessions(data: Dict[str, Any], websocket: WebSocket) -> Dict[str, Any]:
-    """Get list of all chat sessions."""
-    database = container.database()
-    sessions = await database.get_chat_sessions()
-
-    return {"success": True, "sessions": sessions}
 
 
 # ============================================================================
@@ -1533,11 +1415,7 @@ MESSAGE_HANDLERS: Dict[str, MessageHandler] = {
     # via _resolve_handler() defined above.
     # Workflow storage operations — extracted to services/workflow_storage/handlers.py
     # (Wave 13.7); registered via ws_handler_registry on package import.
-    # Chat message (for chatTrigger nodes)
-    "send_chat_message": handle_send_chat_message,
-    "get_chat_messages": handle_get_chat_messages,
-    "clear_chat_messages": handle_clear_chat_messages,
-    "save_chat_message": handle_save_chat_message,
+    # Chat commands live in services/chat/handlers.py (registered on import).
     # Console logs (for Console nodes)
     "get_console_logs": handle_get_console_logs,
     "clear_console_logs": handle_clear_console_logs,

@@ -1,5 +1,6 @@
 import { buildApiUrl } from '../config/api';
 import type { AudioRef } from '../components/output/AudioPreview';
+import type { WorkspaceFileRef } from '../types/workspaceFiles';
 
 /**
  * Mirrors `MEDIA_MAX_UPLOAD_BYTES` in `server/services/media/limits.py`.
@@ -19,12 +20,14 @@ export class UploadError extends Error {}
  * every connected client, and then dies at Temporal's 2 MiB payload limit,
  * burning three retries on the way. A ~1.5 MB clip is already ~2 MB of base64.
  *
- * The reference that comes back is ~400 bytes.
+ * The reference that comes back is ~400 bytes: an `AudioRef` for audio, whose
+ * container the server probed, otherwise a plain file reference whose kind
+ * (image, video, document, file) is only a rendering hint.
  */
 export async function uploadToWorkspace(
   file: File,
   workflowId: string
-): Promise<AudioRef> {
+): Promise<AudioRef | WorkspaceFileRef> {
   if (!workflowId) {
     throw new UploadError('Save the workflow before uploading a file to it.');
   }

@@ -38,6 +38,18 @@ def test_app_names_come_from_every_place_a_reply_names_an_app():
     assert app_names(clean["reply"]) == ["WhatsApp", "Google Calendar"]
 
 
+def test_app_names_read_a_buttons_on_press_too():
+    shaped = next(case for case in _cases() if case["name"] == "json-render shape: on.press and checked")
+    assert app_names(shaped["reply"]) == ["WhatsApp", "Google Calendar"]
+    connect = (
+        '{"text":"x","spec":{"root":"b","elements":{"b":{"type":"Button","props":{"label":"Connect"},'
+        '"on":{"press":[{"action":"wave"},{"action":"connect_app","params":{"app":"Stripe"}}]}},'
+        '"h":{"type":"Button","props":{"label":"Hire","on":{"press":{"action":"hire_employee",'
+        '"params":{"trigger":{"kind":"app_event","app":"Gmail"},"sendsVia":"Slack"}}}}}}}}'
+    )
+    assert app_names(connect) == ["Stripe", "Gmail", "Slack"]
+
+
 def test_repair_closes_what_is_open():
     assert repair_json('{"a":{"b":[1,2') == {"a": {"b": [1]}}
     assert repair_json('{"a":"unterminated') is None

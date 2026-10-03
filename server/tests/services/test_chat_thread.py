@@ -1,9 +1,10 @@
 """A workflow's chat thread (services/chat_thread.py) and the chat
-WebSocket handlers built on it: rows carry the live generation, every
-insert and every clear that removed rows is announced on ``chat.updated``,
-a message reaches a workflow only while a deployment would read it, the
-generation is on every row, a Reset clears the thread through the chat
-nodes' Reset hook, and deleting the workflow deletes it."""
+WebSocket handlers built on it (services/chat/handlers.py): rows carry the
+live generation, every insert and every clear that removed rows is announced
+on ``chat.updated``, a message reaches a workflow only while a deployment
+would read it, the generation is on every row, a Reset clears the thread
+through the chat nodes' Reset hook, and deleting the workflow deletes it.
+Chat runs have their own tests in tests/services/chat/."""
 
 from __future__ import annotations
 
@@ -16,10 +17,9 @@ from types import SimpleNamespace
 
 import pytest
 
-import nodes.trigger.chat_trigger._events as chat_events
+import services.chat.handlers as chat_handlers
 import services.status_broadcaster as status_broadcaster
 from models.database import WorkflowControlExecution
-from routers import websocket as ws_router
 from services import chat_thread
 
 
@@ -59,15 +59,15 @@ def frames(monkeypatch):
 
 @pytest.fixture
 def router(monkeypatch, database, frames):
-    """The router's chat handlers on the test database, with the chat
-    trigger dispatch captured."""
+    """The chat handlers on the test database, with the chat trigger
+    dispatch captured."""
     dispatched: list = []
 
-    async def dispatch(event_data, *, workflow_id=None):
+    async def dispatch(event_data, *, workflow_id=None, event_id=None):
         dispatched.append((dict(event_data), workflow_id))
 
-    monkeypatch.setattr(ws_router, "container", SimpleNamespace(database=lambda: database))
-    monkeypatch.setattr(chat_events, "dispatch_chat_message_received", dispatch)
+    monkeypatch.setattr(chat_handlers, "container", SimpleNamespace(database=lambda: database))
+    monkeypatch.setattr(chat_handlers, "dispatch_chat_message_received", dispatch)
     # The Clear's listeners are whatever a test registers, never the plugins'.
     monkeypatch.setattr(chat_thread, "_CLEARED_LISTENERS", [])
     return SimpleNamespace(database=database, frames=frames, dispatched=dispatched)
@@ -123,7 +123,8 @@ def test_rows_belong_to_the_live_generation():
 
 async def test_a_recorded_message_is_stamped_and_announced(database, frames):
     await control(database, "7", "running", generation=2)
-    assert await chat_thread.record_chat_message(database, "7", "assistant", "Done.") is True
+    saved = await chat_thread.record_chat_message(database, "7", "assistant", "Done.")
+    assert saved["message"] == "Done." and saved["uid"].startswith("m_")
     [row] = await database.get_chat_messages("7")
     assert (row["role"], row["message"], row["execution_id"]) == ("assistant", "Done.", "gen-2")
     [frame] = frames
@@ -198,7 +199,7 @@ async def test_history_is_the_newest_rows_oldest_first_in_utc(database):
 
 
 async def send(message, session_id):
-    return await ws_router.handle_send_chat_message({"message": message, "session_id": session_id, "timestamp": "t"}, None)
+    return await chat_handlers.handle_send_chat_message({"message": message, "session_id": session_id, "timestamp": "t"}, None)
 
 
 async def test_a_workflow_that_is_not_running_takes_no_message(router):
@@ -216,13 +217,16 @@ async def test_a_message_goes_now_or_waits_for_resume(router, status, delivery):
     assert result["success"] is True and result["delivery"] == delivery and result["timestamp"] == "t"
     [row] = await router.database.get_chat_messages("7")
     assert (row["role"], row["message"], row["execution_id"]) == ("user", "Book Tuesday", "gen-3")
+    assert result["message_id"] == row["uid"]
+    # No chat trigger answers this graph, so the message starts no run.
+    assert result["run_id"] is None
     # Only this workflow's triggers hear it.
-    assert router.dispatched == [({"message": "Book Tuesday", "timestamp": "t", "session_id": "7"}, "7")]
+    assert router.dispatched == [({"message": "Book Tuesday", "timestamp": "t", "session_id": "7", "message_id": row["uid"]}, "7")]
     assert updates(router.frames) == [{"workflow_id": "7", "session_id": "7", "role": "user"}]
 
 
 async def test_the_default_session_keeps_its_old_behaviour(router):
-    result = await ws_router.handle_send_chat_message({"message": "hi"}, None)
+    result = await chat_handlers.handle_send_chat_message({"message": "hi"}, None)
     assert result["success"] is True and "delivery" not in result
     assert datetime.fromisoformat(result["timestamp"]).utcoffset() is not None
     assert [row["message"] for row in await router.database.get_chat_messages("default")] == ["hi"]
@@ -236,17 +240,20 @@ async def test_history_is_one_generation_unless_all_are_asked_for(router):
     await control(router.database, "7", "running", generation=2)
     await router.database.add_chat_message("7", "user", "after it", execution_id="gen-2")
 
-    live = await ws_router.handle_get_chat_messages({"session_id": "7"}, None)
+    live = await chat_handlers.handle_get_chat_messages({"session_id": "7"}, None)
     assert [message["message"] for message in live["messages"]] == ["after it"]
 
-    everything = await ws_router.handle_get_chat_messages({"session_id": "7", "all_generations": True, "limit": 200}, None)
+    everything = await chat_handlers.handle_get_chat_messages({"session_id": "7", "all_generations": True, "limit": 200}, None)
     assert [(m["role"], m["message"], m["run_key"]) for m in everything["messages"]] == [
         ("user", "before the restart", "gen-1"),
         ("assistant", "an answer", "gen-1"),
         ("user", "after it", "gen-2"),
     ]
-    assert all(isinstance(m["id"], int) and datetime.fromisoformat(m["timestamp"]).utcoffset() is not None for m in everything["messages"])
-    newest = await ws_router.handle_get_chat_messages({"session_id": "7", "all_generations": True, "limit": 2}, None)
+    assert all(
+        m["id"].startswith("m_") and isinstance(m["legacy_id"], int) and datetime.fromisoformat(m["timestamp"]).utcoffset() is not None
+        for m in everything["messages"]
+    )
+    newest = await chat_handlers.handle_get_chat_messages({"session_id": "7", "all_generations": True, "limit": 2}, None)
     assert [m["message"] for m in newest["messages"]] == ["an answer", "after it"]
 
 
@@ -254,8 +261,8 @@ async def test_after_a_reset_the_live_read_is_empty(router):
     # A row a Reset left (its graph had no chat node to clear it).
     await router.database.add_chat_message("7", "user", "kept", execution_id="gen-1")
     await control(router.database, "7", "reset", generation=1)
-    assert (await ws_router.handle_get_chat_messages({"session_id": "7"}, None))["messages"] == []
-    assert len((await ws_router.handle_get_chat_messages({"session_id": "7", "all_generations": True}, None))["messages"]) == 1
+    assert (await chat_handlers.handle_get_chat_messages({"session_id": "7"}, None))["messages"] == []
+    assert len((await chat_handlers.handle_get_chat_messages({"session_id": "7", "all_generations": True}, None))["messages"]) == 1
 
 
 async def test_the_owners_clear_lets_the_agent_forget_too(router):
@@ -272,23 +279,23 @@ async def test_the_owners_clear_lets_the_agent_forget_too(router):
     chat_thread.register_chat_cleared_listener(forget)  # registering twice is a no-op
     await router.database.add_chat_message("7", "user", "hello", execution_id="gen-1")
 
-    cleared = await ws_router.handle_clear_chat_messages({"session_id": "7"}, None)
+    cleared = await chat_handlers.handle_clear_chat_messages({"session_id": "7"}, None)
     assert cleared["cleared_count"] == 1
     assert await router.database.get_chat_messages("7") == []
     # A failing listener never fails the clear, nor stops the next one.
     assert heard == [(router.database, "7")]
 
     # The editor's "default" chat is no workflow's: nothing to forget.
-    await ws_router.handle_clear_chat_messages({"session_id": "default"}, None)
+    await chat_handlers.handle_clear_chat_messages({"session_id": "default"}, None)
     assert heard == [(router.database, "7")]
 
 
 async def test_save_and_clear_go_through_the_thread(router):
     await control(router.database, "7", "running", generation=4)
-    saved = await ws_router.handle_save_chat_message({"message": "An answer", "role": "assistant", "session_id": "7"}, None)
+    saved = await chat_handlers.handle_save_chat_message({"message": "An answer", "role": "assistant", "session_id": "7"}, None)
     assert saved["success"] is True
     [row] = await router.database.get_chat_messages("7")
     assert row["execution_id"] == "gen-4"
-    cleared = await ws_router.handle_clear_chat_messages({"session_id": "7"}, None)
+    cleared = await chat_handlers.handle_clear_chat_messages({"session_id": "7"}, None)
     assert cleared["cleared_count"] == 1
     assert [update["role"] for update in updates(router.frames)] == ["assistant", None]

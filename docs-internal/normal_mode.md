@@ -19,7 +19,7 @@ up in Home too, with details derived from their graph.
 | Setup-screen pipeline (parse, normalise, render) | [client/src/features/home/genui/](../client/src/features/home/genui/) |
 | Employees service (list, setup, hire, start, run records) | [server/services/employees/](../server/services/employees/) |
 | Approvals (the "ask me first" step) | [server/services/approvals/](../server/services/approvals/), node [approvalGate](./node-logic-flows/workflow_triggers/approvalGate.md) |
-| Talk (the chat thread and the talk line) | [server/services/chat_thread.py](../server/services/chat_thread.py), [services/employees/talk.py](../server/services/employees/talk.py), node [chatReply](./node-logic-flows/chat_utility/chatReply.md) |
+| Talk (the chat thread and the talk line) | [server/services/chat_thread.py](../server/services/chat_thread.py), chat runs in [server/services/chat/](../server/services/chat/) ([chat_protocol.md](./chat_protocol.md)), [services/employees/talk.py](../server/services/employees/talk.py), node [chatReply](./node-logic-flows/chat_utility/chatReply.md) |
 | Growing a saved employee (Turn on Talk, the Agent Builder, Apply) | [server/services/graph_build.py](../server/services/graph_build.py), [services/employees/policy.py](../server/services/employees/policy.py), [services/workflow_storage/mutate.py](../server/services/workflow_storage/mutate.py), [services/deployment/restart.py](../server/services/deployment/restart.py), node [agentBuilder](./node-logic-flows/ai_tools/agentBuilder.md) |
 | Built-in skills offered to new hires (Settings > Skills > Discover) | [server/skills/employee/](../server/skills/employee/) |
 
@@ -239,22 +239,33 @@ still holds that job as written, the chip shows as picked with the starter's
 summary and **Hire now** (see [One-click starters](#one-click-starters)).
 While the model writes, the draft panel shows one honest line, "Writing their
 setup…", with the time so far and Cancel, and after `SLOW_AFTER_SECONDS` a
-note that some models take a few minutes. The screen's layout JSON is shown
-in development builds only.
+note that some models take a few minutes. Development builds also show the
+screen's spec and its patch stream (`spec.json` / `patches.jsonl`).
 
-The reply is a flat JSON UI spec. The client parses, repairs and normalises it
-and renders it from a fixed component catalogue
-([genui/](../client/src/features/home/genui/): `catalog.ts`, `parse.ts`,
-`normalize.ts`, `expressions.ts`, `render.tsx`). The normaliser keeps the
-root a vertical stack, enforces a tree, guarantees one Hire button, one
-change button, the "Ask me before sending anything" toggle (on by default)
-and one `Schedule` (below), and caps sizes. The server mirrors the catalogue in
+The reply is a flat JSON UI spec in json-render's shape (catalogue
+`spec_version` 2): a Toggle binds `checked`, and a Button names its action in
+the element's `on.press` (`{action, params}`). The client parses, repairs and
+normalises it ([genui/](../client/src/features/home/genui/): `catalog.ts`,
+`parse.ts`, `normalize.ts`, `expressions.ts`) and json-render draws it from a
+fixed component catalogue (`registry.ts`, `views.tsx`, `HireScreen.tsx`,
+loaded lazily so json-render stays out of Home's first chunk). The normaliser
+still reads the older shape a model may write (a Toggle's `value`, a
+Button's `action` / `actionParams` props), keeps the root a vertical stack,
+enforces a tree, guarantees one Hire button, one change button, the "Ask me
+before sending anything" toggle (on by default) and one `Schedule` (below),
+caps sizes, and drops what json-render does not guard: any path through
+`__proto__`, `constructor` or `prototype`, and `watch`, `repeat`, `slots`,
+`$computed` and an action's `confirm`. That glue is shared with the chat's
+generated replies in [lib/jsonRender/](../client/src/lib/jsonRender/)
+(sanitising, the per-element guard that reads props through the catalogue's
+forgiving schema, the paced reveal, the guarded state store). The server
+mirrors the catalogue in
 [config/genui_catalog.json](../server/config/genui_catalog.json);
 `server/tests/test_genui_catalog_sync.py` keeps the two in step, and a shared
-corpus of bad model replies (`genui/__fixtures__/replies.json`) is parsed the
-same way on both sides. Only what `genui/index.ts` exports (`HireDraftPanel`,
-`useHireComposer`, `DraftMessagePreview`) leaves the folder: ESLint refuses
-imports of its internal modules.
+corpus of model replies in both shapes (`genui/__fixtures__/replies.json`) is
+parsed the same way on both sides. Only what `genui/index.ts` exports
+(`HireDraftPanel`, `useHireComposer`, `useStarterHire`, `DraftMessagePreview`)
+leaves the folder: ESLint refuses imports of its internal modules.
 
 **When they work.** Every screen shows one `Schedule` after the routine. The
 normaliser inserts it (the catalogue marks it `inserted`, so the model is
@@ -267,7 +278,7 @@ a weekday or day of the month. It reads as one sentence ("Every weekday at
 08:00"). Edit offers the owner messaging them, a schedule,
 or a new message in any app whose `can_trigger` is true; a change rewrites the
 routine's "When" step, and the hire payload reads `/trigger` before the
-button's params. `render.tsx` labels the routine "Their routine" and its steps
+button's params. `views.tsx` labels the routine "Their routine" and its steps
 in plain words (When, They, Using, Then).
 
 ### 2. Hire
@@ -390,16 +401,23 @@ Connect an AI model action.
 
 The owner talks to an employee on its page. The conversation is the chat
 session whose id is the employee's workflow id, the thread the editor's chat
-pane also shows for that workflow (there, only the live generation). Every
-row goes through
-[services/chat_thread.py](../server/services/chat_thread.py): the owner's
-messages from `send_chat_message`, answers and reports from the
-[chatReply](./node-logic-flows/chat_utility/chatReply.md) ("Reply in Chat")
-node. Each row is stamped with the live generation, and each insert or clear
-is announced as `chat.updated`. Clearing the chat in the editor's chat pane
+pane also shows for that workflow (there, only the live generation). The
+owner's messages come in through `send_chat_message`
+([services/chat/handlers.py](../server/services/chat/handlers.py)), answers
+and reports from the [chatReply](./node-logic-flows/chat_utility/chatReply.md)
+("Reply in Chat") node. Each row is stamped with the live generation and
+appended to one chain, and each insert or clear is announced as
+`chat.updated`. Clearing the chat in the editor's chat pane
 (`clear_chat_messages`, `chat_thread.clear_chat_session`) deletes the thread
 and, through the Context plugin's chat-cleared listener, every conversation
 of the workflow, so the employee starts over with the chat.
+
+A message the talk line will answer starts a **chat run**, saved with it: one
+run at a time per conversation (a second send while one is live answers
+`run_in_progress`), claimed and finished by the workflow run that answers it,
+with the reply saved as the run's (`a_<run id>`). Sockets that subscribe
+(`chat_subscribe`) receive the run's events; a watchdog ends runs nothing
+will finish. The wire contract is [chat_protocol.md](./chat_protocol.md).
 
 ### On the employee's page
 
@@ -710,8 +728,8 @@ WebSocket requests (snake_case; failures come back as `success: false` with an
 | `start_employee` | `{workflow_id, expected_revision, idempotency_key}` | as `start_workflow` |
 | `enable_employee_talk` | `{workflow_id, idempotency_key}` | `{employee}`. Errors: `invalid_request`, `not_found`, `unsupported`, `conflict` (a start, pause, resume or reset is under way, or the graph changed meanwhile), `restart_failed`; the last three carry `employee` too |
 | `apply_employee_changes` | `{workflow_id, idempotency_key}` | `{employee}`: running ends running, paused or failed ends ready, ready is left alone. Errors: `invalid_request`, `not_found`, `conflict`, `restart_failed` (the last two with `employee`) |
-| `send_chat_message` | `{message, role: "user", session_id: <workflow_id>, timestamp}` | `{timestamp, delivery}`: `"now"` while running, starting or resuming; `"queued"` while paused or pausing (it runs on Resume). In any other state `not_running`, and nothing is saved or sent. Session `"default"` works as before, with no `delivery` |
-| `get_chat_messages` | `{session_id, limit?, all_generations?}` | `{messages}`, oldest first, each `{id, role, message, timestamp, run_key}`. Timestamps carry their UTC offset; `run_key` is the generation the row was written in. Without `all_generations`, only the latest generation's rows (none after a Reset; every row when the workflow was never started) |
+| `send_chat_message` | `{message, role: "user", session_id: <workflow_id>, timestamp, client_message_id?}` | `{timestamp, delivery, message_id, run_id}`: `"now"` while running, starting or resuming; `"queued"` while paused or pausing (it runs on Resume). In any other state `not_running`, and nothing is saved or sent; `run_in_progress` (with the live `run_id`) while a run is live. `run_id` is null when no deployed chat trigger answers the session. Session `"default"` works as before, with no `delivery` |
+| `get_chat_messages` | `{session_id, limit?, all_generations?}` | `{messages, thread, active_runs}`, messages oldest first, each `{id, role, message, timestamp, run_key, ...}` (the full shape is in [chat_protocol.md](./chat_protocol.md#messages)). Timestamps carry their UTC offset; `run_key` is the generation the row was written in. Without `all_generations`, only the latest generation's rows (none after a Reset; every row when the workflow was never started). A failed read answers `read_failed`, never an empty thread |
 | `list_approvals` | `{workflow_id?, status?, limit <= 100}` | `{approvals, counts, server_time}` |
 | `decide_approval` | `{approval_id, decision, text?, subject?, decision_key}` | `{approval, will_send_on_resume}` |
 | `delete_workflow` | `{workflow_id}` | `{workflow_id, contexts_archived, context_archives_pending}`; `DELETE /api/database/workflows/{id}` is the same handler. Error `workflow_shutdown_failed` (with `detail`) when stopping the employee failed: nothing was deleted |
@@ -743,7 +761,8 @@ history). Talk and growing a saved employee: `tests/services/employees/`
 (`test_talk.py`, `test_enable_talk.py`, `test_apply_changes.py`,
 `test_policy.py`, and `test_builder_snapshot.py` against
 `tests/fixtures/employee_builder_snapshot.json`),
-`tests/services/test_chat_thread.py`, `tests/nodes/test_chat_reply.py`,
+`tests/services/test_chat_thread.py`, `tests/services/chat/`,
+`tests/temporal/test_machina_chat_run.py`, `tests/nodes/test_chat_reply.py`,
 `tests/services/test_graph_build.py`, `tests/services/test_graph_additions.py`,
 `tests/services/test_graph_listeners.py`,
 `tests/services/test_deployment_restart.py`,

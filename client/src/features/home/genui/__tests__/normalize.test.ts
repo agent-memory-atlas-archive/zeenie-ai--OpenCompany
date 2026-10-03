@@ -1,4 +1,10 @@
 /**
+ * The normalizer's output is json-render's shape whichever shape the model
+ * wrote: a Button's action becomes `on.press` (from `on.press`, from `on`
+ * written inside its props, or from the older `action` / `actionParams`
+ * props), a Toggle binds `checked` (older replies say `value`), and every
+ * expression whose path reaches a prototype is dropped.
+ *
  * When they work, as the normalizer sets it up: one Schedule after the
  * routine, bound to /trigger, which starts as the hire button's trigger
  * (else the app the routine's first "When" step names, else the owner
@@ -28,9 +34,107 @@ function screen(hireTrigger: unknown, extra: Record<string, Raw> = {}, planSteps
   })!;
 }
 
+/** A screen with just these elements under the root (plus whatever the normalizer adds). */
+function only(elements: Record<string, Raw>, state: Raw = {}) {
+  return normalizeSpec({
+    root: 'r',
+    state,
+    elements: { r: { type: 'Stack', props: { direction: 'vertical' }, children: Object.keys(elements) }, ...elements },
+  })!;
+}
+
 function schedules(spec: NormalizedSpec): string[] {
   return spec.order.filter((id) => spec.elements[id].type === 'Schedule');
 }
+
+describe('json-render shape', () => {
+  const hireParams = { name: 'Maya', trigger: { kind: 'manual' } };
+
+  it('takes a Button’s action from on.press, from on inside its props, or from its older props', () => {
+    const shapes = [
+      { type: 'Button', props: { label: 'Hire Maya' }, on: { press: { action: 'hire_employee', params: hireParams } } },
+      { type: 'Button', props: { label: 'Hire Maya', on: { press: { action: 'hire_employee', params: hireParams } } } },
+      { type: 'Button', props: { label: 'Hire Maya', action: 'hire_employee', actionParams: hireParams } },
+      { type: 'Button', label: 'Hire Maya', action: 'hire_employee', actionParams: hireParams },
+    ];
+    for (const button of shapes) {
+      const spec = only({ h: button });
+      expect(spec.elements.h.on).toEqual({ press: { action: 'hire_employee', params: hireParams } });
+      expect(spec.elements.h.props).toEqual({ label: 'Hire Maya' });
+    }
+  });
+
+  it('prefers on.press over older props, and takes the first known action of a list', () => {
+    const spec = only({
+      h: {
+        type: 'Button',
+        props: { label: 'Hire', action: 'refine' },
+        on: { press: [{ action: 'wave' }, { action: 'hire_employee', params: { name: 'Ivy' } }] },
+      },
+    });
+    expect(spec.elements.h.on?.press).toEqual({ action: 'hire_employee', params: { name: 'Ivy' } });
+  });
+
+  it('keeps an action binding to its action and params', () => {
+    const spec = only({
+      h: {
+        type: 'Button',
+        props: { label: 'Hire' },
+        on: {
+          press: { action: 'hire_employee', params: { name: 'Lia' }, confirm: { title: 'Sure?', message: 'Hire?' }, onSuccess: { set: { '/x': 1 } } },
+          hover: { action: 'refine' },
+        },
+      },
+    });
+    expect(spec.elements.h.on).toEqual({ press: { action: 'hire_employee', params: { name: 'Lia' } } });
+  });
+
+  it('turns ask into a plain change request and drops a Button whose action is unknown', () => {
+    const spec = only({
+      q: { type: 'Button', props: { label: 'Only weekdays' }, on: { press: { action: 'ask', params: { text: 'Only weekdays' } } } },
+      x: { type: 'Button', props: { label: 'Push' }, on: { press: { action: 'pushState', params: { statePath: '/a', value: 1 } } } },
+    });
+    expect(spec.elements.q.on).toEqual({ press: { action: 'refine' } });
+    expect(spec.elements.x).toBeUndefined();
+  });
+
+  it('binds a Toggle’s checked, reading value from older replies', () => {
+    const spec = only({
+      rules: { type: 'Card', props: { title: 'Ground rules' }, children: ['t1', 't2'] },
+      t1: { type: 'Toggle', props: { label: 'Only 9 to 6', value: { $bindState: '/rules/hours' } } },
+      t2: { type: 'Toggle', props: { label: 'Weekends', checked: { $bindState: '/rules/weekends' }, value: true } },
+    });
+    expect(spec.elements.t1.props).toEqual({ label: 'Only 9 to 6', checked: { $bindState: '/rules/hours' } });
+    expect(spec.elements.t2.props).toEqual({ label: 'Weekends', checked: { $bindState: '/rules/weekends' } });
+    // The ask-first toggle it adds binds checked too.
+    const askFirst = spec.order.find((id) => bindingPath(spec.elements[id].props.checked) === STATE_PATHS.askFirst);
+    expect(askFirst).toBeDefined();
+  });
+
+  it('drops expressions whose path reaches a prototype, wherever they are', () => {
+    const spec = only({
+      t: {
+        type: 'Text',
+        props: { text: { $template: 'Hi ${/__proto__/x} and ${ /name }' } },
+        visible: { $state: '/constructor/x' },
+      },
+      m: { type: 'Metric', props: { label: { $state: '/prototype' }, value: { $computed: 'f' } }, visible: [{ $state: '/ok' }] },
+      i: { type: 'Input', props: { label: 'Name', value: { $bindState: '/inputs/__proto__' } } },
+      h: {
+        type: 'Button',
+        props: { label: 'Hire' },
+        on: { press: { action: 'hire_employee', params: { name: { $state: '/__proto__/name' }, role: { $state: '/role' } } } },
+      },
+    });
+    expect(spec.elements.t.props).toEqual({ text: { $template: 'Hi  and ${/name}' } });
+    expect(spec.elements.t.visible).toBe(false);
+    expect(spec.elements.m.props).toEqual({});
+    expect(spec.elements.m.visible).toEqual({ $and: [{ $state: '/ok' }] });
+    expect(spec.elements.i.props).toEqual({ label: 'Name' });
+    expect(spec.elements.h.on?.press.params).toEqual({ role: { $state: '/role' } });
+    expect(JSON.stringify(spec)).not.toMatch(/__proto__|constructor|prototype|\$computed/);
+  });
+});
 
 describe('when they work', () => {
   it('is one Schedule right after the routine, bound to /trigger', () => {
@@ -45,6 +149,18 @@ describe('when they work', () => {
   it('starts as the hire button’s trigger, snapped to what can run', () => {
     const spec = screen({ kind: 'schedule', every: 'weekday', at: '09:30', app: 'Gmail' });
     expect(getPath(spec.state, STATE_PATHS.trigger)).toEqual({ kind: 'schedule', every: 'weekday', at: '09:00' });
+  });
+
+  it('reads the hire button’s trigger from on.press as well', () => {
+    const spec = only({
+      a: { type: 'AgentCard', props: { name: 'Ivy', role: 'Diary keeper' } },
+      h: {
+        type: 'Button',
+        props: { label: 'Hire Ivy', variant: 'primary' },
+        on: { press: { action: 'hire_employee', params: { trigger: { kind: 'schedule', every: 'week', day: 'tue', at: '08:00' } } } },
+      },
+    });
+    expect(getPath(spec.state, STATE_PATHS.trigger)).toEqual({ kind: 'schedule', every: 'week', day: 'tuesday', at: '08:00' });
   });
 
   it('takes the routine’s app when the button names none, else the owner messaging them', () => {

@@ -1,0 +1,12 @@
+{"op":"add","path":"/root","value":"root"}
+{"op":"add","path":"/state","value":{"tom":true,"sara":true,"priya":true,"mo":false,"at":"6pm"}}
+{"op":"add","path":"/elements/root","value":{"type":"Stack","props":{"gap":"md"},"children":["who","acts"]}}
+{"op":"add","path":"/elements/who","value":{"type":"Card","props":{"title":"Who gets a reminder","description":"Tomorrow, Saturday 28 Sep"},"children":["t1","t2","t3","t4","moNote","when"]}}
+{"op":"add","path":"/elements/t1","value":{"type":"Toggle","props":{"label":"Tom Hale","hint":"10:00 · Cut","checked":{"$bindState":"/tom"}}}}
+{"op":"add","path":"/elements/t2","value":{"type":"Toggle","props":{"label":"Sara Lin","hint":"11:30 · Cut & blow-dry","checked":{"$bindState":"/sara"}}}}
+{"op":"add","path":"/elements/t3","value":{"type":"Toggle","props":{"label":"Priya Shah","hint":"14:30 · Colour","checked":{"$bindState":"/priya"}}}}
+{"op":"add","path":"/elements/t4","value":{"type":"Toggle","props":{"label":"Mo Reid","hint":"16:45 · Beard trim","checked":{"$bindState":"/mo"}}}}
+{"op":"add","path":"/elements/moNote","value":{"type":"Text","props":{"text":"Mo has confirmed on his own for his last 6 visits."},"visible":{"$state":"/mo","not":true}}}
+{"op":"add","path":"/elements/when","value":{"type":"Select","props":{"label":"Send at","value":{"$bindState":"/at"},"options":["9am","12pm","6pm"]}}}
+{"op":"add","path":"/elements/acts","value":{"type":"Row","children":["go"]}}
+{"op":"add","path":"/elements/go","value":{"type":"Button","props":{"label":"Schedule reminders","variant":"primary"},"on":{"press":{"action":"scheduleReminders","params":{"at":{"$state":"/at"}}}}}}

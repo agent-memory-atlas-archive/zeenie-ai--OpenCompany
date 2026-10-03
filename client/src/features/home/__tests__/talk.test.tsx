@@ -203,6 +203,20 @@ describe('sending', () => {
     expect(screen.queryByText('Working…')).not.toBeInTheDocument();
   });
 
+  it('keeps a message the employee cannot take yet, saying they are still working', async () => {
+    server.send = { success: false, error: 'run_in_progress' };
+    renderTalk(employee());
+    const box = await screen.findByRole('textbox', { name: 'Message Maya' });
+    fireEvent.change(box, { target: { value: 'And Sunday?' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    await waitFor(() =>
+      expect(pillToast).toHaveBeenCalledWith('Maya is still working on your last message. Send this once they answer.', { tone: 'info' }),
+    );
+    expect(screen.getByRole('log', { name: 'Conversation with Maya' })).not.toHaveTextContent('And Sunday?');
+    expect(box).toHaveValue('And Sunday?');
+  });
+
   it('lets one message wait while the employee is paused', async () => {
     server.send = { success: true, delivery: 'queued' };
     const paused = employee({}, 'paused');

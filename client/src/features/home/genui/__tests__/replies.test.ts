@@ -1,15 +1,18 @@
 /**
  * The shared corpus of model replies (genui/__fixtures__/replies.json):
  * each one parses and normalizes to a renderable screen exactly when it is
- * marked salvageable, and every such screen can be hired, changed, asks
- * first by default and says when they work. The server's salvage check runs the same corpus
+ * marked salvageable, and every such screen is in json-render's shape, can
+ * be hired and changed, asks first by default and says when they work.
+ * Replies come in both shapes a model writes: the older one (a Toggle's
+ * `value`, a Button's `action` / `actionParams` props) and json-render's
+ * (`checked`, `on.press`). The server's salvage check runs the same corpus
  * (server/tests/services/employees/test_setup_salvage_parity.py), so the
  * two sides agree on which replies are worth retrying.
  */
 
 import { describe, expect, it } from 'vitest';
 import corpus from '../__fixtures__/replies.json';
-import { STATE_PATHS, isContainer } from '../catalog';
+import { ACTION_TYPES, STATE_PATHS, isContainer } from '../catalog';
 import { bindingPath, getPath } from '../expressions';
 import { normalizeSpec, type NormalizedSpec } from '../normalize';
 import { parseReply } from '../parse';
@@ -22,6 +25,7 @@ interface Case {
 }
 
 const cases = corpus as unknown as Case[];
+const ELEMENT_KEYS = new Set(['type', 'props', 'children', 'visible', 'on']);
 
 function read(reply: string): { text: string; spec: NormalizedSpec | null } {
   const parsed = parseReply(reply);
@@ -33,7 +37,7 @@ function elements(spec: NormalizedSpec) {
 }
 
 function buttons(spec: NormalizedSpec, action: string) {
-  return elements(spec).filter(([, element]) => element.type === 'Button' && element.props.action === action);
+  return elements(spec).filter(([, element]) => element.type === 'Button' && element.on?.press.action === action);
 }
 
 function assertTree(spec: NormalizedSpec) {
@@ -55,6 +59,22 @@ function assertTree(spec: NormalizedSpec) {
   expect(spec.order[0]).toBe(spec.root);
 }
 
+/** json-render's element shape, and nothing a model may not reach. */
+function assertJsonRenderShape(spec: NormalizedSpec) {
+  for (const [id, element] of elements(spec)) {
+    for (const key of Object.keys(element)) expect(ELEMENT_KEYS.has(key), `${id} has ${key}`).toBe(true);
+    if (element.type === 'Button') {
+      expect(ACTION_TYPES).toContain(element.on?.press.action);
+      expect(Object.keys(element.on!.press).every((key) => key === 'action' || key === 'params')).toBe(true);
+      expect(element.props).not.toHaveProperty('action');
+      expect(element.props).not.toHaveProperty('actionParams');
+    } else {
+      expect(element.on).toBeUndefined();
+    }
+    if (element.type === 'Toggle') expect(element.props).not.toHaveProperty('value');
+  }
+}
+
 describe('model reply corpus', () => {
   it.each(cases.map((c) => [c.name, c] as const))('%s', (_name, entry) => {
     const { text, spec } = read(entry.reply);
@@ -64,11 +84,12 @@ describe('model reply corpus', () => {
     if (!spec) return;
 
     assertTree(spec);
+    assertJsonRenderShape(spec);
     // Every screen can be hired, changed, and asks first by default.
     expect(buttons(spec, 'hire_employee')).toHaveLength(1);
     expect(buttons(spec, 'refine')).toHaveLength(1);
     const askFirst = elements(spec).filter(
-      ([, element]) => element.type === 'Toggle' && bindingPath(element.props.value) === STATE_PATHS.askFirst,
+      ([, element]) => element.type === 'Toggle' && bindingPath(element.props.checked) === STATE_PATHS.askFirst,
     );
     expect(askFirst).toHaveLength(1);
     expect(typeof getPath(spec.state, STATE_PATHS.askFirst)).toBe('boolean');
@@ -84,8 +105,9 @@ describe('model reply corpus', () => {
       expect(agent?.[1].props.name).toBe(want.hasAgent);
     }
     if ('hireLabel' in want) expect(buttons(spec, 'hire_employee')[0][1].props.label).toBe(want.hireLabel);
-    if ('refineHasNoParams' in want) expect(buttons(spec, 'refine')[0][1].props.actionParams).toBeUndefined();
+    if ('refineHasNoParams' in want) expect(buttons(spec, 'refine')[0][1].on?.press.params).toBeUndefined();
     if ('askFirstValue' in want) expect(getPath(spec.state, STATE_PATHS.askFirst)).toBe(want.askFirstValue);
+    if ('trigger' in want) expect(getPath(spec.state, STATE_PATHS.trigger)).toEqual(want.trigger);
     if ('togglesInRulesCard' in want) {
       const card = elements(spec).find(([, element]) => element.type === 'Card' && /rule/i.test(String(element.props.title)));
       const toggles = card?.[1].children.filter((child) => spec.elements[child].type === 'Toggle') ?? [];
@@ -102,6 +124,16 @@ describe('model reply corpus', () => {
       for (const [, element] of elements(spec)) expect(Object.keys(element.props)).not.toContain('constructor');
       expect(Object.keys(spec.state)).not.toContain('__proto__');
     }
+    if ('noForbiddenPaths' in want) {
+      expect(JSON.stringify({ state: spec.state, elements: spec.elements })).not.toMatch(/__proto__|constructor|prototype/);
+    }
+    if ('strippedExtras' in want) {
+      expect(JSON.stringify(spec)).not.toMatch(/\$computed|\$item|confirm|onSuccess|onError|preventDefault|watch|repeat|slots/);
+    }
+    if ('sameAs' in want) {
+      const other = read(cases.find((c) => c.name === want.sameAs)!.reply).spec;
+      expect(spec).toEqual(other);
+    }
   });
 
   it('keeps the first of two parents and breaks the cycle', () => {
@@ -116,7 +148,7 @@ describe('model reply corpus', () => {
     const row = elements(spec!).find(
       ([, element]) => element.type === 'Stack' && element.props.direction === 'horizontal',
     );
-    expect(row?.[1].children.map((child) => spec!.elements[child].props.action)).toEqual(['hire_employee', 'refine']);
+    expect(row?.[1].children.map((child) => spec!.elements[child].on?.press.action)).toEqual(['hire_employee', 'refine']);
   });
 
   it('keeps the model order when capping a long screen', () => {

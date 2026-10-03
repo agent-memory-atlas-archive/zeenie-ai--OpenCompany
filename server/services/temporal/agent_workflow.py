@@ -261,6 +261,9 @@ _INHERITED_SCOPE_KEYS = (
     "user_id",
     "workspace_dir",
     "temporal_worker_pool_enabled",
+    # The chat run the root run answers (services/chat/), so a tool call
+    # or a delegated agent can attach what it produces to that answer.
+    "run_scope",
 )
 
 

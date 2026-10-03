@@ -11,7 +11,7 @@
  * | working               | Working                   | Pause                           |
  * | ready                 | Ready                     | Connect {App} / Connect AI / Start |
  * | paused                | Paused                    | Resume                          |
- * | attention             | Needs attention           | Resume when possible, else Open in Dev mode |
+ * | attention             | Needs attention           | Resume when possible; after a failure Start again (the server resets first); else Open in Dev mode |
  * | pending_approvals > 0 | Needs you (overrides pill) | (the drafts are the action)    |
  * | browser_request       | Needs you (overrides pill) | (Help in browser opens the Workspace) |
  *
@@ -34,7 +34,8 @@ export type StatusTone = 'working' | 'ready' | 'paused' | 'attention' | 'waiting
 export type PrimaryAction =
   | { kind: 'pause' }
   | { kind: 'resume' }
-  | { kind: 'start' }
+  /** `again`: the last run failed; `start_employee` resets it first. */
+  | { kind: 'start'; again?: boolean }
   | { kind: 'connect_app'; app: AppRef }
   | { kind: 'connect_ai' }
   | { kind: 'open_workflow' };
@@ -62,6 +63,13 @@ const BUSY: Record<WorkflowControlPendingMutation['action'], string> = {
   reset: 'Resetting…',
 };
 
+/** What starting needs first: an app to connect, or an AI model. */
+function startBlocker(employee: EmployeeSummary): PrimaryAction | null {
+  if (employee.missing_apps.length > 0) return { kind: 'connect_app', app: employee.missing_apps[0] };
+  if (employee.needs_ai) return { kind: 'connect_ai' };
+  return null;
+}
+
 function primaryAction(employee: EmployeeSummary): PrimaryAction {
   const { control } = employee;
   switch (employee.status) {
@@ -70,12 +78,14 @@ function primaryAction(employee: EmployeeSummary): PrimaryAction {
     case 'paused':
       return control.can_resume ? { kind: 'resume' } : { kind: 'open_workflow' };
     case 'attention':
-      return control.can_resume ? { kind: 'resume' } : { kind: 'open_workflow' };
+      if (control.can_resume) return { kind: 'resume' };
+      // A failed run has neither can_start nor can_resume, but
+      // start_employee resets a failed employee and starts it again.
+      if (control.state === 'failed') return startBlocker(employee) ?? { kind: 'start', again: true };
+      return { kind: 'open_workflow' };
     case 'ready':
     default:
-      if (employee.missing_apps.length > 0) return { kind: 'connect_app', app: employee.missing_apps[0] };
-      if (employee.needs_ai) return { kind: 'connect_ai' };
-      return control.can_start ? { kind: 'start' } : { kind: 'open_workflow' };
+      return startBlocker(employee) ?? (control.can_start ? { kind: 'start' } : { kind: 'open_workflow' });
   }
 }
 
@@ -109,7 +119,7 @@ export function primaryActionLabel(action: PrimaryAction): string {
     case 'resume':
       return 'Resume';
     case 'start':
-      return 'Start';
+      return action.again ? 'Start again' : 'Start';
     case 'connect_app':
       return `Connect ${action.app.name}`;
     case 'connect_ai':

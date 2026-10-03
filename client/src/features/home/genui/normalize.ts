@@ -1,10 +1,11 @@
 /**
  * Turning a model's setup-screen spec into one that is safe to render.
  *
- * A spec is flat: `{root, state, elements: {id: {type, props, children,
- * visible?}}}`. Models get it slightly wrong in predictable ways (props
- * written beside `props`, children never listed, the hire button left out,
- * a cycle), so this repairs rather than rejects. The result:
+ * A spec is flat, in json-render's shape: `{root, state, elements: {id:
+ * {type, props, children, visible?, on?}}}`. Models get it slightly wrong
+ * in predictable ways (props written beside `props`, children never
+ * listed, the hire button left out, a cycle), so this repairs rather than
+ * rejects. The result:
  *
  * - is a tree: the root is always a vertical Stack; each element has one
  *   parent (the first one found, depth first), cycles are broken, and only
@@ -12,6 +13,9 @@
  * - loses nothing a model placed badly: elements nobody lists are attached
  *   where they belong (controls into the rules card, connect buttons into
  *   the apps card, the hire and change buttons into the button row);
+ * - gives every Button its action as `on.press` ({action, params}), whether
+ *   the model wrote that or the older `action` / `actionParams` props, and
+ *   every Toggle its value as `checked` (older replies say `value`);
  * - always has "Ask me before sending anything" bound to /rules/askFirst,
  *   defaulting to on, and exactly one hire button and one change button;
  * - always says when they work: one Schedule, after the routine, bound to
@@ -20,8 +24,11 @@
  *   snapped to one the server builds exactly as it reads;
  * - has at most LIMITS.maxElements elements (the buttons, that toggle and
  *   the Schedule are always kept);
- * - cannot reach an object prototype (ids, prop keys and state keys named
- *   `__proto__`, `constructor` or `prototype` are dropped).
+ * - cannot reach an object prototype: ids, prop keys and state keys named
+ *   `__proto__`, `constructor` or `prototype` are dropped, and so is any
+ *   expression whose path goes through one; `watch`, `repeat`, `slots`,
+ *   `$computed` and an action's `confirm` never get through
+ *   (lib/jsonRender/sanitize.ts).
  *
  * `ask` buttons become plain `refine`: the owner writes the change, the
  * model's suggested wording is never sent on their behalf.
@@ -31,6 +38,14 @@
  * (services/employees/setup_reply.py).
  */
 
+import type { VisibilityCondition } from '@json-render/core';
+// The file, not the index: this module is in Home's first chunk.
+import {
+  DEFAULT_SANITIZE_LIMITS,
+  sanitizeCondition,
+  sanitizeExpressions,
+  type SanitizeLimits,
+} from '@/lib/jsonRender/sanitize';
 import {
   ASK_FIRST_LABEL,
   LIMITS,
@@ -40,17 +55,27 @@ import {
   isComponentType,
   isContainer,
   isControl,
+  type ActionType,
   type ComponentType,
 } from './catalog';
 import { bindingPath, getPath, isForbiddenKey, resolveValue, sanitizeState, setPath, type UiState } from './expressions';
 import { readTrigger, snapTrigger, type HireTrigger } from './hirePayload';
 
+/** What pressing a Button runs: an action and its params (expressions
+ *  resolved against the screen's state at the press). */
+export interface PressBinding {
+  action: ActionType;
+  params?: Record<string, unknown>;
+}
+
 export interface SpecElement {
   type: ComponentType;
-  /** Props as written (expressions unresolved). */
+  /** Props as written (expressions unresolved), made safe to resolve. */
   props: Record<string, unknown>;
   children: string[];
-  visible?: unknown;
+  visible?: VisibilityCondition;
+  /** A Button's action. */
+  on?: { press: PressBinding };
 }
 
 export interface NormalizedSpec {
@@ -61,12 +86,20 @@ export interface NormalizedSpec {
   order: string[];
 }
 
-const META_KEYS = new Set(['type', 'props', 'children', 'visible', 'watch', 'id']);
+/** Element keys that are never props (everything else beside `props` is
+ *  hoisted into them). The server reads replies with the same list
+ *  (services/employees/setup_reply.py `_META_KEYS`). */
+const META_KEYS = new Set(['type', 'props', 'children', 'visible', 'watch', 'id', 'on', 'repeat', 'slots']);
 const ID_PATTERN = /^[A-Za-z0-9_.:-]+$/;
 const MAX_RAW_ELEMENTS = 64;
 const RULES_TITLE = /rule|setting|prefer|control|how/i;
 const APPS_TITLE = /app|connect|need|check/i;
 const ASK_FIRST_WORDING = /\bask\b.*\b(before|first)\b/i;
+
+/** How much of a prop the normaliser keeps (a Draft's body is the longest). */
+const PROP_LIMITS: SanitizeLimits = { ...DEFAULT_SANITIZE_LIMITS, maxIdLength: LIMITS.maxIdLength, maxString: LIMITS.maxBody };
+/** A button's params: shorter strings, shallower values. */
+const PARAM_LIMITS: SanitizeLimits = { ...PROP_LIMITS, maxString: LIMITS.maxText, maxDepth: 4, maxArray: 20 };
 
 type Elements = Map<string, SpecElement>;
 
@@ -82,17 +115,54 @@ function text(value: unknown): string {
   return typeof value === 'string' || typeof value === 'number' ? String(value).trim() : '';
 }
 
-/** Buttons need a label and a known action; an agent card needs a name. */
-function keep(element: SpecElement): boolean {
-  if (element.type === 'Button') {
-    const action = actionOf(element.props.action);
-    if (!text(element.props.label) || !action) return false;
-    element.props.action = action;
-    if (action === 'refine') delete element.props.actionParams;
-    else if ('actionParams' in element.props) element.props.actionParams = sanitizeState(element.props.actionParams, LIMITS.maxText);
+function pressBinding(action: ActionType, rawParams: unknown): PressBinding {
+  if (action === 'refine') return { action };
+  const params = sanitizeExpressions(rawParams ?? {}, PARAM_LIMITS, 1);
+  return isRecord(params) && Object.keys(params).length > 0 ? { action, params } : { action };
+}
+
+/** The first binding under `on.press` (one, or a list) whose action is known. */
+function pressOf(on: unknown): PressBinding | null {
+  if (!isRecord(on)) return null;
+  const bindings = Array.isArray(on.press) ? on.press : [on.press];
+  for (const binding of bindings) {
+    if (!isRecord(binding)) continue;
+    const action = actionOf(binding.action);
+    if (action) return pressBinding(action, binding.params);
   }
-  if (element.type === 'AgentCard' && !text(element.props.name)) return false;
-  return true;
+  return null;
+}
+
+/** A Button's action: `on.press` beside its props (json-render's place), or
+ *  inside them, else the older `action` / `actionParams` props. */
+function buttonPress(raw: Record<string, unknown>, written: Record<string, unknown>): PressBinding | null {
+  const pressed = pressOf(raw.on) ?? pressOf(written.on);
+  if (pressed) return pressed;
+  const action = actionOf(written.action);
+  return action ? pressBinding(action, written.actionParams) : null;
+}
+
+/** One element as the renderer will get it; null when it cannot be used: a
+ *  Button needs a label and a known action, an agent card a name. */
+function shape(type: ComponentType, written: Record<string, unknown>, raw: Record<string, unknown>, children: string[]): SpecElement | null {
+  const press = type === 'Button' ? buttonPress(raw, written) : null;
+  if (type === 'Button' && (!text(written.label) || !press)) return null;
+  if (type === 'AgentCard' && !text(written.name)) return null;
+  delete written.on;
+  if (type === 'Button') {
+    delete written.action;
+    delete written.actionParams;
+  }
+  if (type === 'Toggle') {
+    if (!('checked' in written) && 'value' in written) written.checked = written.value;
+    delete written.value;
+  }
+  const props = sanitizeExpressions(written, PROP_LIMITS);
+  const element: SpecElement = { type, props: isRecord(props) ? props : {}, children };
+  const visible = sanitizeCondition(raw.visible, PROP_LIMITS);
+  if (visible !== undefined) element.visible = visible;
+  if (press) element.on = { press };
+  return element;
 }
 
 function collect(raw: Record<string, unknown>): Elements {
@@ -100,21 +170,20 @@ function collect(raw: Record<string, unknown>): Elements {
   for (const [id, value] of Object.entries(raw)) {
     if (out.size >= MAX_RAW_ELEMENTS) break;
     if (!usableId(id) || !isRecord(value) || !isComponentType(value.type)) continue;
-    const props: Record<string, unknown> = {};
+    const written: Record<string, unknown> = {};
     for (const key of Object.keys(value)) {
-      if (!META_KEYS.has(key) && !isForbiddenKey(key)) props[key] = value[key];
+      if (!META_KEYS.has(key) && !isForbiddenKey(key)) written[key] = value[key];
     }
     if (isRecord(value.props)) {
       for (const key of Object.keys(value.props)) {
-        if (!isForbiddenKey(key)) props[key] = value.props[key];
+        if (!isForbiddenKey(key)) written[key] = value.props[key];
       }
     }
     const children = Array.isArray(value.children)
       ? value.children.filter((child): child is string => typeof child === 'string')
       : [];
-    const element: SpecElement = { type: value.type, props, children };
-    if ('visible' in value) element.visible = value.visible;
-    if (keep(element)) out.set(id, element);
+    const element = shape(value.type, written, value, children);
+    if (element) out.set(id, element);
   }
   return out;
 }
@@ -132,8 +201,8 @@ function isHorizontalStack(element: SpecElement): boolean {
   return element.type === 'Stack' && element.props.direction === 'horizontal';
 }
 
-function buttonAction(element: SpecElement | undefined): string | null {
-  return element?.type === 'Button' ? String(element.props.action) : null;
+function buttonAction(element: SpecElement | undefined): ActionType | null {
+  return element?.type === 'Button' ? (element.on?.press.action ?? null) : null;
 }
 
 /** Attach `id`'s subtree: keep only children that exist and are not yet
@@ -180,13 +249,26 @@ function removeEverywhere(elements: Elements, id: string): void {
 function seedTrigger(elements: Elements, root: string, state: UiState): HireTrigger {
   const tree = depthFirst(elements, root).map((id) => elements.get(id)!);
   const hire = tree.find((element) => buttonAction(element) === 'hire_employee');
-  const params = resolveValue(hire?.props.actionParams, state);
+  const params = resolveValue(hire?.on?.press.params, state);
   const given = readTrigger(isRecord(params) ? params.trigger : undefined);
   if (given && (given.kind !== 'app_event' || given.app)) return given;
   const plan = tree.find((element) => element.type === 'Plan');
   const parsed = plan ? PROP_SCHEMAS.Plan.safeParse(resolveValue(plan.props, state) ?? {}) : null;
   const app = parsed?.success ? parsed.data.steps.find((step) => step.role === 'trigger')?.app : undefined;
   return snapTrigger(app ? { kind: 'app_event', app } : { kind: 'manual' });
+}
+
+function hireButton(agent: SpecElement | undefined): SpecElement {
+  const name = text(agent?.props.name);
+  const role = text(agent?.props.role);
+  const apps = Array.isArray(agent?.props.apps) ? agent!.props.apps.filter((app) => typeof app === 'string') : [];
+  const params = { ...(name ? { name } : {}), ...(role ? { role } : {}), apps };
+  return {
+    type: 'Button',
+    props: { label: name ? `Hire ${name}` : 'Hire them', variant: 'primary' },
+    on: { press: { action: 'hire_employee', params } },
+    children: [],
+  };
 }
 
 export function normalizeSpec(spec: unknown): NormalizedSpec | null {
@@ -279,7 +361,7 @@ export function normalizeSpec(spec: unknown): NormalizedSpec | null {
   const order = depthFirst(elements, root);
   let askFirst = order.find((id) => {
     const element = elements.get(id)!;
-    return element.type === 'Toggle' && bindingPath(element.props.value) === STATE_PATHS.askFirst;
+    return element.type === 'Toggle' && bindingPath(element.props.checked) === STATE_PATHS.askFirst;
   });
   if (!askFirst) {
     const worded = order.find((id) => {
@@ -288,8 +370,8 @@ export function normalizeSpec(spec: unknown): NormalizedSpec | null {
     });
     if (worded) {
       const element = elements.get(worded)!;
-      const previous = getPath(state, bindingPath(element.props.value));
-      element.props.value = { $bindState: STATE_PATHS.askFirst };
+      const previous = getPath(state, bindingPath(element.props.checked));
+      element.props.checked = { $bindState: STATE_PATHS.askFirst };
       if (typeof previous === 'boolean') state = setPath(state, STATE_PATHS.askFirst, previous);
       askFirst = worded;
     }
@@ -297,7 +379,6 @@ export function normalizeSpec(spec: unknown): NormalizedSpec | null {
   if (typeof getPath(state, STATE_PATHS.askFirst) !== 'boolean') state = setPath(state, STATE_PATHS.askFirst, true);
 
   const agent = order.map((id) => elements.get(id)!).find((element) => element.type === 'AgentCard');
-  const name = text(agent?.props.name);
   const hasHire = order.some((id) => buttonAction(elements.get(id)) === 'hire_employee');
   const hasChange = order.some((id) => buttonAction(elements.get(id)) === 'refine');
   const actionRow = () =>
@@ -309,22 +390,17 @@ export function normalizeSpec(spec: unknown): NormalizedSpec | null {
     const added: string[] = [];
     if (!hasHire) {
       const id = freshId(elements, '__hire');
-      const apps = Array.isArray(agent?.props.apps) ? agent!.props.apps.filter((app) => typeof app === 'string') : [];
-      elements.set(id, {
-        type: 'Button',
-        props: {
-          label: name ? `Hire ${name}` : 'Hire them',
-          variant: 'primary',
-          action: 'hire_employee',
-          actionParams: { name: name || undefined, role: text(agent?.props.role) || undefined, apps },
-        },
-        children: [],
-      });
+      elements.set(id, hireButton(agent));
       added.push(id);
     }
     if (!hasChange) {
       const id = freshId(elements, '__edit');
-      elements.set(id, { type: 'Button', props: { label: 'Change something', variant: 'secondary', action: 'refine' }, children: [] });
+      elements.set(id, {
+        type: 'Button',
+        props: { label: 'Change something', variant: 'secondary' },
+        on: { press: { action: 'refine' } },
+        children: [],
+      });
       added.push(id);
     }
     let host = actionRow();
@@ -352,7 +428,7 @@ export function normalizeSpec(spec: unknown): NormalizedSpec | null {
     askFirst = freshId(elements, '__askFirst');
     elements.set(askFirst, {
       type: 'Toggle',
-      props: { label: ASK_FIRST_LABEL, value: { $bindState: STATE_PATHS.askFirst } },
+      props: { label: ASK_FIRST_LABEL, checked: { $bindState: STATE_PATHS.askFirst } },
       children: [],
     });
     attach(host, [askFirst]);
@@ -409,6 +485,7 @@ export function normalizeSpec(spec: unknown): NormalizedSpec | null {
     }
   }
 
+  // No prototype: ids are looked up here as keys.
   const record: Record<string, SpecElement> = Object.create(null);
   for (const [id, element] of elements) record[id] = element;
   return { root, state, elements: record, order: depthFirst(elements, root) };
