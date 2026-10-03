@@ -34,7 +34,9 @@ Files:
 1. User clicks a node on the canvas → `selectedNode` set in Zustand store.
 2. `ParameterPanel` mounts → `useParameterPanel()` fires.
 3. Hook reads defaults from `nodeDefinition.properties[].default`, then asks backend for any saved
-   parameters via WebSocket `get_node_parameters`. Saved values overlay defaults.
+   parameters via WebSocket `get_node_parameters`. Saved values overlay defaults. The buffer is
+   seeded only once the saved row has arrived: until then (socket not ready yet, read failed)
+   `isLoading` stays true and Save is refused, because a save replaces the node's whole row.
 4. Modal renders three sections; `MiddleSection` filters parameters via `displayOptions.show`
    (see §4 invariants), then renders each visible parameter through `ParameterRenderer`.
 5. User edits → `handleParameterChange(name, value)` updates local state. `hasUnsavedChanges`
@@ -175,6 +177,7 @@ NodeSpec declares `uiHints.outputMode = "terminal"` (CLI-wrapper plugins: `githu
 ## 7. Refactor Invariants
 
 Locked in by the test suite at:
+- [client/src/hooks/__tests__/useParameterPanel.test.tsx](../client/src/hooks/__tests__/useParameterPanel.test.tsx)
 - [client/src/hooks/__tests__/useDragVariable.test.ts](../client/src/hooks/__tests__/useDragVariable.test.ts)
 - [client/src/components/parameterPanel/__tests__/MiddleSection.test.tsx](../client/src/components/parameterPanel/__tests__/MiddleSection.test.tsx)
 - [client/src/components/parameterPanel/__tests__/InputSection.test.tsx](../client/src/components/parameterPanel/__tests__/InputSection.test.tsx)
@@ -182,6 +185,11 @@ Locked in by the test suite at:
 
 1. **Defaults loaded** from `nodeDefinition.properties[].default`; missing default ⇒ `null`.
 2. **Saved params win** over defaults when merged (DB is source of truth).
+   **No row, no seed**: `get_node_parameters` answers `{parameters: {}}` for a node without a
+   saved row, so a `null` reply is a failed read. `fetchSavedNodeParams`
+   ([useNodeParamsQuery.ts](../client/src/hooks/useNodeParamsQuery.ts)) throws on it for every
+   query on the `nodeParams` key, so the cache never holds a failed read as an empty row; the
+   panel shows the failure as a toast and Save stays refused.
 3. **`hasUnsavedChanges`** is a deep-equal check against the original snapshot loaded from DB.
 4. **Save** routes to `save_node_parameters` and updates the original snapshot on success.
 5. **Cancel** restores the pending edits and clears `selectedNode`.

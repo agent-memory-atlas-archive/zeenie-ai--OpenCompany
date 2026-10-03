@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { toast } from 'sonner';
 import { useAppStore } from '../store/useAppStore';
 import { resolveNodeDescription } from '../lib/nodeSpec';
 import { useWebSocket } from '../contexts/WebSocketContext';
@@ -39,13 +40,16 @@ export const useParameterPanel = () => {
   const [editBuffer, setEditBuffer] = useState<Record<string, any>>({});
   const [originalParameters, setOriginalParameters] = useState<Record<string, any>>({});
   const [error, setError] = useState<string | null>(null);
+  // The node whose saved row seeded the buffer. Until it is the selected
+  // node the panel is still loading and Save is refused: a save replaces
+  // the node's whole row, and a buffer holding none of it would wipe it.
+  const [loadedFor, setLoadedFor] = useState<string | null>(null);
 
   // Initialize the edit buffer once per node selection. Identity of
   // sendRequest / saveMutation / paramsQuery.data churns on every render,
   // so we must NOT depend on them — that would trigger an infinite loop
   // because the optimistic setQueryData on save mints a fresh data object.
-  // The ref guard keeps initialization bound to nodeId transitions only.
-  const initializedFor = useRef<string | null>(null);
+  // The `loadedFor` guard keeps initialization bound to nodeId transitions.
   // Stable refs to read-only deps the effect needs without listing them.
   const sendRequestRef = useRef(sendRequest);
   sendRequestRef.current = sendRequest;
@@ -54,17 +58,22 @@ export const useParameterPanel = () => {
   const queryDataRef = useRef(paramsQuery.data);
   queryDataRef.current = paramsQuery.data;
 
+  // Wait for the saved row itself, not for `isLoading` to clear: TanStack
+  // also reports not-loading while the query is disabled (socket not ready
+  // yet) and after it failed, and seeding from defaults then would let the
+  // next Save overwrite the stored settings with them.
+  const hasSavedRow = paramsQuery.data != null;
+  const loadFailed = paramsQuery.isError && !hasSavedRow;
+
   useEffect(() => {
     if (!nodeType || !nodeId) {
       setEditBuffer({});
       setOriginalParameters({});
       setError(null);
-      initializedFor.current = null;
+      setLoadedFor(null);
       return;
     }
-    if (paramsQuery.isLoading) return;
-    if (initializedFor.current === nodeId) return;
-    initializedFor.current = nodeId;
+    if (!hasSavedRow || loadedFor === nodeId) return;
 
     const defaults = defaultsForNodeType(nodeType);
     const saved = queryDataRef.current?.parameters ?? {};
@@ -72,12 +81,19 @@ export const useParameterPanel = () => {
 
     setEditBuffer(initial);
     setOriginalParameters(initial);
-  }, [nodeId, nodeType, paramsQuery.isLoading]);
+    setLoadedFor(nodeId);
+  }, [nodeId, nodeType, hasSavedRow, loadedFor]);
 
-  // Surface query errors.
+  // Surface load failures. The panels do not render `error`, so the toast
+  // is what tells the user why the fields stay empty.
   useEffect(() => {
-    setError(paramsQuery.isError ? 'Failed to load saved parameters' : null);
-  }, [paramsQuery.isError]);
+    if (!loadFailed) {
+      setError(null);
+      return;
+    }
+    setError('Failed to load saved parameters');
+    toast.error("Could not load this node's saved settings. Close the panel and open it again to retry.");
+  }, [nodeId, loadFailed]);
 
   const hasUnsavedChanges = useMemo(() => {
     return JSON.stringify(editBuffer) !== JSON.stringify(originalParameters);
@@ -89,6 +105,11 @@ export const useParameterPanel = () => {
 
   const handleSave = useCallback(async () => {
     if (!nodeId) return;
+    if (loadedFor !== nodeId) {
+      setError('Saved parameters have not loaded yet; nothing was saved');
+      toast.error("This node's saved settings have not loaded, so nothing was saved.");
+      return;
+    }
     try {
       await saveMutation.mutateAsync({
         nodeId,
@@ -100,8 +121,9 @@ export const useParameterPanel = () => {
     } catch (err) {
       console.error('Failed to save parameters via WebSocket:', err);
       setError('Failed to save parameters');
+      toast.error('Could not save these settings. Your changes are still in the panel.');
     }
-  }, [nodeId, editBuffer, saveMutation, paramsQuery.data?.version]);
+  }, [nodeId, loadedFor, editBuffer, saveMutation, paramsQuery.data?.version]);
 
   const handleCancel = useCallback(() => {
     setEditBuffer({ ...originalParameters });
@@ -126,7 +148,11 @@ export const useParameterPanel = () => {
     handleParameterChange,
     handleSave,
     handleCancel,
-    isLoading: paramsQuery.isLoading,
+    // True until the saved row has seeded the buffer, including after a
+    // failed load: ParameterRenderer then shows empty fields rather than
+    // defaults that look like the node's settings, and holds back its
+    // provider/model effect, which would otherwise edit the buffer.
+    isLoading: !!nodeId && loadedFor !== nodeId,
     isSaving: saveMutation.isPending,
     error,
     isConnected,

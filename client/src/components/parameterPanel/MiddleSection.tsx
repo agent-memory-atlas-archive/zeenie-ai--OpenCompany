@@ -41,7 +41,7 @@ import BrowserWorkspace from '../browser/BrowserWorkspace';
 import { useAppStore } from '../../store/useAppStore';
 import { useNodeStatus, useWebSocket, CompactionStats } from '../../contexts/WebSocketContext';
 import { useUserSettingsQuery } from '../../hooks/useUserSettingsQuery';
-import { nodeParamsQueryKey, type NodeParametersResponse } from '../../hooks/useNodeParamsQuery';
+import { fetchSavedNodeParams, nodeParamsQueryKey, type NodeParametersResponse } from '../../hooks/useNodeParamsQuery';
 import { fetchFolderSkills, folderSkillsQueryKey, type AvailableSkill } from '../../hooks/useFolderSkills';
 import { queryKeys, STALE_TIME } from '../../lib/queryConfig';
 import { INodeTypeDescription, INodeProperties } from '../../types/INodeProperties';
@@ -244,7 +244,7 @@ const MiddleSection: React.FC<MiddleSectionProps> = ({
 
   const memoryParamsQuery = useQuery<NodeParametersResponse | null, Error>({
     queryKey: memoryEdgeSourceId ? nodeParamsQueryKey(memoryEdgeSourceId) : nodeParamsQueryKey('none'),
-    queryFn: () => (memoryEdgeSourceId ? getNodeParameters(memoryEdgeSourceId) : Promise.resolve(null)),
+    queryFn: () => (memoryEdgeSourceId ? fetchSavedNodeParams(getNodeParameters, memoryEdgeSourceId) : Promise.resolve(null)),
     enabled: !!memoryEdgeSourceId,
     staleTime: STALE_TIME.MEDIUM,
   });
@@ -338,7 +338,7 @@ const MiddleSection: React.FC<MiddleSectionProps> = ({
   const masterSkillParamsQueries = useQueries({
     queries: masterSkillEdgeSources.map((id) => ({
       queryKey: nodeParamsQueryKey(id),
-      queryFn: () => getNodeParameters(id),
+      queryFn: () => fetchSavedNodeParams(getNodeParameters, id),
       staleTime: STALE_TIME.MEDIUM,
     })),
   });
