@@ -1187,6 +1187,10 @@ class BaseNode:
                     # The chat run this run answers (MachinaWorkflow sets it
                     # for a run the owner's chat message started).
                     "run_scope",
+                    # A tool call of the agent answering a chat run: where
+                    # what it shows goes (show_ui, services/chat/parts.py).
+                    "chat_stream",
+                    "chat_run_id",
                 ):
                     if key in context:
                         extras[key] = context[key]

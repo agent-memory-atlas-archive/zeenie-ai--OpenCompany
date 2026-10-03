@@ -36,7 +36,9 @@ run finishes with outcome ``stopped``. A run still stopping
 ended by the watchdog, which also cancels its workflow.
 
 **Steps** (``record_step``) are saved on the run as they finish, so a reload
-can say how long it worked and what it did.
+can say how long it worked and what it did. **Parts** (what its tools
+showed, such as generated UI) are sealed into its reply as it ends
+(``services/chat/parts.py``), before the end is published.
 
 Every transition commits before its event is published, so a client that
 reads the run after an event never sees an older state than the event.
@@ -191,14 +193,18 @@ async def admit_message(
     client_message_id: Optional[str] = None,
     options: Optional[Dict[str, Any]] = None,
     attachments: Optional[List[Dict[str, Any]]] = None,
+    meta: Optional[Dict[str, Any]] = None,
 ) -> Admission:
     """Save the owner's message and, when ``track``, the run that will answer
     it. Raises :class:`RunInProgress` when the lane is held, ``ValueError``
-    for a malformed ``client_message_id``."""
+    for a malformed ``client_message_id``. ``meta`` goes on the message (a
+    button press keeps its ``ui_event`` there)."""
     if state not in ("pending", "queued"):
         raise ValueError(f"a run is admitted pending or queued, not {state!r}")
     uid = client_message_uid(session_id, client_message_id) if client_message_id is not None else None
-    meta = {"client_message_id": client_message_id} if client_message_id is not None else {}
+    meta = dict(meta or {})
+    if client_message_id is not None:
+        meta["client_message_id"] = client_message_id
     async with database.reserved_session() as session:
         if uid is not None:
             found = (await session.execute(select(ChatMessage).where(ChatMessage.uid == uid))).scalar_one_or_none()
@@ -288,6 +294,15 @@ async def post_reply(
             uid = f"{uid}.{len(replies) + 1}"
         current = await session.get(ChatRun, run.run_id)
         stopped = current is not None and current.state in ("stopping", "stopped")
+        # What the run's tools showed so far goes on its first reply, so the
+        # thread never draws the reply without it; the end seals the rest.
+        parts = None
+        if not replies:
+            from models.chat import ChatRunPart
+            from services.chat.parts import grouped_parts
+
+            found = await session.execute(select(ChatRunPart).where(ChatRunPart.run_id == run.run_id).order_by(ChatRunPart.id))
+            parts = grouped_parts(list(found.scalars().all())) or None
         row = await database.append_chat_row(
             session,
             session_id=run.session_id,
@@ -297,6 +312,7 @@ async def post_reply(
             uid=uid,
             run_id=run.run_id,
             status="stopped" if stopped else "complete",
+            parts=parts,
             meta={"node_id": node_id},
         )
         await session.commit()
@@ -420,6 +436,16 @@ async def _settle(database: Any, run: ChatRun, values: Dict[str, Any]) -> Option
     return settled
 
 
+async def _seal(database: Any, run: ChatRun) -> None:
+    """Put what the run's tools showed on its reply (``services/chat/
+    parts.py``), and tell open threads when that changed the thread."""
+    from services.chat.parts import seal_parts
+    from services.chat_thread import announce_chat_updated
+
+    if await seal_parts(database, run):
+        await announce_chat_updated(run.session_id, "assistant")
+
+
 async def _success_values(database: Any, run: ChatRun, outcome: str) -> Dict[str, Any]:
     if await _message_exists(database, run.reply_message_uid):
         result: Dict[str, Any] = {"reply_message_id": run.reply_message_uid}
@@ -451,6 +477,7 @@ async def finish_run(
         return run
     if run.state not in ("running", "stopping"):
         return None
+    await _seal(database, run)
     if run.state == "stopping":
         values = await _success_values(database, run, "stopped")
     elif success:
@@ -594,6 +621,7 @@ async def _sweep_stopping(
             await temporal_cancel(run.temporal_workflow_id, run.temporal_run_id)
         except Exception:  # noqa: BLE001 - the run ends either way
             logger.warning("Could not cancel a stopped run's workflow", run_id=run.run_id, exc_info=True)
+    await _seal(database, run)
     return await _settle(database, run, await _success_values(database, run, "stopped"))
 
 
@@ -632,6 +660,7 @@ async def _sweep_one(
     current = await get_run(database, run.run_id)
     if current is None or current.state not in ("running", "stopping"):
         return None
+    await _seal(database, current)
     if await _message_exists(database, current.reply_message_uid):
         return await _settle(database, current, await _success_values(database, current, "stopped" if current.state == "stopping" else "success"))
     return await fail_run(database, current, code="interrupted", message="The run ended before it answered.")

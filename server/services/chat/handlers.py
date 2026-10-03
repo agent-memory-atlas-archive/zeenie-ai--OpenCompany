@@ -138,12 +138,41 @@ async def _answers_session(database: Any, control: Any, session_id: str) -> bool
     return False
 
 
+async def _ui_event(database: Any, session_id: str, raw: Any) -> Dict[str, Any]:
+    """A button press, checked against the interface it came from. Returns
+    ``{label, meta, prompt}``; raises ``ValueError`` saying why not."""
+    from services.chat import parts
+
+    if not isinstance(raw, dict):
+        raise ValueError("ui_event is {part_id, element_id, action, params}")
+    part_id = raw.get("part_id")
+    part = await parts.find_ui_part(database, session_id, part_id) if isinstance(part_id, str) and part_id else None
+    if part is None:
+        raise ValueError("this chat has no such interface")
+    try:
+        pressed = parts.check_ui_event(part, raw.get("element_id"), raw.get("action"), raw.get("params"))
+    except parts.UiRefused as exc:
+        raise ValueError(str(exc)) from None
+    event = {"part_id": part_id, "element_id": raw["element_id"], "action": raw["action"], "params": pressed["params"]}
+    label = pressed["label"] or str(raw["action"])
+    return {
+        "label": label,
+        "meta": {"ui_event": event},
+        "prompt": parts.ui_event_message(label=label, **event),
+    }
+
+
 @ws_handler("message")
 async def handle_send_chat_message(data: Dict[str, Any], websocket: WebSocket) -> Dict[str, Any]:
     """Save the owner's message, start its run, and dispatch it. Answers
     ``{message_id, run_id, delivery, timestamp}``; ``run_in_progress`` (with
-    the live ``run_id``), ``not_running``, ``save_failed``, ``access_denied``
-    or ``invalid_request`` otherwise."""
+    the live ``run_id``), ``not_running``, ``save_failed``, ``access_denied``,
+    ``invalid_request`` or ``ui_event_rejected`` otherwise.
+
+    With ``ui_event`` the message is a button pressed in an interface the
+    employee showed: checked against that interface, saved as the owner's
+    message reading the button's label (kind ``action``), and sent to the
+    employee as a ``[ui-event]`` line naming the press."""
     message = data.get("message")
     if not isinstance(message, str) or not message.strip():
         return {"success": False, "error": "invalid_request", "detail": "message must be text"}
@@ -156,6 +185,14 @@ async def handle_send_chat_message(data: Dict[str, Any], websocket: WebSocket) -
         scope = await authorize_session(database, websocket, session_id)
     except ChatAccessDenied:
         return dict(_DENIED)
+
+    press: Optional[Dict[str, Any]] = None
+    if data.get("ui_event") is not None:
+        try:
+            press = await _ui_event(database, session_id, data["ui_event"])
+        except ValueError as exc:
+            return {"success": False, "error": "ui_event_rejected", "detail": str(exc)}
+        message = press["label"]
 
     # The scope rides the envelope's ``workflow_id``, so ``dispatch.emit``
     # signals only this workflow's listeners (without it one workflow's chat
@@ -179,7 +216,10 @@ async def handle_send_chat_message(data: Dict[str, Any], websocket: WebSocket) -
             text=message,
             track=track,
             state="queued" if delivery == "queued" else "pending",
+            kind="action" if press is not None else "message",
+            message_kind="action" if press is not None else "text",
             client_message_id=data.get("client_message_id"),
+            meta=press["meta"] if press is not None else None,
         )
     except ledger.RunInProgress as exc:
         return {"success": False, "error": "run_in_progress", "run_id": exc.run.run_id}
@@ -193,7 +233,7 @@ async def handle_send_chat_message(data: Dict[str, Any], websocket: WebSocket) -
     if admission.created:
         await announce_chat_updated(session_id, "user")
         event_data: Dict[str, Any] = {
-            "message": message,
+            "message": press["prompt"] if press is not None else message,
             "timestamp": timestamp,
             "session_id": session_id,
             "message_id": row["uid"],
@@ -329,6 +369,31 @@ async def handle_stop_chat_run(data: Dict[str, Any], websocket: WebSocket) -> Di
     return {"success": True, "run_id": run.run_id, "state": run.state}
 
 
+@ws_handler("part_id")
+async def handle_chat_ui_state(data: Dict[str, Any], websocket: WebSocket) -> Dict[str, Any]:
+    """What the owner set in an interface the employee showed
+    (``changes: [{path, value}]``, the last value per path winning). Kept on
+    the reply (``parts.ui[].state``), so a reload shows it. Answers the
+    state's new ``state_revision``; ``not_found`` when the session has no
+    such interface, ``invalid_request`` for a change that does not fit."""
+    from services.chat import parts
+
+    session_id = session_id_of(data)
+    database = container.database()
+    try:
+        await authorize_session(database, websocket, session_id)
+    except ChatAccessDenied:
+        return dict(_DENIED)
+    part_id = str(data["part_id"])
+    try:
+        updated = await parts.update_ui_state(database, session_id, part_id, data.get("changes"))
+    except parts.UiRefused as exc:
+        return {"success": False, "error": "invalid_request", "detail": str(exc)}
+    if updated is None:
+        return {"success": False, "error": "not_found"}
+    return {"success": True, "part_id": part_id, "state_revision": updated["state_revision"]}
+
+
 @ws_handler()
 async def handle_clear_chat_messages(data: Dict[str, Any], websocket: WebSocket) -> Dict[str, Any]:
     """Clear a session's chat, every generation of it, with its runs. For a
@@ -367,6 +432,7 @@ WS_HANDLERS = {
     "chat_unsubscribe": handle_chat_unsubscribe,
     "get_chat_run": handle_get_chat_run,
     "stop_chat_run": handle_stop_chat_run,
+    "chat_ui_state": handle_chat_ui_state,
     "clear_chat_messages": handle_clear_chat_messages,
     "save_chat_message": handle_save_chat_message,
 }

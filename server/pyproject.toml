@@ -55,6 +55,10 @@ dependencies = [
     # transitively via mcp; declared explicitly so it survives that
     # dependency changing.
     "python-multipart>=0.0.20",
+    # Checks the generated UI an employee shows in a chat reply against its
+    # catalog (services/genui/spec.py). Already present transitively via mcp;
+    # declared explicitly for the same reason.
+    "jsonschema>=4.23.0",
 
     # Auth
     "bcrypt>=4.2.0",

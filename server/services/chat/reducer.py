@@ -6,9 +6,10 @@ that subscribes mid-run starts from the same state the events before would
 have built. The hub keeps one live snapshot per run it publishes for
 (``services/chat/hub.py``); ``merge_snapshot`` lays it over the stored row.
 
-Lifecycle, step and text events are folded. Activity events (generated UI,
-approvals, sources) are not yet: nothing publishes them before generated UI
-lands, and folding them needs the RFC 6902 patch code that comes with it.
+Lifecycle, step, text and activity events are folded: an activity (a part
+the run is building, such as a generated UI) keeps its content, replaced by
+``activity.snapshot`` and patched by ``activity.delta``
+(``services/genui/patches.py``).
 """
 
 from __future__ import annotations
@@ -118,6 +119,15 @@ def _segment(snapshot: Dict[str, Any], message_id: str) -> Dict[str, Any]:
     return segment
 
 
+def _activity(snapshot: Dict[str, Any], message_id: str, activity_type: str) -> Dict[str, Any]:
+    for activity in snapshot["activities"]:
+        if activity.get("message_id") == message_id:
+            return activity
+    activity: Dict[str, Any] = {"message_id": message_id, "activity_type": activity_type, "content": None, "patches": 0}
+    snapshot["activities"].append(activity)
+    return activity
+
+
 def apply_event(snapshot: Mapping[str, Any], event: Mapping[str, Any]) -> Dict[str, Any]:
     """Fold one ``chat_run_event`` envelope (as a dict) into ``snapshot``.
 
@@ -168,6 +178,19 @@ def apply_event(snapshot: Mapping[str, Any], event: Mapping[str, Any]) -> Dict[s
     elif suffix == "text.ended":
         segment = _segment(out, str(data.get("message_id")))
         segment["final"] = bool(data.get("final"))
+    elif suffix == "activity.snapshot":
+        activity = _activity(out, str(data.get("message_id")), str(data.get("activity_type") or ""))
+        if data.get("replace", True) or activity.get("content") is None:
+            activity.update(
+                {"activity_type": data.get("activity_type"), "content": deepcopy(data.get("content")), "patches": 0}
+            )
+    elif suffix == "activity.delta":
+        from services.genui.patches import apply_patch
+
+        activity = _activity(out, str(data.get("message_id")), str(data.get("activity_type") or ""))
+        patch = data.get("patch") if isinstance(data.get("patch"), list) else []
+        activity["content"] = apply_patch(activity.get("content"), patch)
+        activity["patches"] = int(activity.get("patches") or 0) + len(patch)
     elif suffix == "custom":
         name = data.get("name")
         value = data.get("value") or {}

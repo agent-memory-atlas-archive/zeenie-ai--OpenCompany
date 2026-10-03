@@ -1,0 +1,239 @@
+{
+  "_comment": "What an employee may show inside a chat reply with the show_ui tool (server/nodes/chat/chat_ui). The tool's description and its validation (server/services/genui/spec.py) are built from this file, and the client's chat catalog (client/src/features/chat/genui/catalog.ts) must list the same components, roles, children, bound props, events and limits: tests on both sides read the other side. A component's props are JSON Schema for the literal values a model writes; any prop may instead hold an expression ({\"$state\": \"/path\"}, {\"$template\": \"... ${/path} ...\"}, {\"$cond\": condition, \"$then\": value, \"$else\": value}), and the prop named in `bind` may hold {\"$bindState\": \"/path\"}, which the control reads and writes. SlotPicker options use generic keys (time, detail, recommended, unavailable, note) rather than the design handoff's salon ones.",
+  "spec_version": 1,
+  "limits": {
+    "max_elements": 24,
+    "max_depth": 6,
+    "max_bytes": 16384,
+    "max_children": 12,
+    "max_id_length": 40,
+    "max_path_segments": 6
+  },
+  "components": {
+    "Stack": {
+      "role": "layout",
+      "description": "A column of elements, top to bottom. Use it as the root.",
+      "children": "any",
+      "props": {
+        "type": "object",
+        "properties": {
+          "gap": {"enum": ["sm", "md"]}
+        }
+      }
+    },
+    "Row": {
+      "role": "layout",
+      "description": "Buttons side by side.",
+      "children": ["Button"],
+      "props": {
+        "type": "object",
+        "properties": {
+          "gap": {"enum": ["sm", "md"]}
+        }
+      }
+    },
+    "Card": {
+      "role": "layout",
+      "description": "A titled panel of fields and text.",
+      "children": ["Select", "Toggle", "TextField", "Text"],
+      "props": {
+        "type": "object",
+        "required": ["title"],
+        "properties": {
+          "title": {"type": "string", "minLength": 1, "maxLength": 80},
+          "description": {"type": "string", "maxLength": 240}
+        }
+      }
+    },
+    "SlotPicker": {
+      "role": "input",
+      "description": "Pick one of a few times; its value is the picked option's id.",
+      "bind": "value",
+      "props": {
+        "type": "object",
+        "required": ["label", "options"],
+        "properties": {
+          "label": {"type": "string", "minLength": 1, "maxLength": 80},
+          "hint": {"type": "string", "maxLength": 120},
+          "value": {"type": "string", "maxLength": 40},
+          "options": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 8,
+            "items": {
+              "type": "object",
+              "required": ["id", "time"],
+              "properties": {
+                "id": {"type": "string", "minLength": 1, "maxLength": 40},
+                "time": {"type": "string", "minLength": 1, "maxLength": 40},
+                "detail": {"type": "string", "maxLength": 60},
+                "recommended": {"type": "boolean"},
+                "unavailable": {"type": "boolean"},
+                "note": {"type": "string", "maxLength": 80}
+              },
+              "additionalProperties": false
+            }
+          }
+        }
+      }
+    },
+    "Select": {
+      "role": "input",
+      "description": "Pick one of two to six short options.",
+      "bind": "value",
+      "props": {
+        "type": "object",
+        "required": ["label", "options"],
+        "properties": {
+          "label": {"type": "string", "minLength": 1, "maxLength": 80},
+          "value": {"type": "string", "maxLength": 40},
+          "options": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 6,
+            "items": {"type": "string", "minLength": 1, "maxLength": 40}
+          }
+        }
+      }
+    },
+    "Toggle": {
+      "role": "input",
+      "description": "An on/off choice.",
+      "bind": "checked",
+      "props": {
+        "type": "object",
+        "required": ["label"],
+        "properties": {
+          "label": {"type": "string", "minLength": 1, "maxLength": 80},
+          "hint": {"type": "string", "maxLength": 120},
+          "checked": {"type": "boolean"}
+        }
+      }
+    },
+    "TextField": {
+      "role": "input",
+      "description": "A short line of text the owner types.",
+      "bind": "value",
+      "props": {
+        "type": "object",
+        "required": ["label"],
+        "properties": {
+          "label": {"type": "string", "minLength": 1, "maxLength": 80},
+          "placeholder": {"type": "string", "maxLength": 80},
+          "value": {"type": "string", "maxLength": 400}
+        }
+      }
+    },
+    "Text": {
+      "role": "display",
+      "description": "A sentence or short paragraph.",
+      "props": {
+        "type": "object",
+        "required": ["text"],
+        "properties": {
+          "text": {"type": "string", "minLength": 1, "maxLength": 600}
+        }
+      }
+    },
+    "StatGrid": {
+      "role": "display",
+      "description": "A few numbers side by side, each with an optional change.",
+      "props": {
+        "type": "object",
+        "required": ["items"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 6,
+            "items": {
+              "type": "object",
+              "required": ["label", "value"],
+              "properties": {
+                "label": {"type": "string", "minLength": 1, "maxLength": 40},
+                "value": {"type": ["string", "number"]},
+                "delta": {"type": "string", "maxLength": 40},
+                "tone": {"enum": ["up", "down"]}
+              },
+              "additionalProperties": false
+            }
+          }
+        }
+      }
+    },
+    "BarChart": {
+      "role": "display",
+      "description": "Horizontal bars comparing a few values.",
+      "props": {
+        "type": "object",
+        "required": ["title", "bars"],
+        "properties": {
+          "title": {"type": "string", "minLength": 1, "maxLength": 80},
+          "bars": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 12,
+            "items": {
+              "type": "object",
+              "required": ["label", "value"],
+              "properties": {
+                "label": {"type": "string", "minLength": 1, "maxLength": 40},
+                "value": {"type": "number", "minimum": 0}
+              },
+              "additionalProperties": false
+            }
+          }
+        }
+      }
+    },
+    "Callout": {
+      "role": "display",
+      "description": "A highlighted note: info, warning, danger or success.",
+      "props": {
+        "type": "object",
+        "required": ["tone", "text"],
+        "properties": {
+          "tone": {"enum": ["info", "warning", "danger", "success"]},
+          "text": {"type": "string", "minLength": 1, "maxLength": 400}
+        }
+      }
+    },
+    "Button": {
+      "role": "action",
+      "description": "Runs the action in its \"on\": {\"press\": {\"action\", \"params\"}}.",
+      "events": ["press"],
+      "props": {
+        "type": "object",
+        "required": ["label"],
+        "properties": {
+          "label": {"type": "string", "minLength": 1, "maxLength": 40},
+          "variant": {"enum": ["primary", "secondary"]}
+        }
+      }
+    }
+  },
+  "actions": {
+    "ask": {
+      "description": "Sends params.text as the owner's next message. It is sent at once only when it is the button's label; otherwise it goes into the message box for the owner to send.",
+      "params": {
+        "type": "object",
+        "required": ["text"],
+        "properties": {
+          "text": {"type": "string", "minLength": 1, "maxLength": 300}
+        }
+      }
+    },
+    "setState": {
+      "description": "Sets params.statePath to params.value in this UI's state, without telling you.",
+      "params": {
+        "type": "object",
+        "required": ["statePath"],
+        "properties": {
+          "statePath": {"type": "string", "minLength": 2, "maxLength": 120},
+          "value": {}
+        }
+      }
+    }
+  },
+  "custom_actions": "Any other action name (a letter, then letters, digits or _) comes back to you as the owner's next turn, [ui-event]{...}[/ui-event], naming the element, the action and its params with $state values read at the press."
+}

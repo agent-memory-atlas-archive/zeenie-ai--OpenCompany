@@ -4,6 +4,7 @@
     "start",
     "chatTrigger",
     "chatReply",
+    "chatUi",
     "taskTrigger",
     "console",
 
