@@ -35,6 +35,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
+import { CHAT_MARKDOWN_COMPONENTS } from '@/features/chat';
 import { resolveNodeDescription } from '../../lib/nodeSpec';
 import { useAppStore } from '../../store/useAppStore';
 import { usePanelResize } from '../../hooks/usePanelResize';
@@ -440,7 +441,7 @@ const ConsolePanel: React.FC<ConsolePanelProps> = ({
                     </pre>
                   ) : (
                     <div className="chat-markdown text-sm leading-snug text-foreground">
-                      <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
+                      <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} components={CHAT_MARKDOWN_COMPONENTS}>
                         {msg.message}
                       </ReactMarkdown>
                     </div>
