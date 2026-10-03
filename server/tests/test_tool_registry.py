@@ -106,3 +106,31 @@ def test_tool_name_snapshot(node_type: str, expected_tool_name: str):
         f"If this rename is intentional, update "
         f"server/tests/fixtures/tool_names_snapshot.json in the same commit."
     )
+
+
+def test_no_tool_takes_a_delegation_name_unless_it_is_a_delegate():
+    """A node usable as a tool carries a ``delegate_to_*`` name only when it
+    is a delegation target.
+
+    ``BaseNode`` derives ``delegate_to_<type>`` for every
+    ``component_kind="agent"`` class, and the agent loop treats every
+    ``delegate_to_*`` call as a delegation that needs a ``task`` argument.
+    ``socialSend`` borrows the agent card for its layout and took that
+    name, so every send the model made through it was rejected.
+    """
+    from services.node_registry import get_node_class, registered_node_types
+    from services.workspace_capabilities import is_registered_agent
+
+    offenders = sorted(
+        node_type
+        for node_type in registered_node_types()
+        if (cls := get_node_class(node_type)) is not None
+        and getattr(cls, "usable_as_tool", False)
+        and (getattr(cls, "tool_name", "") or "").startswith("delegate_to_")
+        and not is_registered_agent(node_type)
+    )
+    assert not offenders, (
+        f"{offenders} are usable as tools but are named delegate_to_*, so the "
+        f"agent loop handles their calls as delegations. Declare tool_name "
+        f"and tool_description on the class."
+    )

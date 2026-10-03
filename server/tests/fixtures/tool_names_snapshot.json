@@ -80,6 +80,7 @@
   "twitterSend": "twitter_send",
   "twitterSearch": "twitter_search",
   "twitterUser": "twitter_user",
+  "socialSend": "social_send",
   "httpRequest": "http_request",
   "msMail": "ms_mail",
   "msCalendar": "ms_calendar",

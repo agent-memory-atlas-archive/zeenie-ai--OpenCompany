@@ -395,6 +395,17 @@ class SocialSendNode(ActionNode):
     annotations = {"destructive": False, "readonly": False, "open_world": True}
     task_queue = TaskQueue.MESSAGING
     usable_as_tool = True
+    # Named here because ``component_kind = "agent"`` (chosen for the card
+    # layout) otherwise derives the delegation identity
+    # ``delegate_to_socialSend``. The agent loop treats every
+    # ``delegate_to_*`` call as a delegation that needs a ``task`` argument,
+    # so it rejected the model's send arguments on every call.
+    tool_name = "social_send"
+    tool_description = (
+        "Send a message on a connected chat platform (WhatsApp, Telegram, "
+        "Discord, Slack, email and others) to a phone number, group, "
+        "channel, user or chat."
+    )
 
     Params = SocialSendParams
     Output = SocialSendOutput
