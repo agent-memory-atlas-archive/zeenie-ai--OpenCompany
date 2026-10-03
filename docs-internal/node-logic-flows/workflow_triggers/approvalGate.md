@@ -4,7 +4,7 @@
 |------|-------|
 | **Category** | workflow |
 | **Backend handler** | [`server/nodes/workflow/approval_gate/__init__.py`](../../../server/nodes/workflow/approval_gate/__init__.py) - `ApprovalGateNode`; dispatched via `BaseNode.execute()` + the `@Operation("request")` method |
-| **Tests** | [`server/tests/services/approvals/test_approval_gate.py`](../../../server/tests/services/approvals/test_approval_gate.py) |
+| **Tests** | [`server/tests/services/approvals/test_approval_gate.py`](../../../server/tests/services/approvals/test_approval_gate.py), [`test_decisions.py`](../../../server/tests/services/approvals/test_decisions.py) |
 | **Skill (if any)** | none |
 | **Dual-purpose tool** | no - `usable_as_tool = False`, so no agent can approve its own draft |
 
@@ -13,11 +13,15 @@
 Holds a draft until the owner sends or discards it. A Normal-mode employee
 with "Ask me before sending anything" on answers through
 `agent -> approvalGate -> reply`: the gate records the agent's draft (who it
-goes to, what it says), shows it on the employee's page in Home, and waits.
-Send lets the draft, or the owner's edit of it, through to the reply node;
-Discard, expiry or a Reset lets nothing through. Hire builds this wiring
+goes to, what it says), shows it as a card in the employee's chat, and waits.
+Send lets the draft, or the owner's edit of it, through to the reply node once
+the 5-second Undo window has passed; Discard (once Restore can no longer bring
+it back), expiry or a Reset lets nothing through. The workflow's Ask first rule
+is read live: with it off the draft goes straight through, recorded as sent
+without asking; a workflow with no rule always asks. Hire builds this wiring
 (`services/employees/builder.py`); the node is also usable by hand in the
-editor. Feature overview: [Normal mode](../../normal_mode.md).
+editor. Feature overview: [Normal mode](../../normal_mode.md); the decisions and
+the card: [Chat Protocol, Approvals](../../chat_protocol.md#approvals).
 
 ## Inputs (handles)
 
@@ -57,6 +61,7 @@ editor. Feature overview: [Normal mode](../../normal_mode.md).
   recipient_label: string; // "" unless approved
   approval_id: string | null;
   edited: boolean;
+  automatic: boolean;      // it went without asking: Ask first was off
 }
 ```
 
@@ -73,17 +78,21 @@ flowchart TD
   A[Receive params] --> B{draft empty or NO_REPLY?}
   B -- yes --> S[Return skipped, no row]
   B -- no --> C[Idempotency key: activity identity on Temporal, execution + node + inputs fingerprint in-process]
-  C --> D[get_or_create approval_requests row]
+  C --> R{new row and Ask first off?}
+  R -- yes --> A2[Create it approved and handed on, approved_by auto] --> O
+  R -- no --> D[get_or_create approval_requests row]
   D -- created --> E[Broadcast approval_lifecycle requested]
-  D --> F{row pending?}
+  D --> F{row status}
   E --> F
-  F -- no --> O[Return the outcome]
-  F -- yes --> G[Show node status waiting]
-  G --> H{expired?}
+  F -- pending --> H{expired?}
   H -- yes --> X[Settle expired, broadcast] --> O
-  H -- no --> I{worker shutting down?}
-  I -- yes --> W[Raise NodeWaitInterrupted: Temporal retries the attempt]
-  I -- no --> J[Wait for a notification or POLL_SECONDS, re-read the row] --> F
+  H -- no --> J
+  F -- approved, Undo window open --> J
+  F -- approved, window over --> K[Hand it on: consumed_at] --> O
+  F -- discarded, Restore window open --> J
+  F -- discarded, window over / expired / cancelled --> O[Return the outcome]
+  J{worker shutting down?} -- yes --> W[Raise NodeWaitInterrupted: Temporal retries the attempt]
+  J -- no --> L[Wait for a notification, the window's end or POLL_SECONDS; re-read the row] --> F
 ```
 
 ## Decision Logic
@@ -99,9 +108,10 @@ flowchart TD
   `p:{execution}:{node}:{sha256(outputs)[:16]}` in-process, where one
   execution id can span several runs of a deployment.
 - **Waiting**: a process-local waiter (`services/approvals/waiter.py`) wakes
-  the gate the moment `decide_approval` settles the row; it also re-reads
-  the row every `POLL_SECONDS` (10) to see decisions made in another process
-  and expiry.
+  the gate the moment `decide_approval` moves the row; it also re-reads the
+  row every `POLL_SECONDS` (10), or at the end of an Undo or Restore window, to
+  see decisions made in another process and expiry. Undo moves an approved
+  draft back to pending, and the gate keeps waiting.
 - **Error paths**: a worker shutting down mid-wait raises `NodeWaitInterrupted`,
   which `BaseNode.as_activity` turns into a retryable `ApplicationError`. On
   the in-process path there is no retry, and the run fails as for any error.
@@ -112,10 +122,11 @@ flowchart TD
   ([`server/models/approvals.py`](../../../server/models/approvals.py)): the
   recipient, draft, final text, status, revision and expiry. Decisions are
   compare-and-swap on `revision`.
-- **Broadcasts**: `approval_lifecycle` (CloudEvents type
-  `com.opencompany.approval.{requested|decided|expired|cancelled}`, subject =
-  approval id). Identity only, never the message body or the recipient; the
-  page refetches through `list_approvals`. Node status `waiting` while it waits.
+- **Broadcasts**: `approval_lifecycle` (source
+  `opencompany://services/approvals`, CloudEvents type
+  `com.opencompany.approval.<stage>`, subject = approval id). Identity only,
+  never the message body or the recipient; the chat refetches through
+  `list_approvals`. Node status `waiting` while it waits.
 - **External API calls**: none.
 - **File I/O**: none.
 - **Subprocess**: none.

@@ -148,16 +148,25 @@ text segments or activities (those are stored with the reply).
 
 | Handler | Request | Response |
 |---|---|---|
-| `list_approvals` | `{workflow_id?, status?: str \| [str] \| "open" \| "recent", run_id?, kind?, limit?}` | `{success, approvals, counts, server_time}` |
-| `get_approvals` | `{approval_ids}` (at most 50) | `{success, approvals, server_time}` |
-| `decide_approval` | `{approval_id, decision: "send" \| "discard" \| "undo" \| "restore" \| "retry", decision_key, edited_args?, text?, subject?, expected_revision?, confirm?}` | `{success, approval, will_send_on_resume, execution}` |
-| `resolve_interrupt` | `{interrupt_id, status: "resolved" \| "cancelled", payload: {approved, edited_args?}, decision_key}` | as `decide_approval` |
-| `set_ask_first` | `{workflow_id, ask_first, expected_revision?}` | `{success, ask_first, revision, replies_gated, needs_apply}` |
+| `list_approvals` | `{workflow_id?, status?: <row status> \| "open" \| "recent", run_id?, kind?: "gate" \| "tool_call", limit? (at most 100)}`; `status` defaults to `pending` | `{success, approvals, counts: {workflow_id: pending}, server_time}` |
+| `get_approvals` | `{approval_ids}` (at most 100) | `{success, approvals, server_time}` |
+| `decide_approval` | `{approval_id, decision: "send" \| "undo" \| "discard" \| "restore" \| "retry", decision_key, text?, subject?, confirm?}` | `{success, approval, idempotent?, will_send_on_resume}` |
+| `get_ask_first` | `{workflow_id}` | `{success, workflow_id, ask_first: bool \| null, revision}` (null: the workflow has no rule) |
+| `set_ask_first` | `{workflow_id, ask_first, expected_revision?}` | `{success, workflow_id, ask_first, revision, replies_gated, needs_apply}`; `rule_conflict` (with the current value) when it moved |
 
-`edited_args` replaces the call's arguments in full and may differ from them only in the editable keys. The approval
-summary adds `kind` (`gate` or `tool_call`), `node_type`, `tool_name`, `tool_call_id`, `run_id`, `args`, `editable`,
-`body_field`, `subject_field`, `approved_by` (`user` or `auto`), `undo_until`, `restore_until` and
-`outcome {certainty: "sent" | "not_sent" | "unknown", error?, at}`.
+`open` lists what the owner may still act on, or is on its way: pending, approved and not handed on, sending,
+failed, and discarded while it can be restored. `recent` lists everything, newest first. Only the owner's own drafts
+and workflows answer; any other id reads as `not_found`. `decide_approval` errors: `already_decided`, `expired`,
+`cancelled`, `too_late` (Undo after it went, Restore after its window), `confirm_required` (a retry of a send that
+broke off), `approval_conflict`, `send_unavailable` (nothing could start the send; the draft is back as it was),
+`not_found`, `invalid_request`. The same `decision_key` again answers `idempotent` with the row as it is.
+
+**ApprovalSummary**: `{approval_id, workflow_id, node_id, kind: "gate" | "tool_call", status, channel,
+channel_label, action?, recipient, recipient_label, body, subject?, context_excerpt?, details: [{label, value}],
+created_at, expires_at, revision, max_length, editable, approved_by?: "owner" | "auto", edited?, undo_until?,
+restore_until?, consumed_at?, outcome?: {certainty: "sent" | "not_sent" | "unknown", error?, at?}, run_id?,
+tool_call_id?, ui_part_id?, agent_node_id?, deployment_state?}`. `status` is `pending`, `approved`, `sending`,
+`sent`, `failed`, `discarded`, `expired` or `cancelled`; see [Approvals](#approvals).
 
 ### Plugins
 
@@ -207,7 +216,7 @@ parts: {
 }
 ```
 
-Approvals are joined live from the approvals store; the part only names them.
+Approvals are joined live from the approvals store; the part only names them (`{approval_id, tool_call_id}`).
 
 A run's tools record parts on the run as they go (`chat_run_parts`, keyed so a retried activity writes the same
 row; `services/chat/parts.py`). Reply in Chat saves its reply with the parts recorded so far, and the run's end seals
@@ -365,6 +374,52 @@ editor's console pane (`ConsoleChat`, compact, scope `live`) are the two hosts.
   twelve components (`genui/views.tsx`, through `lib/jsonRender/guard.tsx`), reveals a live one element by element
   (forward only, so patches arriving in bursts never restart it), and routes any button action (`genui/actions.ts`,
   a Proxy over action names). Development builds show the element and patch counts and an Inspect view.
+
+## Approvals
+
+What an employee sends to someone waits for the owner's OK while its workflow asks first
+(`server/services/approvals/`, models in `server/models/approvals.py`).
+
+- **The rule.** `workflow_rules` holds a workflow's Ask first, read every time something would send, so the chat's
+  Ask first chip (`set_ask_first`) changes it with no restart. An employee's row is seeded from its ground rules the
+  first time anything asks (a seeder the employees package registers), and a change is mirrored back into those
+  rules and the employee's card. A workflow with no row (one built in the editor) has no rule: its tool calls run
+  as before, and its approval gates wait for the owner as they always did.
+- **Two kinds of draft.** A `gate` row is an approvalGate node holding its run (an app reply). A `tool_call` row is
+  a call to a tool whose plugin declares an `approval` spec (`services/plugin/approval.py`: which operations send,
+  who it goes to, the body and subject the owner may edit, the card's other lines). `BaseNode.as_activity` checks
+  every agent tool call (`services/approvals/tool_calls.py`): with Ask first on, a call that sends does not run; its
+  row keeps what would run (the node's settings with the call's arguments over them, never the identity the node
+  sends as) and the model reads that it waits for the owner. A tool that cannot wait is refused (Stripe) or runs
+  restricted (the browser, read-only). With Ask first off the call runs; one made answering the owner in the chat
+  leaves a row (`approved_by: auto`) with how it went. An approval gate with the rule off lets its draft through at
+  once, recorded the same way.
+- **Decisions** (`services/approvals/decisions.py`), each a compare-and-swap on the row's revision recorded in
+  `approval_decisions`: `send` (pending -> approved; it goes after `UNDO_SECONDS`, 5, and Undo works until then),
+  `undo` (approved -> pending), `discard` (pending -> discarded; Restore works for `RESTORE_SECONDS` on a gate's draft,
+  whose run waits that long, and until expiry for a held call), `restore` and `retry` (failed -> approved; when the
+  send broke off it may have gone, so the owner confirms). A gate waits through the Undo and Restore windows before
+  it lets the draft through or not.
+- **Sending a held call.** Send starts `ApprovedToolCallWorkflow` (`approval-send-<id>-r<revision>`): it sleeps until
+  the Undo window closes, claims the row at that revision (`approvals.claim_send`: approved -> sending; an Undo, a
+  newer Send or a cancel moved it, and nothing runs), runs the node's own activity once with no retry, and records
+  the outcome (`approvals.record_outcome`): `sent`, `not_sent`, or `unknown` when the activity broke off. The node's
+  activity runs only under that claim. The first time the drafts are listed after a start, sends that never started
+  are started again and sends that never reported end `failed` with an unknown outcome.
+- **The employee hears how it went**: an `[update]{...}[/update]` note (`approval:<id>`) at the start of its next
+  turn in the chat, for a send that went, failed or was discarded.
+- **In the chat.** A draft made answering the owner is recorded on the run (`parts.approvals`) and shown at once (an
+  `activity.snapshot` with `activity_type: "approval"`); its card sits on that reply. Drafts no reply in view made (a
+  gate's, from the employee's own work) show after the conversation. The card (`features/chat/approval/`): Discard /
+  Edit / Send while it waits, "Sends in Ns" with Undo, Sending, Sent (and when, and whether Ask first was off),
+  Restore while it can, Try again (asking first when it may have gone), and "Sends when you resume" for a gate's
+  draft whose employee is paused. Countdowns use the server's clock (`server_time`). Ctrl/Cmd+Enter sends the newest
+  waiting draft; in the edit box it sends that one.
+- **Ends.** Clearing or resetting the chat cancels the drafts its runs made that still wait; a Reset cancels the
+  waiting gates too (`approvalGate.reset_execution_state`); deleting the workflow deletes its drafts and its rule.
+- **Broadcast.** `approval_lifecycle` (source `opencompany://services/approvals`, type
+  `com.opencompany.approval.<stage>`: requested, decided, undone, restored, sending, sent, failed, expired,
+  cancelled), identity only, with the chat run when there is one.
 
 ## Notes to the employee
 

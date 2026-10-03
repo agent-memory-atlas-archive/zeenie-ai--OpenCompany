@@ -551,6 +551,28 @@ A node class that declares `workspace_task = True` (the phone nodes in `server/n
 
 What the user sees, including what Reset leaves on the phone, is in [docs/mobile-workspace.md](../docs/mobile-workspace.md#resetting-phone-tasks).
 
+### Approved sends
+
+A tool call that sends, made while the workflow asks first, is held as a draft (`services/approvals/tool_calls.py`)
+instead of running. When the owner presses Send, `decide_approval` starts `ApprovedToolCallWorkflow`
+(`services/temporal/approved_tool_call_workflow.py`, id `approval-send-<approval id>-r<revision>`, `payload_version` 1,
+unsandboxed like the other framework workflows):
+
+- it sleeps until the draft's Undo window closes (`grace_until`);
+- `approvals.claim_send` moves the row from approved to sending, only at the revision the workflow was started for,
+  with a claim token derived from the workflow run; an Undo, a newer Send or a cancel moved the row, and the
+  workflow ends with nothing sent. A retried claim by the same run finds its own claim;
+- it runs the node's own `node.<type>.v<n>` activity once (`maximum_attempts=1`), with the call's arguments over the
+  node's settings; the activity runs only under that claim (`approval_execution` in its input);
+- `approvals.record_outcome` records `sent`, `not_sent` (the node said it did not go) or `unknown` (the activity
+  broke off, so it may have gone), and leaves the employee an `[update]` note for its next chat turn.
+
+The bookkeeping activities retry until they land. Both are in every framework worker's activity list
+(`services/approvals/activities.py::APPROVAL_ACTIVITIES`), and the workflow class is in `_framework_workflows`. A
+send that never started (the server stopped between the decision and the start) is started again by the approvals
+reconcile; one that never reported ends `failed` with an unknown outcome. See
+[Chat Protocol, Approvals](./chat_protocol.md#approvals).
+
 ## Config Node Filtering
 
 Certain nodes provide configuration rather than executing:
@@ -629,6 +651,7 @@ server/services/temporal/
 ├── polling_trigger_workflow.py   # PollingTriggerWorkflow (legacy polling listener)
 ├── workspace_tasks_workflow.py   # WorkspaceTaskControllerWorkflow (per-workflow admission + Reset for direct Workspace tasks)
 ├── node_invocation.py            # NodeInvocationWorkflow (one direct Workspace task)
+├── approved_tool_call_workflow.py # ApprovedToolCallWorkflow (sends a held tool call once the owner approved it)
 ├── workspace_task_activities.py  # reset_workspace_task_runtime (activity workspace_tasks.reset_runtime)
 ├── schedules.py         # Temporal Schedule creation for cronScheduler
 ├── search_attributes.py # EVENT_SEARCH_ATTRIBUTES (7 custom SAs, incl. ControlEventTypes)

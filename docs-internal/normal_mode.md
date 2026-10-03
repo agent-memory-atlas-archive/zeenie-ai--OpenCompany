@@ -633,20 +633,31 @@ What goes live when:
 
 ## Asking before sending
 
-With the rule on, a reply waits in an `approvalGate` until the owner decides
-on the employee's page. The gate stores the draft in `approval_requests`,
-wakes the moment it is decided, survives restarts (its idempotency key finds
-the same row on every attempt), expires after `timeout_hours`, and fails
-closed: nothing is sent unless it was approved, and the recipient always comes
-from the run's trigger. Full contract:
-[approvalGate](./node-logic-flows/workflow_triggers/approvalGate.md).
+The rule is live: the workflow's Ask first (`workflow_rules`, seeded from the
+hire's ground rules) is read every time something would send, and the Ask
+first chip beside the chat's message box changes it with no restart (turning
+it off asks first). With it on, a reply waits in an `approvalGate`, and a tool
+call that sends (a plugin with an `approval` spec) is held as a draft instead
+of running; both show as cards in the employee's chat, on the reply that made
+them or after the conversation. Send goes after a 5-second Undo window, a
+discarded draft can be restored, and a held call is sent once by its own
+Temporal workflow, which tells the employee how it went on its next turn.
+With it off, replies and calls go at once and the chat still shows what went.
+The gate stores the draft in `approval_requests`, wakes the moment it is
+decided, survives restarts (its idempotency key finds the same row on every
+attempt), expires after `timeout_hours`, and fails closed: nothing is sent
+unless it was approved, and the recipient always comes from the run's
+trigger. Full contract: [Chat Protocol, Approvals](./chat_protocol.md#approvals)
+and [approvalGate](./node-logic-flows/workflow_triggers/approvalGate.md).
 
-The same rule limits what an employee may add to itself from Talk (nothing
+The rule also limits what an employee may add to itself from Talk (nothing
 that sends or spends; see [Adding tools and skills from Talk](#adding-tools-and-skills-from-talk)),
 and a talk agent that asks first is told it cannot send or spend anything for
-the owner, only write it for them to send. The summary's `asks_first` is the
-hire's rule (for a workflow built in Dev mode, whether it has an approval
-gate), shown in a line under the employee's page.
+the owner, only write it for them to send. The summary's `asks_first` follows
+the live rule (for a workflow built in Dev mode with no rule, whether it has an
+approval gate), shown in a line under the employee's page. A graph built
+before the live rule (`builder_version` below 3) needs Apply for a changed rule
+to cover everything: `set_ask_first` says so (`needs_apply`).
 
 ## "Done today"
 
