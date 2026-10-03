@@ -101,6 +101,14 @@ const EMPTY_USER_SKILLS: UserSkill[] = [];
 const EMPTY_FOLDER_SKILLS: AvailableSkill[] = [];
 const REQUIRED_ASSISTANT_SKILL = 'skill';
 
+/** The node's whole saved row (MasterSkillParams on the server). A direct
+ *  `save_node_parameters` replaces the row, so both fields go every time,
+ *  under the keys the panel and the agent read. */
+const masterSkillRow = (skillsConfig: MasterSkillConfig, skillFolder: string | undefined) => ({
+  skills_config: skillsConfig,
+  skill_folder: skillFolder || 'assistant',
+});
+
 interface MasterSkillEditorProps {
   skillsConfig: MasterSkillConfig;
   onConfigChange: (config: MasterSkillConfig) => void;
@@ -523,7 +531,7 @@ const MasterSkillEditor: React.FC<MasterSkillEditorProps> = ({
           if (nodeId) {
             await sendRequest('save_node_parameters', {
               node_id: nodeId,
-              parameters: { skills_config: newConfig, skillFolder: skillFolder || 'assistant' }
+              parameters: masterSkillRow(newConfig, skillFolder),
             });
           }
           setIsCreatingNew(false);
@@ -555,7 +563,7 @@ const MasterSkillEditor: React.FC<MasterSkillEditorProps> = ({
         if (nodeId) {
           await sendRequest('save_node_parameters', {
             node_id: nodeId,
-            parameters: { skills_config: newConfig, skillFolder: skillFolder || 'assistant' }
+            parameters: masterSkillRow(newConfig, skillFolder),
           });
         }
 
