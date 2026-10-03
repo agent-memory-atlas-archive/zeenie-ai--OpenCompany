@@ -56,9 +56,8 @@ def cron_schedule_id(workflow_slug: str, trigger_label: str) -> str:
     """Deterministic Schedule ID for a (workflow_slug, cron-node label) pair.
 
     Re-deploying the same OpenCompany workflow (slug + label unchanged)
-    targets the same Schedule. Pairs with the create call's
-    ``"already exists" → no-op`` semantics (per
-    :exc:`temporalio.client.ScheduleAlreadyRunningError`).
+    targets the same Schedule, which :func:`create_cron_schedule` then
+    updates in place.
     """
     return f"{workflow_slug}-{trigger_label}"
 
@@ -142,12 +141,16 @@ async def create_cron_schedule(
     task_queue: str = "machina-tasks",
     overlap_policy: ScheduleOverlapPolicy = ScheduleOverlapPolicy.SKIP,
 ) -> str:
-    """Create-or-reuse a Temporal Schedule for a cron trigger.
+    """Create a Temporal Schedule for a cron trigger, or update the one there.
 
-    Returns the Schedule's id. Idempotent: a re-deploy with the same
-    ``(workflow_slug, node_id)`` pair reuses the existing Schedule
-    (Temporal raises :exc:`ScheduleAlreadyRunningError` which we swallow
-    as a no-op).
+    Returns the Schedule's id, which comes from ``(workflow_slug,
+    trigger_label)``. When that Schedule already exists (a re-deploy, or the
+    boot re-arm), Temporal raises :exc:`ScheduleAlreadyRunningError` and the
+    Schedule is updated in place: new spec, action args and Search
+    Attributes, same paused state. One owned by another workflow raises
+    ``cron_schedule_ownership_conflict`` instead. An updated ``CRON_ONCE``
+    Schedule does not run again, since ``trigger_immediately`` applies only
+    when the Schedule is created.
 
     Args:
         client: Connected Temporal client.
