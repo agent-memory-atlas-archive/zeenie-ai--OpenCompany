@@ -254,20 +254,29 @@ by hand, alongside test runs:
 - JS: bump the range in the relevant `package.json` (or the top-level
   `overrides` block in the root manifest for transitive pins), `bun install`,
   run the suites.
-- pip: `uv lock --upgrade-package <name>` in `server/`, `uv sync`, run the
-  suites (`predeploy.yml` runs `uv lock --check`).
+- pip: `uv lock --upgrade-package <name>` in `server/`, regenerate
+  `server/requirements.txt` with the `uv export` command in its header,
+  `uv sync`, run the suites (`predeploy.yml` runs `uv lock --check`).
 
 The file is kept rather than deleted because of how alerts are routed:
 a directory with no entry gets whatever updater Dependabot guesses, and for
 a `bun.lock` tree it guesses `npm_and_yarn`, which cannot read `bun.lock`
 and fails every run ("can't update vulnerable dependencies for projects
 without a lockfile or pinned version requirement", the desktop vitest alert
-of 2026-09-11). The four entries (`bun /`, `bun /desktop`, `pip /server`,
-`github-actions /`) keep every surface mapped to the right ecosystem so
-that never happens again.
+of 2026-09-11). The five entries (`bun /`, `bun /desktop`, `pip /server`,
+`uv /server`, `github-actions /`) keep every surface mapped to the right
+ecosystem so that never happens again. `server/` needs both of its entries:
+because of `server/uv.lock`, Dependabot runs its uv updater there, and while
+only the `pip` entry ignored updates it kept opening security PRs (#140 to
+#142, 2026-09-30 and 10-01).
 
 Alerts themselves still appear in the repository's Security tab; they are
-useful and cost nothing. Dependabot's own security-update attempts are a
+useful and cost nothing. One kind never closes by itself: GitHub builds
+`server/`'s dependency graph from `uv.lock` alone (its "uv in /server" graph
+job submits only that manifest), so an alert filed against
+`server/requirements.txt` stays open after the file is re-exported with the
+fixed version. Dismiss those once `uv.lock` and the export both carry the
+fix. Dependabot's own security-update attempts are a
 repository setting (Settings > Code security > Dependabot), not something
 the config file controls; turn them off there if the "Dependabot Updates"
 job should stop running entirely.

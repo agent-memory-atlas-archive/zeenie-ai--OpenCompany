@@ -2,7 +2,9 @@
 # security-update PRs. Dependencies move by hand, alongside test runs:
 #   JS   -> bump the range in the relevant package.json (or the top-level
 #           `overrides` block for transitive pins), `bun install`, run tests
-#   pip  -> `uv lock --upgrade-package <name>` in server/, `uv sync`, tests
+#   pip  -> `uv lock --upgrade-package <name>` in server/, regenerate
+#           server/requirements.txt with the `uv export` command in its
+#           header, `uv sync`, tests
 # Alerts stay visible in the repository's Security tab.
 #
 # Why this file still exists: without an entry for a directory, Dependabot
@@ -34,7 +36,18 @@ updates:
     ignore:
       - dependency-name: "*"
 
+  # server/ needs both entries. Because of server/uv.lock, Dependabot runs its
+  # uv updater there, and while only the pip entry ignored updates it kept
+  # opening security PRs (#140 to #142, 2026-09-30 and 10-01).
   - package-ecosystem: pip
+    directory: /server
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 0
+    ignore:
+      - dependency-name: "*"
+
+  - package-ecosystem: uv
     directory: /server
     schedule:
       interval: monthly
