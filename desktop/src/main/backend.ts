@@ -28,7 +28,7 @@ export interface SpawnBackendOptions {
  * before running the lifespan shutdown. Its default is "forever": when the
  * renderer's WebSocket died with a reset rather than a clean close, the
  * handler task lingered and uvicorn never reached the lifespan, so the
- * shell's 30 s budget expired and the backend had to be tree-killed. Bound
+ * shell's stop budget expired and the backend had to be tree-killed. Bound
  * it; the lifespan teardown (which reaps Temporal / the bun sidecar / edgymeow) is what
  * actually matters and still runs after this window.
  */

@@ -156,15 +156,22 @@ Locked by `tests/test_desktop_shutdown_endpoint.py`.
 Also acceptable on POSIX: SIGTERM to the process. Do not `TerminateProcess`
 first on Windows; that skips the lifespan.
 
-Shell should wait up to 30 s, then tree-kill as a fallback (Windows:
-`taskkill /PID <pid> /T /F`; POSIX: SIGKILL to the process group, so spawn
-the backend detached in its own group).
+The shell waits longer than the backend's own deadline (§6), then
+tree-kills as a fallback (Windows: `taskkill /PID <pid> /T /F`; POSIX:
+SIGKILL to the process group, so spawn the backend detached in its own
+group). The Electron shell waits 75 s (`STOP_TIMEOUT_MS`,
+`desktop/src/main/shutdown.ts`).
 
-**Known gap:** nothing keeps the backend's teardown inside that 30 s. Plugin
-hooks can take up to 10 s each, one after another, and the Temporal workers
-get their own grace period (`TEMPORAL_GRACEFUL_SHUTDOWN_SECONDS=10` under the
-shell), so a slow teardown can outlast the wait and end in the tree-kill
-instead of a clean exit.
+The backend's deadline, `SHUTDOWN_DEADLINE_SECONDS` (65 s), covers the CLI's
+shutdown allowance (`backend_shutdown_grace_seconds`, `cli/_common.py`) at
+the shell's `TEMPORAL_GRACEFUL_SHUTDOWN_SECONDS=10`: 5 s of connection
+drain, 10 s for each of the three Temporal stops (worker pool, manager
+worker, dev server) and 30 s for the rest. A slow teardown therefore ends in
+the backend's own deadline, not the shell's tree-kill. The order matters
+because a kill before the plugin hooks run skips `mark_clean_shutdown`, and
+the next launch then treats the quit as a crash and pauses running
+deployments. `cli/tests/test_backend_shutdown.py` locks allowance <=
+deadline < shell wait.
 
 ## 6. Parent death
 
@@ -176,8 +183,9 @@ Armed by `start_desktop_mode()` at lifespan start:
   stdin; EOF means the parent is gone, noticed in milliseconds. The shell
   must keep the pipe open for the process lifetime and close it as part of
   quitting.
-- **Deadline**: `request_shutdown` arms a 45 s daemon thread that tree-kills
-  our children and `os._exit(1)`s if the graceful path wedges.
+- **Deadline**: `request_shutdown` arms a daemon thread that, after
+  `SHUTDOWN_DEADLINE_SECONDS` (65 s, see §5), tree-kills our children and
+  `os._exit(1)`s if the graceful path wedges.
 - **Windows Job Object**: the backend enrolls itself in a kill-on-close job
   (ctypes, no pywin32). Children inherit membership, so if the backend is
   terminated by any means the kernel kills Temporal / the bun sidecar / edgymeow with

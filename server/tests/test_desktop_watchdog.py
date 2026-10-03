@@ -43,7 +43,7 @@ def desktop(monkeypatch):
     mod = _load_desktop()
     for var in (mod.ENV_FLAG, mod.ENV_PARENT_PID, mod.ENV_TOKEN, mod.ENV_STDIN_WATCHDOG):
         monkeypatch.delenv(var, raising=False)
-    # Never let a test really signal the pytest process or arm the 45 s exit.
+    # Never let a test really signal the pytest process or arm the deadline exit.
     raised: list[int] = []
     monkeypatch.setattr(mod.signal, "raise_signal", lambda sig: raised.append(sig))
     monkeypatch.setattr(mod, "_deadline_thread", lambda reason: None)

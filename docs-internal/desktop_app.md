@@ -96,7 +96,8 @@ shell reads it directly (`stage/runtime/<os>-<arch>/`), in a packaged app
 8. `checkForUpdatesAndNotify`.
 
 Quit: `POST /api/desktop/shutdown` with the per-launch token, close stdin,
-wait up to 30 s, then `taskkill /T` (Windows) or SIGKILL the process group.
+wait up to 75 s (longer than the backend's own 65 s deadline; host contract
+§5), then `taskkill /T` (Windows) or SIGKILL the process group.
 On the next launch a still-alive pid in `backend.pid` is tree-killed first.
 If the backend crashes it is restarted with 1 s / 3 s / 9 s backoff, at most
 three times in five minutes, then the setup window shows the error.

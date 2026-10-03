@@ -13,6 +13,15 @@
 
 import { spawn } from "node:child_process";
 
+/**
+ * How long the shell waits for the backend to exit before tree-killing it.
+ * Longer than the backend's own deadline (`SHUTDOWN_DEADLINE_SECONDS`, 65 s,
+ * in server/core/desktop.py), after which it kills its own process tree and
+ * exits, so this fallback only fires for a backend that could not. Locked by
+ * cli/tests/test_backend_shutdown.py.
+ */
+export const STOP_TIMEOUT_MS = 75_000;
+
 export interface ChildLike {
   pid?: number;
   exitCode: number | null;
@@ -82,7 +91,7 @@ export type StopOutcome = "already-exited" | "graceful" | "signal" | "tree-kille
 
 export async function stopBackend(opts: StopOptions): Promise<StopOutcome> {
   const { child, port, token } = opts;
-  const timeoutMs = opts.timeoutMs ?? 30_000;
+  const timeoutMs = opts.timeoutMs ?? STOP_TIMEOUT_MS;
   const platform = opts.platform ?? process.platform;
   const post = opts.post ?? postShutdown;
   const kill = opts.treeKill ?? treeKill;

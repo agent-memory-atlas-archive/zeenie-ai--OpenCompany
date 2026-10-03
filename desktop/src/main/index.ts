@@ -27,7 +27,7 @@ import { installMenu } from "./menu";
 import { type Layout, layoutReport, resolveLayout, targetKey, venvPython } from "./paths";
 import { choosePort } from "./ports";
 import { expectedStamp, needsProvision, runProvision } from "./provision";
-import { stopBackend, treeKill } from "./shutdown";
+import { STOP_TIMEOUT_MS, stopBackend, treeKill } from "./shutdown";
 import { loadState, saveState } from "./state";
 import { checkForUpdates, initUpdater } from "./updater";
 
@@ -36,7 +36,6 @@ const DEFAULT_PORT = 5678;
 const SCAN_FROM = 5679;
 const SCAN_TO = 5699;
 const READY_TIMEOUT_MS = 180_000;
-const STOP_TIMEOUT_MS = 30_000;
 
 // ---------------------------------------------------------------------------
 // Layout

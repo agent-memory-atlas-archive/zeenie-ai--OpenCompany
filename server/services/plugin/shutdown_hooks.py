@@ -46,11 +46,12 @@ ShutdownHook = Callable[[], Awaitable[None]]
 # lifespan teardown: under ``company serve`` the CLI's tree-kill (then 5 s
 # after SIGTERM) masked it, but a desktop shell waiting for a clean exit (so
 # Temporal / the JS executor sidecar / the WhatsApp bridge are reaped, not
-# orphaned) saw the backend hang until the 45 s desktop deadline killed it.
+# orphaned) saw the backend hang until the desktop deadline killed it.
 # Each hook now gets this long, then teardown moves on and names the offender
-# at WARNING. Hooks run one after another, so the worst case grows with the
-# number of hooks, while the desktop shell waits only 30 s before its own
-# tree-kill (docs-internal/desktop_host_contract.md).
+# at WARNING. Hooks run one after another, so several hooks that each hit
+# this cap can outlast what the host allows the whole teardown (the desktop
+# deadline in ``core/desktop.py``, the CLI's ``backend_shutdown_grace_seconds``),
+# which then kills the process tree (docs-internal/desktop_host_contract.md).
 HOOK_TIMEOUT_SECONDS = 10.0
 
 

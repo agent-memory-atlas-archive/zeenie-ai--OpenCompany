@@ -62,11 +62,14 @@ ENV_STDIN_WATCHDOG = "OPENCOMPANY_DESKTOP_STDIN"
 PARENT_POLL_SECONDS = 2.0
 
 # Time the graceful lifespan teardown gets before the deadline thread
-# tree-kills our children and exits. Temporal's own graceful window is
-# ``TEMPORAL_GRACEFUL_SHUTDOWN_SECONDS`` (the shell sets 10 s), the Node
-# sidecar 5 s, so 45 s is generous without letting a wedged teardown pin
-# a zombie backend under a closed window forever.
-SHUTDOWN_DEADLINE_SECONDS = 45.0
+# tree-kills our children and exits. It covers the allowance the CLI gives
+# the backend (``backend_shutdown_grace_seconds`` in ``cli/_common.py``) at
+# the ``TEMPORAL_GRACEFUL_SHUTDOWN_SECONDS=10`` the shell sets: 5 s of
+# connection drain, 10 s for each of the three Temporal stops (worker pool,
+# manager worker, dev server) and 30 s for the rest. The shell waits longer
+# before its own tree-kill, so the backend finishes or kills its own tree
+# first; ``cli/tests/test_backend_shutdown.py`` locks that order.
+SHUTDOWN_DEADLINE_SECONDS = 65.0
 
 _shutdown_requested = False
 _job_handle: Optional[int] = None

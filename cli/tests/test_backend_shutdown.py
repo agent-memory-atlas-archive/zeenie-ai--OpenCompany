@@ -28,6 +28,14 @@ VM_UNITS = (
 # Room after the CLI's allowance for the supervisor's wait after its own
 # tree-kill and for the processes to exit.
 UNIT_STOP_MARGIN_SECONDS = 10
+# The desktop shell sets the backend's Temporal grace (env.ts) and waits
+# STOP_TIMEOUT_MS (shutdown.ts) before its own tree-kill; the backend's own
+# deadline is SHUTDOWN_DEADLINE_SECONDS (core/desktop.py).
+DESKTOP_ENV = "desktop/src/main/env.ts"
+DESKTOP_SHUTDOWN = "desktop/src/main/shutdown.ts"
+DESKTOP_HOST = "server/core/desktop.py"
+# Room after the backend's deadline for its own tree-kill and exit.
+DESKTOP_STOP_MARGIN_SECONDS = 10
 
 
 @pytest.mark.parametrize("temporal_grace", [1, 30, 80])
@@ -136,4 +144,29 @@ def test_vm_unit_outwaits_the_backend_shutdown_allowance(rel: str, monkeypatch: 
     assert timeouts[0] >= allowance + UNIT_STOP_MARGIN_SECONDS, (
         f"{rel}: TimeoutStopSec={timeouts[0]} does not outlast the CLI's backend shutdown "
         f"allowance of {allowance:.0f}s plus {UNIT_STOP_MARGIN_SECONDS}s"
+    )
+
+
+def _one_number(rel: str, pattern: str) -> float:
+    found = re.findall(pattern, (project_root() / rel).read_text(encoding="utf-8"), re.MULTILINE)
+    assert len(found) == 1, f"{rel}: expected one match for {pattern!r}, found {found}"
+    return float(found[0].replace("_", ""))
+
+
+def test_desktop_shell_outwaits_the_backend_deadline(monkeypatch: pytest.MonkeyPatch):
+    """The desktop backend must finish, or kill its own tree, before the shell kills it.
+
+    Its deadline covers the CLI's allowance at the Temporal grace the shell
+    sets, and the shell waits longer than that deadline. A tree-kill before
+    the shutdown hooks run makes the next launch treat the quit as a crash
+    and pause running deployments.
+    """
+    grace = _one_number(DESKTOP_ENV, r'^\s*TEMPORAL_GRACEFUL_SHUTDOWN_SECONDS: "(\d+)",\s*$')
+    monkeypatch.setenv("TEMPORAL_GRACEFUL_SHUTDOWN_SECONDS", str(int(grace)))
+    allowance = backend_shutdown_grace_seconds(replace(load_config(), temporal_enabled=True))
+    deadline = _one_number(DESKTOP_HOST, r"^SHUTDOWN_DEADLINE_SECONDS = ([\d.]+)\s*$")
+    shell_wait = _one_number(DESKTOP_SHUTDOWN, r"^export const STOP_TIMEOUT_MS = ([\d_]+);\s*$") / 1000
+    assert deadline >= allowance, f"the backend's {deadline:.0f}s deadline is shorter than the {allowance:.0f}s allowance"
+    assert shell_wait >= deadline + DESKTOP_STOP_MARGIN_SECONDS, (
+        f"the shell waits {shell_wait:.0f}s, less than {DESKTOP_STOP_MARGIN_SECONDS}s past the backend's {deadline:.0f}s deadline"
     )
