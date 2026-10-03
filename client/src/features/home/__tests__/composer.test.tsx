@@ -10,7 +10,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { ThemeProvider } from '@/contexts/ThemeContext';
 import { Composer, type ComposerProps } from '../hire/Composer';
-import { createLabel, isSendKey } from '../hire/composerKeys';
+import { createLabel } from '../hire/composerKeys';
 import { greetingFor } from '../hire/greeting';
 import { HireNotice } from '../hire/HireNotice';
 import { TemplateChips } from '../hire/TemplateChips';
@@ -36,20 +36,6 @@ function setup(overrides: Partial<ComposerProps> = {}) {
   );
   return { props, box: screen.getByRole('textbox') };
 }
-
-describe('isSendKey', () => {
-  it('sends on a plain Enter only', () => {
-    expect(isSendKey({ key: 'Enter', shiftKey: false })).toBe(true);
-    expect(isSendKey({ key: 'Enter', shiftKey: true })).toBe(false);
-    expect(isSendKey({ key: 'a', shiftKey: false })).toBe(false);
-  });
-
-  it('never sends the Enter that confirms an IME composition', () => {
-    expect(isSendKey({ key: 'Enter', shiftKey: false, nativeEvent: { isComposing: true } })).toBe(false);
-    expect(isSendKey({ key: 'Enter', shiftKey: false, keyCode: 229 })).toBe(false);
-    expect(isSendKey({ key: 'Enter', shiftKey: false, nativeEvent: { keyCode: 229 } })).toBe(false);
-  });
-});
 
 describe('Composer', () => {
   it('sends with Enter and keeps Shift+Enter for a new line', () => {

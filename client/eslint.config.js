@@ -6,6 +6,7 @@ import tseslint from 'typescript-eslint'
 
 const GENUI_PRIVATE =
   'Import the setup-screen pipeline from features/home/genui (its index) only; its modules are private to that folder.'
+const CHAT_PRIVATE = 'Import the chat from features/chat (its index) only; its modules are private to that folder.'
 
 export default tseslint.config(
   { ignores: ['dist'] },
@@ -87,19 +88,46 @@ export default tseslint.config(
   // Normal mode's setup-screen pipeline (catalogue, parser, normalizer,
   // renderer, draft store) is private to its folder: everything else
   // imports it through features/home/genui/index.ts. Only that folder is
-  // caught: the shared json-render glue (lib/jsonRender) and other
-  // generated-UI folders (features/chat/genui) are free to import.
+  // caught: the shared json-render glue (lib/jsonRender) is free to import.
+  // The shared chat (features/chat) is private the same way: its index is
+  // its public surface, and its own files reach each other relatively.
   {
     files: ['src/**/*.{ts,tsx}'],
     ignores: ['src/features/home/genui/**'],
     rules: {
-      'no-restricted-imports': ['error', { patterns: [{ group: ['**/home/genui/*'], message: GENUI_PRIVATE }] }],
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            { group: ['**/home/genui/*'], message: GENUI_PRIVATE },
+            { group: ['**/features/chat/*'], message: CHAT_PRIVATE },
+          ],
+        },
+      ],
     },
   },
   // Home's own folders reach it relatively ("../genui/catalog"), which the
   // path pattern above cannot see; this block replaces it there.
   {
     files: ['src/features/home/**/*.{ts,tsx}'],
+    ignores: ['src/features/home/genui/**'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            { group: ['**/home/genui/*'], message: GENUI_PRIVATE },
+            { regex: '^(?:\\./|(?:\\.\\./)+)genui/', message: GENUI_PRIVATE },
+            { group: ['**/features/chat/*'], message: CHAT_PRIVATE },
+          ],
+        },
+      ],
+    },
+  },
+  // Tests may set up the chat's internals (its stores, its lazy markdown);
+  // they keep the setup-screen rule.
+  {
+    files: ['src/**/__tests__/**/*.{ts,tsx}', 'src/**/*.test.{ts,tsx}'],
     ignores: ['src/features/home/genui/**'],
     rules: {
       'no-restricted-imports': [

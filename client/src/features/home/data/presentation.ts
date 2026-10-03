@@ -165,6 +165,19 @@ export function talkNoticeText(mode: TalkMode, name: string, queued = false): st
   }
 }
 
+/** The line beside their main action for an employee who cannot take
+ *  messages here at all (Talk off or unsupported): only their state. */
+export function stateNoticeText(mode: TalkMode, name: string): string | null {
+  switch (mode) {
+    case 'send':
+      return null;
+    case 'queue':
+      return `${name} is paused.`;
+    case 'start':
+      return `${name} isn’t running.`;
+  }
+}
+
 /** Said before anything that restarts an employee (Turn on Talk, Apply): a
  *  restart cancels the drafts waiting for the owner. */
 export function restartDraftsWarning(name: string, drafts: number): string {
@@ -196,10 +209,4 @@ export const STATUS_DOT_CLASS: Record<StatusTone, string> = {
   live: 'bg-node-trigger opencompany-pip-pulse',
 };
 
-export { AVATAR_CLASS } from '@/components/catalog/presentation';
-
-/** The avatar's letter: the first letter of the name, "?" when empty. */
-export function initialOf(name: string): string {
-  const letter = Array.from(name.trim())[0];
-  return letter ? letter.toLocaleUpperCase() : '?';
-}
+export { AVATAR_CLASS, initialOf } from '@/components/catalog/presentation';

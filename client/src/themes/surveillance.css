@@ -253,7 +253,7 @@
 /* CHAT */
 :root[data-theme="surveillance"] .chat-msg { border-radius: 0; }
 :root[data-theme="surveillance"] .chat-msg-user { background: var(--bg-panel); border: 1px solid var(--primary); }
-:root[data-theme="surveillance"] .chat-msg-bot { background: var(--bg-elevated); border-left: 3px solid var(--phosphor); border-top: 1px solid var(--border-default); border-right: 1px solid var(--border-default); border-bottom: 1px solid var(--border-default); }
+:root[data-theme="surveillance"] .chat-msg-bot { padding: 8px 12px; background: var(--bg-elevated); border-left: 3px solid var(--phosphor); border-top: 1px solid var(--border-default); border-right: 1px solid var(--border-default); border-bottom: 1px solid var(--border-default); }
 
 /* STATUS BAR */
 :root[data-theme="surveillance"] .statusbar {

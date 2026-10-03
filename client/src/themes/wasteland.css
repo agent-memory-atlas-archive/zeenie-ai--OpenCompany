@@ -237,7 +237,7 @@
 /* CHAT */
 :root[data-theme="wasteland"] .chat-msg { border-radius: 0; }
 :root[data-theme="wasteland"] .chat-msg-user { background: var(--info-soft); border: 1px solid var(--accent); }
-:root[data-theme="wasteland"] .chat-msg-bot { background: var(--bg-elevated); border: 1px solid var(--rust); }
+:root[data-theme="wasteland"] .chat-msg-bot { padding: 8px 12px; background: var(--bg-elevated); border: 1px solid var(--rust); }
 
 /* STATUS BAR */
 :root[data-theme="wasteland"] .statusbar {

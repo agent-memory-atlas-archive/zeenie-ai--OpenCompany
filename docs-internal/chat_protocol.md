@@ -8,14 +8,15 @@ event model and ordering ([events](https://docs.ag-ui.com/concepts/events),
 snake_case fields in the repo's CloudEvents envelope (`services/events/envelope.py`), never as literal camelCase
 AG-UI JSON.
 
-Status: being built on `feature/chat-genui`; the design and the owner's decisions are in the plan recorded at
+Status: being built in phases on `main`; the design and the owner's decisions are in the plan recorded at
 `~/.claude/plans/analyze-the-new-generative-zazzy-cosmos.md`. Change this document in the same commit as any change
 to the shapes below, and bump `protocol_version` (returned by `get_chat_messages`) when an existing field changes
 meaning.
 
 Built so far: runs and their storage, the lifecycle events (`started`, `finished`, `failed`), subscriptions,
-`get_chat_messages` v2, `get_chat_run`, the watchdog and the MachinaWorkflow patch (see [Runs](#runs)). Every other
-event, handler and part below is the contract the later phases build to.
+`get_chat_messages` v2 (with each message's `run`), `get_chat_run`, the watchdog and the MachinaWorkflow patch (see
+[Runs](#runs)), and the shared chat UI on both hosts (see [Client](#client)). Every other event, handler and part
+below is the contract the later phases build to.
 
 ## Concepts
 
@@ -168,7 +169,8 @@ summary adds `kind` (`gate` or `tool_call`), `node_type`, `tool_name`, `tool_cal
 
 ```
 {id, legacy_id, role, kind, text, message, timestamp, run_key, run_id, parent_id, status, attachments,
- parts, feedback, siblings: {index, count, ids}, editable, client_message_id?}
+ parts, feedback, siblings: {index, count, ids}, editable, client_message_id?,
+ run?: {run_id, state, outcome, error?: {message, code, hint?}}}
 ```
 
 - `id` is the message's stable id (`m_…` for the owner's, `a_<run id>` for a run's reply; rows saved before chat
@@ -176,6 +178,9 @@ summary adds `kind` (`gate` or `tool_call`), `node_type`, `tool_name`, `tool_cal
 - `message` equals `text`; it is kept for older readers.
 - `client_message_id` is echoed on the owner's messages that carried one, so an optimistic row and its saved row
   keep one key.
+- `run` says how the run a message started (or answers) stood when the thread was read: its `state`, `outcome`, and
+  for a failed run the error with the hint the run recorded. It is how a reload still shows that a message went
+  unanswered; while the session is subscribed, the run's events are fresher (see [Client](#client)).
 - Until branches land, `siblings` always holds the message alone and `editable` is false.
 - `kind`: `text`, `report` (Post to Talk: no parent, not editable), `action` (a button press), `notice`.
 - `status`: `complete`, `stopped`, `error`.
@@ -253,6 +258,38 @@ Approvals are joined live from the approvals store; the part only names them.
 - **The watchdog** (`services/chat/watchdog.py`, started by `main.py`) sweeps every `runs.watchdog_interval_s` and
   ends the runs nothing will finish (codes above). A pending run's wait (`runs.pickup_timeout_s`) counts from the
   later of its creation and the server's start.
+
+## Client
+
+`client/src/features/chat/` is the shared chat; only its `index.ts` is public (an ESLint rule keeps the rest
+private, tests excepted). Hosts give it a `ChatHost` (`host.ts`): the session and scope, who answers, whether the
+message box sends now, waits for Resume or is closed, and what sits around the conversation (notices, a top slot, a
+slot after the thread, a footnote, how to tell the owner something). Home's employee page (`EmployeeChat`) and the
+editor's console pane (`ConsoleChat`, compact, scope `live`) are the two hosts.
+
+- **Run events** reach `stores/chatRunStore.ts` through one `case 'chat_run_event'` in `WebSocketContext.tsx`.
+  `lib/agui/events.ts` checks each frame (source, type prefix, `subject`, `id` = `<run id>:<seq>`, scope fields) and
+  `lib/agui/reduceRun.ts` folds it, the same way `services/chat/reducer.py` does. Frames are folded once per
+  animation frame. Per run: a duplicate `seq` changes nothing; a gap, an unknown run already past `seq` 1, a new
+  `hub_epoch` or the hub's resync frame mark the session `syncing`, hold what arrives meanwhile, and ask for a fresh
+  snapshot, after which the held frames fold in and the ones the snapshot covers drop out.
+- **Subscribing** (`data/runs.ts`): a mounted chat subscribes its session whenever the socket is ready (so again
+  after every reconnect) and whenever the store asks for a snapshot, retrying a failed subscribe after 1, 3, then
+  every 10 seconds; the last chat following a session unsubscribes it. Runs the store held as live that a snapshot
+  no longer lists ended unseen and are read once with `get_chat_run`. Until the first snapshot the thread's own
+  `active_runs` stand in; after it the store alone says which runs are live, and a message whose `run` still reads
+  live is read with `get_chat_run` (`useThreadRunReconcile`).
+- **Turns** (`thread/model.ts`): one per message with a divider where `run_key` changes. A run that is going,
+  failed or was stopped shows on its last answer, or on a turn of its own right after its last message before it
+  has answered (a live run whose messages are out of view goes last). Failures whose code only says no answer came
+  (`not_delivered`, `timed_out`, `interrupted`) disappear once an answer lands; `reset` and `cleared` never show. A
+  message sent from this tab and its saved row share a key (its `client_message_id`), and a run's first answer takes
+  the key its run's turn had, so neither remounts.
+- **Sending** (`data/send.ts`): the message shows at once; the server's answer admits its run into the store
+  (`queued` or `pending`), so the employee shows working before the run's first event. While the lane is held, Send
+  waits. A refused or failed send takes the message out of the thread and puts its text back in the box
+  (`state/composerStore.ts`, a draft per session that survives switching conversations); after a failure in transit
+  the draft keeps its `client_message_id`, so sending it again is the same message.
 
 ## Notes to the employee
 

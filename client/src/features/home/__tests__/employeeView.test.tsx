@@ -1,6 +1,7 @@
 /**
- * The employee page: only their name above the conversation. Their main
- * action shows above the message box while they cannot read messages
+ * The employee page: the conversation, with their name in the header (not
+ * on the page). Their main action shows above the message box while they
+ * cannot read messages
  * (Connect goes to the provider's connect dialog, Resume sends the
  * summary's revision and says "Resuming…" until the summary shows them
  * running, never flashing "Resume" again in between), never the reason
@@ -84,7 +85,7 @@ beforeEach(() => {
 });
 
 describe('EmployeeView', () => {
-  it('shows only their name above the conversation while they work', () => {
+  it('keeps the page to the conversation while they work', () => {
     actions.sendRequest.mockResolvedValue({ success: true, messages: [] });
     const whatsapp = { app_id: 'whatsapp', provider_id: 'whatsapp', name: 'WhatsApp', connected: true, supported: true };
     renderPage(
@@ -93,7 +94,7 @@ describe('EmployeeView', () => {
         { state: 'running' },
       ),
     );
-    expect(screen.getByRole('heading', { name: 'Maya' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Maya' })).not.toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: 'Message Maya' })).toBeInTheDocument();
     for (const name of ['Pause', 'Resume', 'Start', 'Watch live']) {
       expect(screen.queryByRole('button', { name })).not.toBeInTheDocument();
@@ -185,7 +186,7 @@ describe('EmployeeView', () => {
     actions.sendRequest.mockResolvedValue({ success: true, messages: [] });
     actions.startEmployee.mockReturnValue(new Promise(() => {}));
     renderPage(summary({ status: 'ready', talk: TALK_ON }, { state: 'never_started', revision: 3 }));
-    const talk = await screen.findByRole('region', { name: 'Talk with Maya' });
+    const talk = await screen.findByRole('region', { name: 'Chat with Maya' });
     expect(talk).toHaveTextContent('Maya isn’t running, so they can’t read messages right now.');
     expect(screen.queryByRole('textbox', { name: 'Message Maya' })).not.toBeInTheDocument();
 
@@ -234,13 +235,13 @@ describe('EmployeeView', () => {
     renderPage(summary({ status: 'working', talk: TALK_ON, pending_approvals: 1 }, { state: 'running' }));
     const drafts = await screen.findByRole('region', { name: 'Waiting for you' });
     expect(drafts).toHaveTextContent('Yes! Saturday at 10 works.');
-    expect(screen.getByRole('region', { name: 'Talk with Maya' })).toContainElement(drafts);
+    expect(screen.getByRole('region', { name: 'Chat with Maya' })).toContainElement(drafts);
   });
 
   it('notes when the employee cannot take messages', () => {
     renderPage(summary({ status: 'working' }, { state: 'running' }));
     expect(screen.getByText('You can’t message Maya here. Their setup has no way to answer you.')).toBeInTheDocument();
-    expect(actions.sendRequest).not.toHaveBeenCalledWith('get_chat_messages', expect.anything());
+    expect(screen.queryByRole('textbox', { name: 'Message Maya' })).not.toBeInTheDocument();
   });
 
   it('says so when the employee is gone', async () => {

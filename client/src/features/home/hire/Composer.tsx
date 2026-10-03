@@ -14,12 +14,13 @@ import { ArrowRight } from 'lucide-react';
 import { useEffect, useRef, type KeyboardEvent } from 'react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
+import { isSendKey } from '@/lib/composerKeys';
 import { animate } from '@/lib/motion';
+import { useAutoGrow } from '@/lib/useAutoGrow';
 import { prefersReducedMotion } from '@/lib/useReducedMotion';
 import { cn } from '@/lib/utils';
 import { AppMark } from '../ui/primitives';
-import { useAutoGrow } from '../ui/useAutoGrow';
-import { createLabel, isSendKey } from './composerKeys';
+import { createLabel } from './composerKeys';
 
 export interface ComposerApp {
   id: string;

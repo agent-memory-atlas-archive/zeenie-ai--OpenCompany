@@ -652,6 +652,10 @@ html.oc-theme-fade *::after {
   border-top: 1px solid var(--border-default);
   margin: 12px 0;
 }
+/* The stylized themes paint a reply (.chat-msg-bot) as a glowing or tinted
+ * bubble; code blocks and tables inside keep their own surfaces unglowed. */
+.chat-msg-bot pre,
+.chat-msg-bot table { text-shadow: none; }
 
 /* ============================================================================
  * Syntax-highlighting palette — used by react-simple-code-editor + the

@@ -326,7 +326,8 @@ Wave 15 added structural classNames across the React tree so the handoff CSS sel
 | Top toolbar | `.toolbar` | TopToolbar |
 | Sidebar | `.sidebar` | WorkflowSidebar |
 | Component palette | `.palette` | ComponentPalette |
-| Console / chat panel | `.chat`, `.chat-msg`, `.chat-msg-user`, `.chat-msg-bot` | ConsolePanel |
+| Console / chat panel | `.chat` | ConsolePanel (root) |
+| Chat turns (Home and Dev) | `.chat-msg .chat-msg-user` on the owner's bubble; `.chat-msg .chat-msg-bot` on a reply's text only; `.chat-turn-user`, `.chat-turn-bot` on each turn; `.chat-composer` on the message box | features/chat (`UserTurn`, `AssistantTurn`, `Composer`) |
 | Status bar | `.statusbar`, `.pip` (connection dot) | StatusBar |
 | Modal | `.modal`, `.modal-frame`, `.modal-head` | Modal |
 | Collapsible section | `.cat`, `.cat-head`, `.cat-body` | CollapsibleSection |
@@ -344,6 +345,8 @@ Wave 15 added structural classNames across the React tree so the handoff CSS sel
 | Square canvas node | `.sq-node`, `.sq-node-box`, `.sq-node-pip`, `.sq-node-gear`, `.sq-node-handle.in`, `.sq-node-handle.out`, `.selected` | SquareNode |
 
 The `.selected` co-class is bound to React Flow's `selected` prop on every canvas node component, activating per-theme selection effects (Cyber `cyber-blink`, Edo hanko seal, Renaissance wax-seal stamp, etc.).
+
+A reply has no bubble in light and dark (design handoff chat): only the owner's message is one. Each stylized theme still paints `.chat-msg-bot` as a bubble, so its rule carries the padding the bare reply lacks (`padding: 8px 12px`); `index.css` keeps the code blocks and tables inside such a bubble free of the theme's text glow.
 
 ### Decorative content per theme
 

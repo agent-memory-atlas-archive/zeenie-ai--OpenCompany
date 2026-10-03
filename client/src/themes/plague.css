@@ -239,7 +239,7 @@
 
 /* CHAT */
 :root[data-theme="plague"] .chat-msg-user { background: var(--danger-soft); border: 1px solid var(--accent); border-radius: 0; }
-:root[data-theme="plague"] .chat-msg-bot { background: var(--linen); border: 1px solid var(--crow); border-radius: 0; }
+:root[data-theme="plague"] .chat-msg-bot { padding: 8px 12px; background: var(--linen); border: 1px solid var(--crow); border-radius: 0; }
 
 /* STATUS BAR */
 :root[data-theme="plague"] .statusbar {

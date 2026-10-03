@@ -722,6 +722,7 @@
 }
 :root[data-theme="cyber"] .chat-msg-user::before { content: '> USER:: '; opacity: 0.6; }
 :root[data-theme="cyber"] .chat-msg-bot {
+  padding: 8px 12px;
   background: rgba(29, 217, 229, 0.08);
   color: var(--neon-cyan);
   border: 1px solid var(--neon-cyan);

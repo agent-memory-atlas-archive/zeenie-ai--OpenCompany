@@ -9,3 +9,9 @@ export const AVATAR_CLASS: Record<ColorRole, string> = {
   trigger: 'bg-node-trigger-fill border-node-trigger-edge text-node-trigger-ink',
   workflow: 'bg-node-workflow-fill border-node-workflow-edge text-node-workflow-ink',
 };
+
+/** An avatar's letter: the first letter of the name, "?" when empty. */
+export function initialOf(name: string): string {
+  const letter = Array.from(name.trim())[0];
+  return letter ? letter.toLocaleUpperCase() : '?';
+}

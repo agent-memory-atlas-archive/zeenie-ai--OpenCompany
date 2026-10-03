@@ -63,6 +63,14 @@ client/src/
 │   ├── shellTransition.ts   # The fade-out / swap choreography
 │   └── useModeShortcut.ts / useCurrentWorkflowSync.ts / usePageActivitySync.ts / useUIDefaultsOnce.ts
 │
+├── features/chat/           # The chat shared by Home's employee page and Dev's console Chat pane
+│   │                        # (docs-internal/chat_protocol.md#client); only its index.ts is importable (ESLint)
+│   ├── ChatPane.tsx / host.ts  # The pane, and the ChatHost contract its hosts fill in
+│   ├── data/                # Thread query (scope all/live), run subscription, send / clear, conversation
+│   ├── state/               # composerStore: what the owner is writing, per session
+│   ├── thread/              # model.ts (turns from messages + runs, pure), ChatThread (stick to bottom)
+│   └── turns/ composer/ markdown/  # UserTurn / AssistantTurn / StatusLine, the message box, ReplyMarkdown
+│
 ├── features/home/           # Normal mode (see docs-internal/normal_mode.md)
 │   ├── HomeShell.tsx        # Sidebar + header + current view + Workspace dock + Settings + orb stage
 │   ├── sidebar/ header/ hire/ employee/ settings/ approvals/ data/ state/ ui/
@@ -87,7 +95,7 @@ client/src/
 │   │   ├── sonner.tsx       # Patched to read ThemeContext (not next-themes)
 │   │   ├── ApiKeyInput.tsx  # Composite: input + eye toggle + save/delete buttons
 │   │   ├── SettingsPanel.tsx # Shadcn Switch + Slider + Input
-│   │   ├── ConsolePanel.tsx # Chat + console + terminal + output
+│   │   ├── ConsolePanel.tsx # Chat (ConsoleChat, the shared chat) + console + terminal + output
 │   │   └── TopToolbar.tsx   # File menu + model picker + action buttons
 │   │
 │   ├── Modal.tsx (src/components/ui/Modal.tsx)
@@ -210,6 +218,7 @@ client/src/
 │   │                               # 1 ms under reduced motion or a hidden page, no loops then
 │   ├── pageActivity.ts / useReducedMotion.ts # Whether anyone can see the page; the motion preference
 │   ├── debouncedInvalidate.ts      # Trailing-edge query invalidation (broadcast bursts)
+│   ├── agui/                       # Chat run events: events.ts (checks and types a frame), reduceRun.ts (folds a run)
 │   ├── jsonRender/                 # Generated-UI glue around json-render (hire setup screen, chat replies):
 │   │                               # sanitize (no prototype paths; no watch/repeat/slots/$computed/confirm),
 │   │                               # guard (props through the catalogue schema, live-only entrance),
@@ -218,6 +227,7 @@ client/src/
 ├── schemas/workflowSchema.ts       # Structural pre-flight for workflow export (backend is the schema authority)
 ├── stores/
 │   ├── nodeStatusStore.ts          # Per-workflow node statuses (slice-subscribed Zustand)
+│   ├── chatRunStore.ts             # Chat runs per session, folded from `chat_run_event` once per animation frame
 │   ├── canvasDockStore.ts          # Docked Canvas sidebar state
 │   ├── workflowControlStore.ts     # Mirror of workflow control statuses for Home (written from WebSocketContext)
 │   ├── shellDialogsStore.ts        # Settings / Credentials dialog flags (lifted out of Dashboard)
@@ -578,7 +588,7 @@ Defined on `INodeTypeDescription.uiHints` ([client/src/types/INodeProperties.ts]
 | `isCanvasPanel` | `MiddleSection`, `CanvasDock` | Render the pushed-content Canvas board instead of the plain params list. Declared by `canvas`. Double duty: the docked canvas sidebar also uses this flag to FIND Canvas nodes in the graph (`resolveNodeDescription(type)?.uiHints?.isCanvasPanel`) — never the type string. Pairs with an explicit `isConfigNode: False` because the `tool` group would auto-derive `True` while the node's `input-main` is real dataflow. See [canvas_node.md](./canvas_node.md). |
 | `isBrowserPanel` | `MiddleSection`, `CanvasDock` (also the server's `graph_index`) | Show the node's live browser (`BrowserWorkspace`) above its parameters. Declared by `browser`. The Dev dock and Home's employee summary also use it to FIND Browser nodes in a graph, never the type string. See [browser_workspace.md](./browser_workspace.md). |
 | `showLocationPanel` | `LocationParameterPanel` | Special-case panel for nodes with map preview |
-| `isChatTrigger` | `ConsolePanel` | This node is a chat-message target |
+| `isChatTrigger` | (none) | This node is a chat-message target. No client reader since the console's trigger selector went: the Chat pane sends to every chat trigger of the open workflow. |
 | `isConsoleSink` | `ConsolePanel` | This node consumes console output (filter source) |
 | `hasSkills` | Agent panels | Connect the connected-skills section |
 | `isConfigNode` | `InputSection`, `OutputPanel` | This node is auxiliary configuration — its panel inherits the parent's main inputs instead of showing direct upstream connections. **Auto-derived on the backend** by `_derive_auto_ui_hints` in [`server/services/plugin/base.py`](../server/services/plugin/base.py): plugins whose `group` tuple contains `memory` or `tool` get this for free. Explicit `cls.ui_hints` always wins. |

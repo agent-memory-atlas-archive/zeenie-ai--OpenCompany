@@ -1,9 +1,10 @@
 /**
  * Console Panel - n8n-style debug output panel with chat input
  *
- * Displays console log entries from Console nodes during workflow execution.
- * Includes chat input section for triggering chatTrigger nodes.
- * Shows in a collapsible bottom bar section with clear and filter options.
+ * Displays console log entries from Console nodes during workflow execution,
+ * beside the Chat pane (ConsoleChat: the chat shared with Home, talking to
+ * the open workflow's chat triggers). Shows in a collapsible bottom bar
+ * section with clear and filter options.
  *
  * Design-handoff hybrid layout: split view (default) docks Chat as a
  * resizable pane beside the Console/Terminal tabs; tab mode makes Chat
@@ -20,8 +21,7 @@ import remarkBreaks from 'remark-breaks';
 import { z } from 'zod';
 import Prism from 'prismjs';
 import 'prismjs/components/prism-json';
-import { ChevronDown, Columns2, Send } from 'lucide-react';
-import { toast } from 'sonner';
+import { ChevronDown, Columns2 } from 'lucide-react';
 import { useWebSocket, ConsoleLogEntry } from '../../contexts/WebSocketContext';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -35,10 +35,11 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
-import { CHAT_MARKDOWN_COMPONENTS } from '@/features/chat';
+import { useChatThread, type ChatPaneHandle } from '@/features/chat';
 import { resolveNodeDescription } from '../../lib/nodeSpec';
 import { useAppStore } from '../../store/useAppStore';
 import { usePanelResize } from '../../hooks/usePanelResize';
+import { ConsoleChat } from './ConsoleChat';
 
 // ---------------------------------------------------------------------------
 // Persisted prefs (localStorage)
@@ -107,17 +108,12 @@ const ConsolePanel: React.FC<ConsolePanelProps> = ({
   minHeight = 80,
   nodes = [],
 }) => {
-  const { consoleLogs, clearConsoleLogs, terminalLogs, clearTerminalLogs, sendChatMessage, chatMessages, clearChatMessages } = useWebSocket();
+  const { consoleLogs, clearConsoleLogs, terminalLogs, clearTerminalLogs } = useWebSocket();
+  // The open workflow's chat (ConsoleChat reads the same thread).
+  const chatSessionId = useAppStore((s) => s.currentWorkflow?.id || 'default');
+  const chatCount = useChatThread(chatSessionId, 'live').data?.messages.length ?? 0;
 
-  // Workflow nodes that participate in this panel.
-  const chatTriggerNodes = useMemo(() =>
-    nodes.filter(n => {
-      const def = n.type ? resolveNodeDescription(n.type) : undefined;
-      return def?.uiHints?.isChatTrigger
-        ?? (n.type ? ['chatTrigger'].includes(n.type) : false);
-    }),
-    [nodes]
-  );
+  // Console nodes in the workflow, for the console filter.
   const consoleNodes = useMemo(() =>
     nodes.filter(n => {
       const def = n.type ? resolveNodeDescription(n.type) : undefined;
@@ -127,7 +123,6 @@ const ConsolePanel: React.FC<ConsolePanelProps> = ({
     [nodes]
   );
 
-  const [selectedChatTriggerId, setSelectedChatTriggerId] = useState<string>('');
   const [selectedConsoleId, setSelectedConsoleId] = useState<string>('');
   const [filter, setFilter] = useState('');
   const [terminalFilter, setTerminalFilter] = useState('');
@@ -148,8 +143,7 @@ const ConsolePanel: React.FC<ConsolePanelProps> = ({
   const activeTab = splitView && consoleTab === 'chat' ? 'console' : consoleTab;
 
   const logsEndRef = useRef<HTMLDivElement>(null);
-  const chatEndRef = useRef<HTMLDivElement>(null);
-  const chatInputRef = useRef<HTMLInputElement>(null);
+  const chatRef = useRef<ChatPaneHandle>(null);
 
   // Focus the chat input when requested (onboarding handoff, checklist).
   // Each request is consumed once so later manual panel toggles don't
@@ -159,15 +153,13 @@ const ConsolePanel: React.FC<ConsolePanelProps> = ({
   useEffect(() => {
     if (chatFocusRequest === handledFocusRequestRef.current || !isOpen) return;
     handledFocusRequestRef.current = chatFocusRequest;
-    // In tab mode the chat input only exists while the Chat tab is
+    // In tab mode the chat's message box only exists while the Chat tab is
     // active — switch to it before focusing.
     if (!splitView) setPref('consoleTab', 'chat');
-    const frame = requestAnimationFrame(() => chatInputRef.current?.focus());
+    const frame = requestAnimationFrame(() => chatRef.current?.focusComposer());
     return () => cancelAnimationFrame(frame);
   }, [chatFocusRequest, isOpen, splitView, setPref]);
 
-  const [chatInput, setChatInput] = useState('');
-  const [isSending, setIsSending] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
   const verticalResize = usePanelResize({
@@ -269,42 +261,9 @@ const ConsolePanel: React.FC<ConsolePanelProps> = ({
     }
   }, [filteredLogs.length, autoScroll, isOpen]);
 
-  useEffect(() => {
-    if (isOpen && chatEndRef.current) {
-      chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, [chatMessages?.length, isOpen]);
-
   // ------------------------------ Actions ------------------------------
 
   const handleClearConsole = useCallback(() => clearConsoleLogs(), [clearConsoleLogs]);
-  const handleClearChat = useCallback(() => clearChatMessages(), [clearChatMessages]);
-
-  const handleSendChat = useCallback(async () => {
-    const message = chatInput.trim();
-    if (!message || isSending) return;
-    setIsSending(true);
-    try {
-      await sendChatMessage(message, selectedChatTriggerId || undefined);
-      setChatInput('');
-    } catch (error) {
-      // Nothing listens while the workflow is stopped, so the server saved nothing.
-      if (error instanceof Error && error.message === 'not_running') toast.error('Start this workflow to chat with it.');
-      // One answer at a time per conversation; the text stays in the box.
-      else if (error instanceof Error && error.message === 'run_in_progress') toast.info('The workflow is still answering your last message.');
-      else console.error('Failed to send chat message:', error);
-    } finally {
-      setIsSending(false);
-    }
-  }, [chatInput, isSending, sendChatMessage, selectedChatTriggerId]);
-
-  const handleChatKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSendChat();
-    }
-  }, [handleSendChat]);
-
   // ------------------------------ Formatting ------------------------------
 
   const formatTimestamp = useCallback((timestamp: string) => {
@@ -357,132 +316,8 @@ const ConsolePanel: React.FC<ConsolePanelProps> = ({
 
   // ------------------------------ Render ------------------------------
 
-  // One chat implementation for both layouts: the split-view docked pane
-  // and the Chat tab. The `chat-msg` / `chat-msg-user` / `chat-msg-bot`
-  // co-classes are the design-handoff structural hooks per-theme CSS
-  // decorates — they must survive any relocation of this block.
-  const chatSection = (
-    <>
-      {/* Header */}
-      <div className="flex min-h-[32px] items-center justify-between border-b border-border-default bg-bg-elevated px-3 py-1.5">
-        <div className="flex items-center gap-2">
-          <span className="flex items-center gap-1.5 font-display text-sm font-semibold tracking-[var(--type-tracking-display)] text-fg-default [text-transform:var(--type-uppercase)]">
-            Chat
-            {chatMessages && chatMessages.length > 0 && (
-              <Badge variant="success" className="text-xs">{chatMessages.length}</Badge>
-            )}
-          </span>
-          {chatTriggerNodes.length > 0 && (
-            <Select
-              value={selectedChatTriggerId || '__all__'}
-              onValueChange={(v) => setSelectedChatTriggerId(v === '__all__' ? '' : v)}
-            >
-              <SelectTrigger
-                className="h-6 max-w-[120px] text-xs"
-                onClick={(e) => e.stopPropagation()}
-                title="Select chatTrigger node to target"
-              >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__all__">All Triggers</SelectItem>
-                {chatTriggerNodes.map(node => (
-                  <SelectItem key={node.id} value={node.id}>
-                    {node.data?.label || node.id}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
-        </div>
-        {chatMessages && chatMessages.length > 0 && (
-          <Button
-            variant="outline"
-            size="xs"
-            onClick={handleClearChat}
-            title="Clear the chat, and what the agent remembers of it"
-            className="border-destructive/40 text-destructive hover:bg-destructive/10"
-          >
-            Clear
-          </Button>
-        )}
-      </div>
-
-      {/* Messages */}
-      <div
-        data-scrollable
-        style={{ fontSize: consoleFontSize }}
-        className="flex-1 overflow-auto px-4 py-3"
-      >
-        {(!chatMessages || chatMessages.length === 0) ? (
-          <div className="flex h-full items-center justify-center p-6 text-center text-xs text-muted-foreground">
-            Send a message to trigger chatTrigger nodes
-          </div>
-        ) : (
-          <div className="flex flex-col gap-1">
-            {chatMessages.map((msg, index) => {
-              const isUser = msg.role === 'user';
-              return (
-                <div
-                  key={`${msg.timestamp}-${index}`}
-                  className={cn(
-                    // `chat-msg` + `chat-msg-user` / `chat-msg-bot`
-                    // co-classes activate per-theme bubble decorations
-                    // (Renaissance: gold-foil user / vellum bot with
-                    // ✦ marker; Cyber: > USER:: / < NODE:: prefixes
-                    // with neon glow; etc.).
-                    'chat-msg max-w-[80%] px-3 py-2 break-words',
-                    isUser
-                      ? 'chat-msg-user mr-0 ml-auto rounded-l-xl rounded-tr-xl rounded-br-sm bg-node-agent-soft'
-                      : 'chat-msg-bot mr-auto ml-0 rounded-r-xl rounded-tl-xl rounded-bl-sm border border-border-default bg-bg-elevated'
-                  )}
-                >
-                  {isUser ? (
-                    <pre className="m-0 leading-tight font-[inherit] text-[length:inherit] whitespace-pre-wrap break-words text-foreground">
-                      {msg.message}
-                    </pre>
-                  ) : (
-                    <div className="chat-markdown text-sm leading-snug text-foreground">
-                      <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} components={CHAT_MARKDOWN_COMPONENTS}>
-                        {msg.message}
-                      </ReactMarkdown>
-                    </div>
-                  )}
-                  <div className="mt-0.5 text-xs text-muted-foreground">
-                    {formatTimestamp(msg.timestamp)}
-                  </div>
-                </div>
-              );
-            })}
-            <div ref={chatEndRef} />
-          </div>
-        )}
-      </div>
-
-      {/* Input */}
-      <div className="flex items-center gap-2 border-t border-border-default bg-bg-elevated px-4 py-2.5">
-        <Input
-          ref={chatInputRef}
-          type="text"
-          placeholder="Type a message..."
-          value={chatInput}
-          onChange={(e) => setChatInput(e.target.value)}
-          onKeyDown={handleChatKeyDown}
-          disabled={isSending}
-          className="flex-1"
-        />
-        <Button
-          variant="default"
-          size="sm"
-          onClick={handleSendChat}
-          disabled={isSending || !chatInput.trim()}
-        >
-          <Send className="h-3.5 w-3.5" />
-          {isSending ? '...' : 'Send'}
-        </Button>
-      </div>
-    </>
-  );
+  // One chat for both layouts: the split-view docked pane and the Chat tab.
+  const chatSection = <ConsoleChat ref={chatRef} fontSize={consoleFontSize} />;
 
   return (
     // `chat` co-class is the design-handoff structural hook for per-theme
@@ -523,9 +358,9 @@ const ConsolePanel: React.FC<ConsolePanelProps> = ({
           />
           <span className="flex items-center gap-1.5 font-display text-sm font-semibold tracking-[var(--type-tracking-display)] text-fg-default [text-transform:var(--type-uppercase)]">
             Chat / Console
-            {(consoleLogs.length > 0 || (chatMessages && chatMessages.length > 0)) && (
+            {(consoleLogs.length > 0 || chatCount > 0) && (
               <Badge variant="secondary" className="text-xs">
-                {consoleLogs.length + (chatMessages?.length || 0)}
+                {consoleLogs.length + chatCount}
               </Badge>
             )}
           </span>
@@ -583,8 +418,8 @@ const ConsolePanel: React.FC<ConsolePanelProps> = ({
                   )}
                 >
                   Chat
-                  {chatMessages && chatMessages.length > 0 && (
-                    <Badge variant="success" className="ml-1 px-1 text-xs">{chatMessages.length}</Badge>
+                  {chatCount > 0 && (
+                    <Badge variant="success" className="ml-1 px-1 text-xs">{chatCount}</Badge>
                   )}
                 </button>
               )}

@@ -252,7 +252,7 @@
 
 /* Chat */
 :root[data-theme="steampunk"] .chat-msg-user { background: rgba(216,168,72,0.16); border: 1px solid var(--accent); color: var(--accent); }
-:root[data-theme="steampunk"] .chat-msg-bot { background: var(--bg-elevated); border: 1px solid var(--copper); }
+:root[data-theme="steampunk"] .chat-msg-bot { padding: 8px 12px; background: var(--bg-elevated); border: 1px solid var(--copper); }
 
 /* Status bar — gauge readout */
 :root[data-theme="steampunk"] .statusbar {

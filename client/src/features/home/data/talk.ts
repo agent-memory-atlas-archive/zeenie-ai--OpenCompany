@@ -1,289 +1,21 @@
 /**
- * Talking to an employee on its page, over the chat session whose id is the
- * employee's workflow id:
+ * Home's side of talking to an employee. The conversation itself is the
+ * shared chat (features/chat); this is what only an employee has:
  *
- * - `useTalkThread(workflowId)`: the conversation (`get_chat_messages` with
- *   `all_generations`, so a message from before a Start shows too), the
- *   newest 200 messages. A Reset clears the thread on the server.
- *   WebSocketContext invalidates it on `chat.updated`, on a runtime reset
- *   and when the socket reopens.
- * - `useSendTalkMessage(workflowId)`: `send_chat_message`. The message shows
- *   at once and leaves again if the server refuses it (`not_running`: it
- *   saved nothing); the response's `delivery` says whether it went now or
- *   waits for Resume.
- * - `useReplyWait(...)`: "Working…" after a send. It follows the talk
- *   agent's node status (`useNodeStatusStore` directly, like `useLiveTask`:
- *   the editor's hooks see only the workflow open in Dev mode), with
- *   fallbacks for an agent that never picks the message up or never ends.
  * - `useEnableTalk()` / `useApplyChanges()`: Turn on Talk and Apply. Both
  *   restart the employee, so they wait as long as Start does, then refresh
  *   the team from the database.
- * - Pure helpers the thread renders from: restart dividers, time labels.
+ * - `useRetryNote(...)`: while the talk agent waits to retry after a failed
+ *   attempt, what it said, for the chat's status line. It reads the agent's
+ *   node status (`useNodeStatusStore` directly, like `useLiveTask`: the
+ *   editor's hooks see only the workflow open in Dev mode).
  */
 
-import { useCallback, useEffect, useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { z } from 'zod';
+import { useCallback } from 'react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { WORKFLOW_CONTROL_REQUEST_TIMEOUT, useWebSocketActions } from '@/contexts/WebSocketContext';
-import { STALE_TIME, queryKeys } from '@/lib/queryConfig';
 import { useNodeStatusStore } from '@/stores/nodeStatusStore';
 import { refreshEmployee } from './employees';
-
-/** The newest messages the thread shows. */
-export const THREAD_LIMIT = 200;
-/** How long the talk agent has to pick a message up. */
-export const PICKUP_WAIT_MS = 30_000;
-/** Time without fresh progress before "Working…" expires, excluding retry waits. */
-export const REPLY_WAIT_MS = 180_000;
-/** Once the agent stops, how long its answer has to reach the thread. */
-export const SETTLE_WAIT_MS = 5_000;
-
-export const threadKey = (workflowId: string) => queryKeys.chatThread.bySession(workflowId).queryKey;
-
-const threadMessageSchema = z.object({
-  id: z.union([z.number(), z.string()]).transform((id) => String(id)),
-  role: z.enum(['user', 'assistant']),
-  message: z.string(),
-  timestamp: z.string().nullable().catch(null),
-  /** The generation the message was written in; it changes at each restart. */
-  run_key: z.string().nullable().catch(null),
-});
-
-export interface ThreadMessage extends z.infer<typeof threadMessageSchema> {
-  /** Sent from this tab; the server has not confirmed it yet. */
-  pending?: boolean;
-}
-
-/** A thread from the server, oldest first, dropping rows it cannot show. */
-export function parseThread(raw: unknown): ThreadMessage[] {
-  if (!Array.isArray(raw)) return [];
-  return raw.flatMap((item) => {
-    const parsed = threadMessageSchema.safeParse(item);
-    return parsed.success ? [parsed.data] : [];
-  });
-}
-
-export type ThreadRow = { kind: 'message'; message: ThreadMessage } | { kind: 'restart'; key: string };
-
-/** The thread with a divider wherever the employee restarted between two
- *  messages. A message whose generation is unknown (written before rows were
- *  stamped, or not saved yet) never draws one. */
-export function threadRows(messages: readonly ThreadMessage[]): ThreadRow[] {
-  const rows: ThreadRow[] = [];
-  let previous: string | null = null;
-  for (const message of messages) {
-    if (previous && message.run_key && message.run_key !== previous) {
-      rows.push({ kind: 'restart', key: `restart-${message.id}` });
-    }
-    if (message.run_key) previous = message.run_key;
-    rows.push({ kind: 'message', message });
-  }
-  return rows;
-}
-
-/** The newest answer's id, or null. Another one after a send means the send
- *  was answered. */
-export function latestReplyId(messages: readonly ThreadMessage[] | undefined): string | null {
-  if (!messages) return null;
-  for (let i = messages.length - 1; i >= 0; i -= 1) {
-    if (messages[i].role === 'assistant') return messages[i].id;
-  }
-  return null;
-}
-
-const DAY_MS = 86_400_000;
-
-function startOfDay(date: Date): number {
-  return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
-}
-
-/** When a message was written, the way a person says it: the time today,
- *  "Yesterday, 9:41 AM", the weekday within a week, else the date. Empty
- *  when the timestamp cannot be read. */
-export function timeLabel(timestamp: string | null, now: Date = new Date()): string {
-  if (!timestamp) return '';
-  const date = new Date(timestamp);
-  if (Number.isNaN(date.getTime())) return '';
-  const time = date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-  // Rounded: a day with a clock change is 23 or 25 hours long.
-  const days = Math.round((startOfDay(now) - startOfDay(date)) / DAY_MS);
-  if (days <= 0) return time;
-  if (days === 1) return `Yesterday, ${time}`;
-  if (days < 7) return `${date.toLocaleDateString(undefined, { weekday: 'long' })}, ${time}`;
-  const year = date.getFullYear() === now.getFullYear() ? undefined : 'numeric';
-  return `${date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year })}, ${time}`;
-}
-
-// ----- the conversation -----
-
-export function useTalkThread(workflowId: string) {
-  const { sendRequest, isReady } = useWebSocketActions();
-  return useQuery<ThreadMessage[], Error>({
-    queryKey: threadKey(workflowId),
-    queryFn: async () => {
-      const response = await sendRequest<{ success?: boolean; messages?: unknown; error?: string }>('get_chat_messages', {
-        session_id: workflowId,
-        limit: THREAD_LIMIT,
-        all_generations: true,
-      });
-      if (response?.success === false) throw new Error(response.error || 'Could not load the conversation');
-      return parseThread(response?.messages);
-    },
-    enabled: isReady && Boolean(workflowId),
-    // Broadcasts keep it current. Opening the page refetches only when one
-    // arrived while it was closed (it left the thread invalidated).
-    staleTime: STALE_TIME.FOREVER,
-    refetchOnMount: true,
-  });
-}
-
-/** Where a sent message went: to the employee now, or waiting for Resume. */
-export type Delivery = 'now' | 'queued';
-
-/** Numbers the messages shown before the server has saved them. */
-let localSequence = 0;
-
-export function useSendTalkMessage(workflowId: string) {
-  const { sendRequest } = useWebSocketActions();
-  const queryClient = useQueryClient();
-  const key = threadKey(workflowId);
-  return useMutation<Delivery, Error, string, { localId: string }>({
-    mutationFn: async (text) => {
-      const response = await sendRequest<{ success?: boolean; error?: string; delivery?: string }>('send_chat_message', {
-        message: text,
-        role: 'user',
-        session_id: workflowId,
-        timestamp: new Date().toISOString(),
-      });
-      if (response?.success === false) throw new Error(response.error || 'send_failed');
-      return response?.delivery === 'queued' ? 'queued' : 'now';
-    },
-    onMutate: async (text) => {
-      await queryClient.cancelQueries({ queryKey: key });
-      const localId = `local-${(localSequence += 1)}`;
-      const local: ThreadMessage = {
-        id: localId,
-        role: 'user',
-        message: text,
-        timestamp: new Date().toISOString(),
-        run_key: null,
-        pending: true,
-      };
-      queryClient.setQueryData<ThreadMessage[]>(key, (list) => [...(list ?? []), local]);
-      return { localId };
-    },
-    onSuccess: (_delivery, _text, context) => {
-      queryClient.setQueryData<ThreadMessage[]>(key, (list) =>
-        list?.map((message) => (message.id === context.localId ? { ...message, pending: false } : message)),
-      );
-    },
-    onError: (_error, _text, context) => {
-      if (!context) return;
-      queryClient.setQueryData<ThreadMessage[]>(key, (list) => list?.filter((message) => message.id !== context.localId));
-    },
-    // The refetch swaps the local copy for the saved row.
-    onSettled: () => {
-      void queryClient.invalidateQueries({ queryKey: key });
-    },
-  });
-}
-
-// ----- waiting for the answer -----
-
-interface Wait {
-  since: number;
-  /** Ignore an error left over from a previous message. */
-  initialStatus: object | undefined;
-  /** The newest answer when the message went out; another one answers it. */
-  repliedTo: string | null;
-  /** The agent has been seen working. */
-  working: boolean;
-  /** The agent stopped; its answer may still be on its way to the thread. */
-  settling: boolean;
-}
-
-export interface ReplyWait {
-  /** "Working…": the message box holds until this clears. */
-  waiting: boolean;
-  /** The last wait ended with no answer. */
-  unanswered: boolean;
-  failure: { error: string; hint?: string } | null;
-  retryMessage: string | null;
-  /** A message just went to the agent. */
-  begin: () => void;
-  /** It did not after all (refused, or waiting for Resume). */
-  cancel: () => void;
-}
-
-export function useReplyWait(
-  workflowId: string,
-  agentNodeId: string | null,
-  messages: readonly ThreadMessage[] | undefined,
-): ReplyWait {
-  const [wait, setWait] = useState<Wait | null>(null);
-  const [unanswered, setUnanswered] = useState(false);
-  const [failure, setFailure] = useState<ReplyWait['failure']>(null);
-  const nodeStatus = useNodeStatusStore(
-    useCallback(
-      (state) => (agentNodeId ? state.allStatuses[workflowId]?.[agentNodeId] : undefined),
-      [workflowId, agentNodeId],
-    ),
-  );
-  const status = nodeStatus?.status;
-  const retryMessage = status === 'executing'
-    && nodeStatus?.data?.phase === 'retry_wait'
-    && (!wait || nodeStatus !== wait.initialStatus)
-    && typeof nodeStatus.data.retry_message === 'string'
-    ? nodeStatus.data.retry_message : null;
-  const replyId = latestReplyId(messages);
-
-  // An answer ends the wait. The agent working, then stopping, settles it.
-  useEffect(() => {
-    if (status === 'executing') setFailure(null);
-    if (!wait) return;
-    if (replyId !== wait.repliedTo) {
-      setWait(null);
-      setUnanswered(false);
-      setFailure(null);
-    } else if (status === 'error' && nodeStatus !== wait.initialStatus && typeof nodeStatus?.data?.error === 'string') {
-      setFailure({
-        error: nodeStatus.data.error,
-        hint: typeof nodeStatus.data.hint === 'string' ? nodeStatus.data.hint : undefined,
-      });
-      setWait(null);
-      setUnanswered(false);
-    } else if (status === 'executing') {
-      if (!wait.working || wait.settling) setWait({ ...wait, working: true, settling: false });
-    } else if (wait.working && !wait.settling) {
-      setWait({ ...wait, settling: true });
-    }
-  }, [wait, status, nodeStatus, replyId]);
-
-  // A known retry wait is active work. Resume the fallback timer when the
-  // next attempt starts, so backoff cannot consume the time to answer.
-  useEffect(() => {
-    if (!wait || retryMessage) return;
-    const left = wait.settling
-      ? SETTLE_WAIT_MS
-      : wait.working ? REPLY_WAIT_MS : PICKUP_WAIT_MS - (Date.now() - wait.since);
-    const timer = window.setTimeout(() => {
-      setWait(null);
-      setUnanswered(true);
-    }, Math.max(0, left));
-    return () => window.clearTimeout(timer);
-  }, [wait, nodeStatus, retryMessage]);
-
-  const begin = useCallback(() => {
-    const initialStatus = agentNodeId ? useNodeStatusStore.getState().allStatuses[workflowId]?.[agentNodeId] : undefined;
-    setWait({ since: Date.now(), initialStatus, repliedTo: latestReplyId(messages), working: false, settling: false });
-    setUnanswered(false);
-    setFailure(null);
-  }, [messages, workflowId, agentNodeId]);
-  const cancel = useCallback(() => setWait(null), []);
-  return { waiting: wait !== null, unanswered, failure, retryMessage, begin, cancel };
-}
-
-// ----- Turn on Talk, Apply -----
 
 /** Both restart the employee on the server. Refresh the queries afterwards,
  *  including failures that may have changed the employee before failing.
@@ -312,4 +44,18 @@ export function useEnableTalk() {
 /** Restarts the employee on its latest saved graph. */
 export function useApplyChanges() {
   return useEmployeeChange('apply_employee_changes');
+}
+
+/** "{why} Retrying automatically…" while the talk agent waits to try again;
+ *  null otherwise, and whenever no run of theirs is going (`live`). */
+export function useRetryNote(workflowId: string, agentNodeId: string | null, live: boolean): string | null {
+  const status = useNodeStatusStore(
+    useCallback(
+      (state) => (agentNodeId ? state.allStatuses[workflowId]?.[agentNodeId] : undefined),
+      [workflowId, agentNodeId],
+    ),
+  );
+  if (!live || status?.status !== 'executing' || status.data?.phase !== 'retry_wait') return null;
+  const message = status.data.retry_message;
+  return typeof message === 'string' && message ? `${message} Retrying automatically…` : null;
 }

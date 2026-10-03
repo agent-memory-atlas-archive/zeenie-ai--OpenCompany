@@ -275,7 +275,7 @@
 /* Chat */
 :root[data-theme="greek"] .chat-msg { border-radius: 0; }
 :root[data-theme="greek"] .chat-msg-user { background: var(--info-soft); border: 2px solid var(--accent); }
-:root[data-theme="greek"] .chat-msg-bot { background: var(--bg-elevated); border: 2px solid var(--border-default); }
+:root[data-theme="greek"] .chat-msg-bot { padding: 8px 12px; background: var(--bg-elevated); border: 2px solid var(--border-default); }
 
 /* Status bar */
 :root[data-theme="greek"] .statusbar {

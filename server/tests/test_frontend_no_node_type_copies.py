@@ -139,7 +139,6 @@ _BASELINE_VIOLATIONS = frozenset(
         ("client/src/components/parameterPanel/TaskManagerPanel.tsx", "ai_employee"),
         ("client/src/components/parameterPanel/TeamMonitorPanel.tsx", "orchestrator_agent"),
         ("client/src/components/parameterPanel/TeamMonitorPanel.tsx", "ai_employee"),
-        ("client/src/components/ui/ConsolePanel.tsx", "chatTrigger"),
     }
 )
 

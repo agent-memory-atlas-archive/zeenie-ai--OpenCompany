@@ -233,7 +233,7 @@
 
 /* CHAT */
 :root[data-theme="rot"] .chat-msg-user { background: var(--success-soft); border: 1px solid var(--accent); }
-:root[data-theme="rot"] .chat-msg-bot { background: var(--bg-elevated); border-left: 2px solid var(--candle); }
+:root[data-theme="rot"] .chat-msg-bot { padding: 8px 12px; background: var(--bg-elevated); border-left: 2px solid var(--candle); }
 
 /* STATUS BAR */
 :root[data-theme="rot"] .statusbar {

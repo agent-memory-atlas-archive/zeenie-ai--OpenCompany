@@ -1,14 +1,14 @@
 /**
- * One employee's page (design handoff "Employee view"): their name under
- * the orb, then the conversation with them (EmployeeTalk), whose message
- * box stays pinned to the bottom of the page. Only a new hire's notes
- * (HireNotice) ever sit between the two.
+ * One employee's page (design handoff chat): the conversation with them
+ * (EmployeeChat) fills the page under the header, which names them; the
+ * orb sits at the top of the conversation, and a new hire's notes
+ * (HireNotice) under it.
  *
- * What to act on lives in the conversation, and only while there is
- * something to do: the drafts to check after the messages; above the
- * message box, their main action while they cannot read messages (Resume,
- * Start, or connect what they are missing; useEmployeeControl) and Help in
- * browser while they wait for the owner there. Pausing them is the
+ * What to act on lives above the message box, and only while there is
+ * something to do: their main action while they cannot read messages
+ * (Resume, Start, or connect what they are missing; useEmployeeControl),
+ * Apply, and Help in browser while they wait for the owner there; the
+ * drafts to check follow the conversation. Pausing them is the
  * Workspace's, which the header's Workspace pill opens on the employee on
  * screen; the header's Dev switch opens their workflow.
  */
@@ -19,12 +19,10 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useEmployeeDetailQuery, useEmployeesQuery } from '../data/employees';
 import { useLiveTask } from '../data/liveTask';
 import type { EmployeeSummary } from '../data/schemas';
-import { HireNotice } from '../hire/HireNotice';
 import { OrbSlot } from '../orb/OrbSlot';
 import { SPIKE, spikeOrb } from '../orb/orb';
 import { useHomeStore } from '../state/homeStore';
-import { DraftsSection } from './DraftsSection';
-import { EmployeeTalk } from './EmployeeTalk';
+import { EmployeeChat } from './EmployeeChat';
 import { useEmployeeControl } from './useEmployeeControl';
 
 /** The orb stirs when their work moves on (design handoff "Live work"). */
@@ -39,27 +37,30 @@ function useTaskSpike(employee: EmployeeSummary): void {
   }, [text]);
 }
 
-function EmployeePage({ employee, onConnect }: { employee: EmployeeSummary; onConnect: (providerId: string) => void }) {
+function EmployeePage({
+  employee,
+  onConnect,
+  onScrolledChange,
+}: {
+  employee: EmployeeSummary;
+  onConnect: (providerId: string) => void;
+  onScrolledChange?: (scrolled: boolean) => void;
+}) {
   const control = useEmployeeControl(employee, onConnect);
   useTaskSpike(employee);
-  const paused = employee.control.state === 'paused' || employee.control.state === 'pausing';
-  return (
-    <section aria-label={employee.name} className="flex w-full max-w-(--w-employee-card) flex-1 flex-col items-center gap-4">
-      <div className="flex flex-col items-center gap-2">
-        <OrbSlot size="employee" />
-        <h2 className="text-center text-title font-semibold tracking-[-0.02em] break-words text-fg-default">{employee.name}</h2>
-      </div>
-      <HireNotice workflowId={employee.workflow_id} />
-      <EmployeeTalk
-        employee={employee}
-        control={control}
-        drafts={<DraftsSection workflowId={employee.workflow_id} employeeName={employee.name} paused={paused} />}
-      />
-    </section>
-  );
+  return <EmployeeChat employee={employee} control={control} onScrolledChange={onScrolledChange} />;
 }
 
-export function EmployeeView({ workflowId, onConnect }: { workflowId: string; onConnect: (providerId: string) => void }) {
+export function EmployeeView({
+  workflowId,
+  onConnect,
+  onScrolledChange,
+}: {
+  workflowId: string;
+  onConnect: (providerId: string) => void;
+  /** The conversation left its top, or came back (the header's border). */
+  onScrolledChange?: (scrolled: boolean) => void;
+}) {
   const list = useEmployeesQuery();
   const fromList = list.data?.find((e) => e.workflow_id === workflowId) ?? null;
   // Only when the list has no row for it (just hired, or the list failed).
@@ -71,14 +72,14 @@ export function EmployeeView({ workflowId, onConnect }: { workflowId: string; on
   if (!employee) {
     if (list.isPending || (detailId !== null && detail.isPending)) {
       return (
-        <section aria-busy className="flex w-full max-w-(--w-employee-card) flex-col items-center gap-2">
+        <section aria-busy className="flex w-full flex-col items-center gap-4 px-6 pt-7">
           <OrbSlot size="employee" />
-          <Skeleton className="h-7 w-44 rounded-row" />
+          <Skeleton className="h-10 w-full max-w-(--w-chat-column) rounded-card" />
         </section>
       );
     }
     return (
-      <section className="flex w-full max-w-(--w-employee-card) flex-col items-center gap-3 pt-16 text-center">
+      <section className="flex w-full flex-col items-center gap-3 px-6 pt-16 text-center">
         <p className="m-0 text-md text-fg-default">
           {detail.isError ? 'Couldn’t load this employee.' : 'This employee is no longer on the team.'}
         </p>
@@ -96,7 +97,7 @@ export function EmployeeView({ workflowId, onConnect }: { workflowId: string; on
     );
   }
 
-  return <EmployeePage employee={employee} onConnect={onConnect} />;
+  return <EmployeePage employee={employee} onConnect={onConnect} onScrolledChange={onScrolledChange} />;
 }
 
 export default EmployeeView;

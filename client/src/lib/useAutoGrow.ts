@@ -1,8 +1,8 @@
 /**
  * Grow a textarea with its text up to its CSS max-height, then scroll.
  * Runs on every value change, so text set from outside (a template, a
- * suggestion) sizes the box too. Shared by the hire composer and the
- * message box on an employee's page.
+ * suggestion) sizes the box too. Shared by the hire composer and the chat
+ * composer.
  */
 
 import { useLayoutEffect, type RefObject } from 'react';

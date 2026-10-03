@@ -68,12 +68,12 @@ is the reference.
 | `sidebar/`, `header/` | The team list, New employee, the profile row; the view title, the Workspace pill, the mode toggle (on an employee's page, Dev opens their workflow) and the theme button |
 | `hire/` | The hero, the composer, the template chips, the hire notice (`HireNotice.tsx`), and the starter bundles (`starters.json`), which the chips and Settings > Plugins both read |
 | `genui/` | The setup draft under the composer, and the hire itself, from a setup or a starter (below) |
-| `employee/` | One employee's page, which is the conversation with them: only their name under a small orb, then Talk (below). What to act on shows in the conversation only while there is something to do: the drafts waiting for the owner after the messages, and above the message box their main action while they can't read messages (Resume, Start, or connect what is missing; `useEmployeeControl`, `PrimaryActionButton`) or Help in browser while they wait there. It never says why they stopped. Pausing them, and watching them work, is the Workspace's: the header's Workspace pill opens it on the employee on screen, and its header carries the same main action |
+| `employee/` | One employee's page, which is the conversation with them (`EmployeeChat` over the shared chat, Talk below); the header names them. What to act on shows only while there is something to do: the drafts waiting for the owner after the conversation, and above the message box their main action while they can't read messages (Resume, Start, or connect what is missing; `useEmployeeControl`, `PrimaryActionButton`) or Help in browser while they wait there. Pausing them, and watching them work, is the Workspace's: the header's Workspace pill opens it on the employee on screen, and its header carries the same main action |
 | `connectAI/` | The guided Connect an AI model dialog (below) |
 | `workspace/` | The Workspace dock (below), its header pill, and its Canvas tab, which loads in its own chunk |
 | `settings/` | Settings pages (Profile, Billing, Skills, Connectors, Plugins). Catalog primitives live in `components/catalog`; Connectors embeds the shared `components/credentials/CredentialsBrowser`. Provider dialogs belong to AppShell. |
 | `approvals/` | The drafts query, the decide mutation (optimistic), the approval broadcast listener |
-| `data/` | zod-parsed queries for employees, connectors and the profile; `employeeCache.ts`, the team's query keys and `removeEmployee` (shared with the app store's delete); `talk.ts`, the thread and its mutations; `presentation.ts` maps server state to pills, actions and the message box's mode without deriving new rules |
+| `data/` | zod-parsed queries for employees, connectors and the profile; `employeeCache.ts`, the team's query keys and `removeEmployee` (shared with the app store's delete); `talk.ts`, Turn on Talk, Apply and the retry note (the thread itself is the shared chat's); `presentation.ts` maps server state to pills, actions and the message box's mode without deriving new rules |
 | `orb/` | The 3D orb (below) |
 | `ui/` | Small shared pieces (avatar, status dot and pill, app mark), the pill toast, and `useAutoGrow` (the composer's and the message box's growing text area) |
 | `state/homeStore.ts` | UI state only: the view, the sidebar, Settings, the Connect an AI model dialog, the last hire's notice, the Workspace dock, one-shot glow and pulse signals |
@@ -421,59 +421,78 @@ will finish. The wire contract is [chat_protocol.md](./chat_protocol.md).
 
 ### On the employee's page
 
-[employee/EmployeeTalk.tsx](../client/src/features/home/employee/EmployeeTalk.tsx)
-sits under the name: the thread, then a message box pinned to the bottom of
-the page (`HomeShell`'s scroll area is a column the view fills). Its queries
-and mutations are in [data/talk.ts](../client/src/features/home/data/talk.ts).
+[employee/EmployeeChat.tsx](../client/src/features/home/employee/EmployeeChat.tsx)
+is the page: the shared chat ([features/chat](../client/src/features/chat/),
+the same `ChatPane` the editor's console Chat pane uses) with Home around it.
+The header names the employee instead of the page (`HomeHeader`: avatar,
+name, role and apps, the status pill, and New conversation), and `HomeShell`
+gives the page a column that does not scroll: the conversation scrolls on its
+own above the message box, and tells the shell when it has left the top so the
+header draws its border. Turn on Talk and Apply are in
+[data/talk.ts](../client/src/features/home/data/talk.ts); the thread, runs,
+sending and drafts belong to the chat (wire and client rules in
+[chat_protocol.md](./chat_protocol.md#client)).
 
 - **The thread** is `get_chat_messages` with `all_generations: true` (the
-  newest `THREAD_LIMIT` messages): the conversation since the employee last
-  started, since a Reset clears it (see [Turn on Talk and Apply](#turn-on-talk-and-apply)).
-  Where a message's `run_key` (its generation) differs from the one before
-  (a message left from before a Start, such as a test run in Dev mode), a
-  divider reads "{Name} restarted — they start fresh from here". Both sides
-  are one bubble, the same raised surface, border and type in every theme;
-  only the side (the owner's on the right, answers on the left beside the
-  avatar) and the corner that points at the speaker differ. Answers render
-  as markdown (`ThreadMarkdown`, in its own chunk). The bubbles carry
-  `chat-msg-user` / `chat-msg-bot`, the theme hooks the editor's chat pane
-  uses too. Times, "Working…" and the divider share the body font. An empty
-  thread is just the box. The list is an `aria-live` log. It refetches on
-  `chat.updated`, after a runtime reset, and when the socket reopens. The
-  drafts waiting for the owner's OK follow the messages (`EmployeeTalk`'s
-  `drafts`).
+  newest 200 messages): the conversation since the employee last started,
+  since a Reset clears it (see [Turn on Talk and Apply](#turn-on-talk-and-apply)).
+  The orb sits at its top (`min(96px, 14vh)`), a new hire's notes under it.
+  Where a message's `run_key` (its generation) differs from the one before (a
+  message left from before a Start, such as a test run in Dev mode), a divider
+  reads "{Name} restarted — they start fresh from here". The owner's messages
+  are bubbles on the right; answers have no bubble, beside the employee's
+  avatar on the left, as markdown (`ReplyMarkdown`, in its own chunk, with the
+  theme's code colours). The turns are an `aria-live` log; the thread starts
+  at the newest turn and stays there while new ones arrive, and scrolled up a
+  "Jump to latest" button counts them. It refetches on `chat.updated`, after a
+  runtime reset, and when the socket reopens. The drafts waiting for the
+  owner's OK follow the conversation (the host's `afterThread`).
+- **Working** follows the run the message started, not timers: from the
+  moment the server admits it, the avatar spins its ring and skeleton lines
+  stand where the answer will be, with "Working…" under them, until that run
+  ends, whatever else lands meanwhile (a routine report does not end it). A
+  run that failed says so where the answer would be ("{Name} didn't pick up
+  this message.", "…took too long to answer.", or "{Name} couldn't answer."
+  with the error and its hint), also after a reload; a late answer replaces a
+  failure that only said none came. While the talk agent waits to retry after
+  a failed attempt, its retry message sits on the status line
+  (`useRetryNote`, from the agent's node status).
 - **The box** follows the control state the way `send_chat_message` does
   (`talkMode` in `presentation.ts`):
   - *send* (running, starting, resuming): a message shows at once
-    ("Sending…") and goes to the employee. "Working…" then holds the box
-    until an answer arrives. `useReplyWait` follows the talk agent's node
-    status in `nodeStatusStore` (for any workflow, not only the one open in
-    Dev mode) and gives up after `PICKUP_WAIT_MS` if the agent never starts,
-    `REPLY_WAIT_MS` while it works, or `SETTLE_WAIT_MS` after it stops, then
-    says "No answer from {Name} yet." Holding the box matters: overlapping
-    runs would each save over the other's conversation.
+    ("Sending…") and goes to the employee; Send then waits until the run
+    ends, since overlapping runs would each save over the other's
+    conversation (the server refuses a second message with
+    `run_in_progress`).
   - *queue* (paused, pausing): one message waits for Resume ("Your message is
-    waiting…"), and the box holds until the employee runs again.
+    waiting…" above the box, "Waiting for you to resume {Name}." in the
+    thread), and Send waits until it has been answered.
   - *start* (never started, ready, resetting, failed): no box; a line says
-    they can't read messages, beside their main action (Start, or what they
-    are missing), which the Workspace header offers too.
+    they can't read messages, beside their main action (Start, Start again,
+    or what they are missing), which the Workspace header offers too.
   - While the agent waits for the owner in the browser, the server's line
     for it ("Needs you to sign in to a site in the browser") sits above the
-    box beside Help in browser.
-  - A refused message leaves the thread and its text goes back in the box;
-    `not_running` (the state moved meanwhile) says "{Name} isn't running" and
-    refetches the team.
+    box beside Help in browser; after a run of failures paused them, why.
+  - What the owner writes is kept per conversation, so switching to another
+    employee and back keeps it. A refused message leaves the thread and its
+    text goes back in the box: `not_running` (the state moved meanwhile) says
+    "{Name} isn't running" and refetches the team; `run_in_progress` says
+    they are still working on the last message.
+- **New conversation** (the header) asks first, then clears the thread and
+  what the employee remembers of it (`clear_chat_messages`).
 - **Turn on Talk**: an employee whose `talk.state` is `off` (hired before
-  Talk, or built in Dev mode) shows Turn on Talk instead of the thread. An
-  `AlertDialog` confirms first, since it restarts them, and says so when drafts
-  are waiting (a restart cancels them). `unsupported` gets a note that their
-  setup has no way to answer.
+  Talk, or built in Dev mode) shows Turn on Talk where the box would be. An
+  `AlertDialog` confirms first, since it restarts them, and says so when
+  drafts are waiting (a restart cancels them). `unsupported` gets a note that
+  their setup has no way to answer. Either way their main action still shows
+  while they are not running, beside a line that says only their state
+  ("{Name} isn't running.", "{Name} is paused."; `stateNoticeText`).
 - **Pending changes**: while `pending_changes` is true, a notice above the box
   reads "{Name} has new abilities for this conversation. Apply to make them
   part of all their work (restarts {name} and clears this conversation)."
   Its Apply (`ActionButton intent="config"`) calls
   `apply_employee_changes`.
-- **Asking first**: under the page, a line says whether the employee asks
+- **Asking first**: under the box, a line says whether the employee asks
   before sending anything on the owner's behalf (the summary's `asks_first`).
 
 ### The talk line
@@ -770,8 +789,10 @@ history). Talk and growing a saved employee: `tests/services/employees/`
 `tests/services/test_workflow_deletion_shutdown.py`,
 `tests/services/test_workflow_context_archive_outbox.py` (a late save or read
 cannot re-create a deleted workflow). Client:
-`features/home/**/__tests__` (including `talk.test.tsx`, `thread.test.ts`,
-`connectAI.test.tsx`), `app/__tests__`,
+`features/home/**/__tests__` (including `employeeChat.test.tsx`,
+`homeHeader.test.tsx`, `connectAI.test.tsx`), `features/chat/__tests__` (the
+shared chat: turns, drafts, the pane against a fake server),
+`stores/__tests__/chatRunStore.test.ts`, `lib/agui/__tests__`, `app/__tests__`,
 `contexts/__tests__/themePrePaint.test.ts`,
 `contexts/__tests__/webSocketActions.test.tsx` (`chat.updated`, the editor
 chat's rollback), `lib/__tests__/workflowOps.test.ts` and

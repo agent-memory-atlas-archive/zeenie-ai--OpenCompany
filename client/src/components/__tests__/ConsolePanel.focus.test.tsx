@@ -8,25 +8,31 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach, beforeAll } from 'vitest';
 import { render, screen, act } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 // Full-module replace of the WS context (importActual+spread is broken under
 // React 19 — see CredentialsModal.test.tsx). ConsolePanel destructures:
-// consoleLogs, clearConsoleLogs, terminalLogs, clearTerminalLogs,
-// sendChatMessage, chatMessages, clearChatMessages. lib/nodeSpec (imported
-// transitively) also pulls useWebSocket but only calls it inside hooks that
-// this test never mounts.
+// consoleLogs, clearConsoleLogs, terminalLogs, clearTerminalLogs; the Chat
+// pane (the shared chat) reads its thread and runs through
+// useWebSocketActions. lib/nodeSpec (imported transitively) also pulls
+// useWebSocket but only calls it inside hooks that this test never mounts.
 const wsMock = {
   consoleLogs: [] as unknown[],
   terminalLogs: [] as unknown[],
-  chatMessages: [] as unknown[],
-  sendChatMessage: vi.fn().mockResolvedValue(undefined),
   clearConsoleLogs: vi.fn(),
   clearTerminalLogs: vi.fn(),
-  clearChatMessages: vi.fn(),
+};
+const actionsMock = {
+  isReady: true,
+  sendRequest: vi.fn(async (type: string) =>
+    type === 'chat_subscribe' ? { success: true, hub_epoch: 'e1', active_runs: [] } : { success: true, messages: [] },
+  ),
+  addEventListener: () => () => {},
 };
 
 vi.mock('../../contexts/WebSocketContext', () => ({
   useWebSocket: () => wsMock,
+  useWebSocketActions: () => actionsMock,
 }));
 
 import ConsolePanel from '../ui/ConsolePanel';
@@ -61,7 +67,14 @@ beforeEach(() => {
 });
 
 const renderPanel = (isOpen: boolean) =>
-  render(<ConsolePanel isOpen={isOpen} onToggle={vi.fn()} nodes={[]} />);
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <ConsolePanel isOpen={isOpen} onToggle={vi.fn()} nodes={[]} />
+    </QueryClientProvider>,
+  );
+
+/** The Chat pane's message box (no workflow open: it talks to "Workflow"). */
+const chatBox = () => screen.getByRole('textbox', { name: 'Message Workflow' });
 
 // ---------------------------------------------------------------------------
 
@@ -71,13 +84,13 @@ describe('ConsolePanel chat focus', () => {
     await act(async () => {
       await flushAnimationFrame();
     });
-    const input = screen.getByPlaceholderText('Type a message...');
+    const input = chatBox();
     expect(input).not.toHaveFocus();
   });
 
   it('focuses the chat input when chatFocusRequest increments while open', async () => {
     renderPanel(true);
-    const input = screen.getByPlaceholderText('Type a message...');
+    const input = chatBox();
     expect(input).not.toHaveFocus();
 
     act(() => {
@@ -92,7 +105,7 @@ describe('ConsolePanel chat focus', () => {
 
   it('focuses again on a subsequent increment after focus moved elsewhere', async () => {
     renderPanel(true);
-    const input = screen.getByPlaceholderText('Type a message...');
+    const input = chatBox();
 
     act(() => {
       useAppStore.getState().requestChatFocus();
@@ -103,7 +116,7 @@ describe('ConsolePanel chat focus', () => {
     expect(input).toHaveFocus();
 
     act(() => {
-      (input as HTMLInputElement).blur();
+      (input as HTMLTextAreaElement).blur();
     });
     expect(input).not.toHaveFocus();
 
@@ -118,7 +131,7 @@ describe('ConsolePanel chat focus', () => {
 
   it('does not focus when the panel is closed', async () => {
     renderPanel(false);
-    const input = screen.getByPlaceholderText('Type a message...');
+    const input = chatBox();
 
     act(() => {
       useAppStore.getState().requestChatFocus();
@@ -151,7 +164,7 @@ describe('ConsolePanel chat focus (tab mode)', () => {
   it('renders Chat as a tab and no chat input while another tab is active', () => {
     renderPanel(true);
     expect(screen.getByRole('button', { name: 'Chat' })).toBeInTheDocument();
-    expect(screen.queryByPlaceholderText('Type a message...')).not.toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: 'Message Workflow' })).not.toBeInTheDocument();
   });
 
   it('switches to the Chat tab and focuses the input on a focus request', async () => {
@@ -164,7 +177,7 @@ describe('ConsolePanel chat focus (tab mode)', () => {
       await flushAnimationFrame();
     });
 
-    const input = screen.getByPlaceholderText('Type a message...');
+    const input = chatBox();
     expect(input).toHaveFocus();
   });
 });
