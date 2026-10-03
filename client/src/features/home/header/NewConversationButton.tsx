@@ -49,7 +49,7 @@ export function NewConversationButton({ employee }: { employee: EmployeeSummary 
           <AlertDialogHeader>
             <AlertDialogTitle>Start a new conversation with {name}?</AlertDialogTitle>
             <AlertDialogDescription>
-              This clears the conversation, and {name} forgets it too.
+              This clears the conversation, and {name} forgets it too. Drafts from it still waiting for you are dropped.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

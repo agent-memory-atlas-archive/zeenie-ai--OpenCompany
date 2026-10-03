@@ -1,8 +1,9 @@
 /**
  * The employee's side of a turn (design handoff chat, "Assistant row"):
  * their avatar on the left and, with no bubble, in order: what they did on
- * the way (the steps disclosure), what they said in markdown, and any
- * interface they showed (GeneratedUiBlock).
+ * the way (the steps disclosure), what they said in markdown, any interface
+ * they showed (GeneratedUiBlock), and anything they want to send, waiting for
+ * the owner (ApprovalCard).
  *
  * While their run works the avatar spins its ring; skeleton lines stand in
  * for text that has not come yet; the answer streams in with a caret after
@@ -20,7 +21,8 @@ import { Suspense, lazy, useMemo, type ReactNode } from 'react';
 import { isLiveRun, type RunSnapshot } from '@/lib/agui/reduceRun';
 import type { UiStateChange } from '@/lib/jsonRender/uiState';
 import { cn } from '@/lib/utils';
-import { savedFollowups, savedSources, savedUiParts, type SourceItem, type UiPart } from '../data/parts';
+import { ApprovalCard } from '../approval/ApprovalCard';
+import { liveApprovalIds, savedApprovalIds, savedFollowups, savedSources, savedUiParts, type SourceItem, type UiPart } from '../data/parts';
 import type { ChatMessage } from '../data/schemas';
 import type { ChatUiActions } from '../genui/actions';
 import type { ChatPersona } from '../host';
@@ -112,6 +114,11 @@ export function AssistantTurn({
   const failure = run?.state === 'error' ? failureLines(run.error, persona.name) : null;
   const saved = message ? savedUiParts(message.parts) : NO_UI;
   const interfaces = saved.length > 0 ? saved : liveUi;
+  // The drafts it made: named on the saved reply, or arriving with the run.
+  const approvals = useMemo(
+    () => [...new Set([...savedApprovalIds(message?.parts), ...liveApprovalIds(run?.activities)])],
+    [message?.parts, run?.activities],
+  );
   // Only under the latest answer, once it is done.
   const followups = message && latest && !live && onFollowUp ? savedFollowups(message.parts) : [];
   const citations = useMemo<CitationInfo>(() => {
@@ -159,6 +166,9 @@ export function AssistantTurn({
               onStateChange={onUiStateChange}
             />
           ))}
+        {approvals.map((id) => (
+          <ApprovalCard key={id} approvalId={id} />
+        ))}
         {live && run && (
           <StatusLine
             label={liveLabel(run, streaming)}

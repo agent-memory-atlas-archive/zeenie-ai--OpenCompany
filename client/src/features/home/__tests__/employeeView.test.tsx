@@ -233,8 +233,9 @@ describe('EmployeeView', () => {
       type === 'list_approvals' ? { success: true, approvals: [draft] } : { success: true, messages: [] },
     );
     renderPage(summary({ status: 'working', talk: TALK_ON, pending_approvals: 1 }, { state: 'running' }));
-    const drafts = await screen.findByRole('region', { name: 'Waiting for you' });
+    const drafts = await screen.findByRole('region', { name: 'Drafts waiting for you' });
     expect(drafts).toHaveTextContent('Yes! Saturday at 10 works.');
+    expect(drafts).toHaveTextContent('Maya wants to send a message');
     expect(screen.getByRole('region', { name: 'Chat with Maya' })).toContainElement(drafts);
   });
 

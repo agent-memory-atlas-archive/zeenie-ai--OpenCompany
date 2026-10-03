@@ -3,9 +3,10 @@
  * over the session whose id is their workflow id, with Home around it.
  *
  * - The thread scrolls under the header with the orb as its first item (and
- *   a new hire's notes under it); the drafts waiting for the owner follow
- *   the conversation; the line under the message box says whether they ask
- *   before sending anything.
+ *   a new hire's notes under it); what they want to send waits for the
+ *   owner on cards in the chat (features/chat), with the Ask first chip
+ *   beside the box; the line under the box says whether they ask before
+ *   sending anything.
  * - The message box follows their control state the way the server does: a
  *   message goes at once while they run, waits for Resume while they are
  *   paused, and cannot be sent otherwise. Above it, what to act on: Resume or
@@ -29,7 +30,6 @@ import { HireNotice } from '../hire/HireNotice';
 import { OrbSlot } from '../orb/OrbSlot';
 import { useHomeStore } from '../state/homeStore';
 import { pillToast } from '../ui/pillToast';
-import { DraftsSection } from './DraftsSection';
 import { PendingChangesNotice } from './PendingChangesNotice';
 import { PrimaryActionButton } from './PrimaryActionButton';
 import { TurnOnTalk } from './TurnOnTalk';
@@ -109,7 +109,6 @@ export function EmployeeChat({
   const liveNote = useRetryNote(workflowId, employee.talk.agent_node_id, lane !== null && lane.state !== 'queued');
   const mode = talkMode(employee.control);
   const composer: ComposerMode = employee.talk.state !== 'on' || mode === 'start' ? 'closed' : mode;
-  const paused = employee.control.state === 'paused' || employee.control.state === 'pausing';
 
   const onSendRefused = (code: string) => {
     if (code === 'not_running') {
@@ -139,7 +138,6 @@ export function EmployeeChat({
             <HireNotice workflowId={workflowId} />
           </div>
         ),
-        afterThread: <DraftsSection workflowId={workflowId} employeeName={name} paused={paused} />,
         footnote: employee.asks_first
           ? `${name} asks before sending anything on your behalf.`
           : `${name} doesn’t ask before sending anything on your behalf.`,

@@ -81,3 +81,17 @@ export function liveUiParts(activities: readonly RunActivity[] | undefined): UiP
       : [],
   );
 }
+
+/** The drafts a saved reply names (`parts.approvals`), in order, once each. */
+export function savedApprovalIds(parts: Record<string, unknown> | null | undefined): string[] {
+  const raw = parts?.approvals;
+  if (!Array.isArray(raw)) return [];
+  const ids = raw.flatMap((item) => (isRecord(item) && typeof item.approval_id === 'string' && item.approval_id ? [item.approval_id] : []));
+  return [...new Set(ids)];
+}
+
+/** The drafts a run made so far (its `approval` activities). */
+export function liveApprovalIds(activities: readonly RunActivity[] | undefined): string[] {
+  const ids = (activities ?? []).flatMap((activity) => (activity.activityType === 'approval' ? [activity.messageId] : []));
+  return [...new Set(ids)];
+}

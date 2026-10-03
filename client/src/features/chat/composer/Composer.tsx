@@ -12,7 +12,7 @@
  */
 
 import { ArrowUp, Square } from 'lucide-react';
-import type { KeyboardEvent, RefObject } from 'react';
+import type { KeyboardEvent, ReactNode, RefObject } from 'react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { isSendKey } from '@/lib/composerKeys';
@@ -35,9 +35,11 @@ export interface ComposerProps {
   compact: boolean;
   /** The text box, for the host's focus requests. */
   boxRef: RefObject<HTMLTextAreaElement | null>;
+  /** Chips beside the button (Ask first). */
+  chips?: ReactNode;
 }
 
-export function Composer({ sessionId, name, ready, busy, onSend, onStop, stopping = false, compact, boxRef }: ComposerProps) {
+export function Composer({ sessionId, name, ready, busy, onSend, onStop, stopping = false, compact, boxRef, chips }: ComposerProps) {
   const draft = useComposerDraft(sessionId);
   const setText = useComposerStore((state) => state.setText);
   useAutoGrow(boxRef, draft.text);
@@ -97,7 +99,17 @@ export function Composer({ sessionId, name, ready, busy, onSend, onStop, stoppin
           compact ? 'py-1 text-sm leading-normal' : 'py-1.5 text-md leading-normal',
         )}
       />
-      {compact ? button : <div className="flex items-center justify-end gap-1.5">{button}</div>}
+      {compact ? (
+        <div className="flex shrink-0 items-center gap-1.5">
+          {chips}
+          {button}
+        </div>
+      ) : (
+        <div className="flex items-center gap-1.5">
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">{chips}</div>
+          {button}
+        </div>
+      )}
     </div>
   );
 }
