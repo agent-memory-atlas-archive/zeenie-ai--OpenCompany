@@ -1,15 +1,15 @@
-"""Real Temporal admission/Reset protocol using only installed local binaries.
+"""Real Temporal admission/Reset protocol against a native Temporal CLI.
 
-Set TEMPORAL_TEST_CLI to a native Temporal CLI binary when it is not on PATH
-or installed by the project's temporal-server npm package. This test never
-downloads a server or connects to the application's running Temporal server.
+Runs only when TEMPORAL_TEST_CLI names a native Temporal CLI binary. The test
+never looks for one itself: a Temporal install on PATH or in the npm global
+prefix belongs to the developer, not to a test run. It never downloads a
+server or connects to the application's running Temporal server either.
 """
 
 from __future__ import annotations
 
 import asyncio
 import os
-import shutil
 import subprocess
 import sys
 from contextlib import suppress
@@ -23,22 +23,10 @@ import pytest
 
 def _existing_cli() -> Path | None:
     configured = os.environ.get("TEMPORAL_TEST_CLI")
-    if configured:
-        path = Path(configured)
-        return path if path.is_file() else None
-    executable = "temporal.exe" if sys.platform == "win32" else "temporal"
-    candidates = [Path(__file__).parents[3] / "node_modules" / "temporal-server" / "bin" / executable]
-    on_path = shutil.which(executable) or shutil.which("temporal")
-    if on_path:
-        path = Path(on_path)
-        # The npm entry point is a launcher with application database/port
-        # defaults; start_local needs its native binary instead.
-        candidates.append(path.parent / "node_modules" / "temporal-server" / "bin" / executable)
-        if path.suffix.lower() not in {".cmd", ".ps1", ".bat"}:
-            candidates.append(path)
-    if os.environ.get("APPDATA"):
-        candidates.append(Path(os.environ["APPDATA"]) / "npm" / "node_modules" / "temporal-server" / "bin" / executable)
-    return next((path for path in candidates if path.is_file()), None)
+    if not configured:
+        return None
+    path = Path(configured)
+    return path if path.is_file() else None
 
 
 async def _run_gate(cli: str) -> None:
@@ -224,7 +212,7 @@ async def _run_gate(cli: str) -> None:
 def test_real_temporal_admission_reset_waits_for_child_and_plugin_cleanup():
     cli = _existing_cli()
     if cli is None:
-        pytest.skip("Native Temporal CLI unavailable; set TEMPORAL_TEST_CLI (test never downloads it)")
+        pytest.skip("Set TEMPORAL_TEST_CLI to a native Temporal CLI binary to run this test")
     completed = subprocess.run(
         [sys.executable, "-X", "utf8", "-m", "tests.temporal.test_workspace_tasks_integration", str(cli)],
         cwd=Path(__file__).parents[2], stdin=subprocess.DEVNULL,
