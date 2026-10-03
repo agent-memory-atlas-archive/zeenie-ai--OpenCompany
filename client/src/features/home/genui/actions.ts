@@ -1,7 +1,12 @@
 /**
- * What a setup screen's buttons do. The model names an action; this maps it
- * onto Home: change a value, start editing the draft, open Connectors,
- * connect one app, or hire.
+ * What a setup screen's buttons do, as json-render action handlers (given
+ * to the screen's JSONUIProvider). Every Button presses one action through
+ * its `on.press` binding; json-render resolves the binding's params against
+ * the screen's state at the press and calls the handler with them. The
+ * actions map onto Home: start editing the draft, open Connectors, connect
+ * one app, or hire. `setState` is not here: json-render runs it itself,
+ * writing the screen's state store (lib/jsonRender/uiState.ts), and the
+ * store tells the draft.
  *
  * `connect_app` names an app in the owner's words ("Gmail", "Google
  * calendar"). The server resolves the names a reply uses against the app
@@ -11,16 +16,16 @@
  */
 
 import type { AppRef } from '../data/schemas';
-import { actionOf } from './catalog';
-import { resolveValue, type UiState } from './expressions';
+import type { ActionType } from './catalog';
 
 export interface ConnectCandidate {
   providerId: string;
   name: string;
 }
 
-export interface SpecActionHandlers {
-  setValue: (path: string, value: unknown) => void;
+/** What the buttons can make Home do. */
+export interface HireActions {
+  /** Start editing the draft from the composer. */
   refine: () => void;
   openConnectors: () => void;
   /** Open the connect dialog for a provider. */
@@ -28,13 +33,15 @@ export interface SpecActionHandlers {
   hire: (params: Record<string, unknown>) => void;
 }
 
-export interface SpecActionContext {
-  state: UiState;
+export interface HireActionContext {
   /** Names the server resolved for this reply, lower-cased. */
   apps: Record<string, AppRef>;
   /** Connectable providers (the catalogue), for names the server did not see. */
   providers: readonly ConnectCandidate[];
+  actions: HireActions;
 }
+
+export type HireActionHandlers = Record<Exclude<ActionType, 'setState'>, (params: Record<string, unknown>) => void>;
 
 const MIN_SUBSTRING = 3;
 
@@ -61,47 +68,35 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
-/** Run one button's action. `rawParams` are the button's params as
- *  written; they are resolved against the screen's current state here. */
-export function runSpecAction(
-  action: unknown,
-  rawParams: unknown,
-  context: SpecActionContext,
-  handlers: SpecActionHandlers,
-): void {
-  const name = actionOf(action);
-  const params = asRecord(resolveValue(rawParams ?? {}, context.state));
-  switch (name) {
-    case 'setState': {
-      if (typeof params.statePath === 'string') handlers.setValue(params.statePath, params.value);
-      return;
-    }
-    case 'refine':
-      handlers.refine();
-      return;
-    case 'open_connectors':
-      handlers.openConnectors();
-      return;
-    case 'connect_app': {
-      const appName = typeof params.app === 'string' ? params.app.trim() : '';
-      if (!appName) {
-        handlers.openConnectors();
-        return;
-      }
-      const known = context.apps[appName.toLowerCase()];
-      if (known && known.supported) {
-        handlers.connect(known.provider_id, known.name);
-        return;
-      }
-      const match = matchProvider(appName, context.providers);
-      if (match) handlers.connect(match.providerId, match.name);
-      else handlers.openConnectors();
-      return;
-    }
-    case 'hire_employee':
-      handlers.hire(params);
-      return;
-    default:
-      return;
+function connectApp(params: Record<string, unknown>, context: HireActionContext): void {
+  const appName = typeof params.app === 'string' ? params.app.trim() : '';
+  if (!appName) {
+    context.actions.openConnectors();
+    return;
   }
+  const known = Object.prototype.hasOwnProperty.call(context.apps, appName.toLowerCase())
+    ? context.apps[appName.toLowerCase()]
+    : undefined;
+  if (known && known.supported) {
+    context.actions.connect(known.provider_id, known.name);
+    return;
+  }
+  const match = matchProvider(appName, context.providers);
+  if (match) context.actions.connect(match.providerId, match.name);
+  else context.actions.openConnectors();
+}
+
+/**
+ * The handlers for a screen. `context` is read at each press, so the
+ * handlers can be made once per screen (json-render's ActionProvider keeps
+ * the handlers it first gets) while Home's callbacks and app lists change.
+ */
+export function hireActionHandlers(context: () => HireActionContext): HireActionHandlers {
+  return {
+    hire_employee: (params) => context().actions.hire(asRecord(params)),
+    // A change is the owner's to write: whatever the button suggested is not sent.
+    refine: () => context().actions.refine(),
+    open_connectors: () => context().actions.openConnectors(),
+    connect_app: (params) => connectApp(asRecord(params), context()),
+  };
 }

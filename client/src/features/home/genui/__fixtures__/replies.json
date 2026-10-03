@@ -198,5 +198,68 @@
     "expect": {
       "metricValue": ""
     }
+  },
+  {
+    "name": "json-render shape: on.press and checked",
+    "reply": "{\"text\":\"Meet Maya, your new receptionist.\",\"spec\":{\"root\":\"a\",\"state\":{\"rules\":{\"askFirst\":true,\"hours\":false},\"choices\":{\"report\":\"Daily\"}},\"elements\":{\"a\":{\"type\":\"Stack\",\"props\":{\"direction\":\"vertical\",\"gap\":\"md\"},\"children\":[\"b\",\"c\",\"d\",\"e\"]},\"b\":{\"type\":\"AgentCard\",\"props\":{\"name\":\"Maya\",\"role\":\"Receptionist\",\"description\":\"Answers WhatsApp and books visits.\",\"apps\":[\"WhatsApp\",\"Google Calendar\"],\"status\":\"ready\"},\"children\":[]},\"c\":{\"type\":\"Plan\",\"props\":{\"title\":\"Their routine\",\"steps\":[{\"title\":\"When a message arrives\",\"detail\":\"On WhatsApp\",\"role\":\"trigger\",\"app\":\"WhatsApp\"},{\"title\":\"Answer the question\",\"detail\":\"Using your notes\",\"role\":\"agent\"},{\"title\":\"Book the visit\",\"detail\":\"In your calendar\",\"role\":\"tool\",\"app\":\"Google Calendar\"}]},\"children\":[]},\"d\":{\"type\":\"Card\",\"props\":{\"title\":\"Ground rules\"},\"children\":[\"f\",\"g\",\"h\"]},\"f\":{\"type\":\"Toggle\",\"props\":{\"label\":\"Ask me before sending anything\",\"checked\":{\"$bindState\":\"/rules/askFirst\"}},\"children\":[]},\"g\":{\"type\":\"Toggle\",\"props\":{\"label\":\"Only reply 9 to 6\",\"checked\":{\"$bindState\":\"/rules/hours\"}},\"children\":[]},\"h\":{\"type\":\"Choice\",\"props\":{\"label\":\"Report\",\"options\":[\"Daily\",\"Weekly\"],\"value\":{\"$bindState\":\"/choices/report\"}},\"children\":[]},\"e\":{\"type\":\"Stack\",\"props\":{\"direction\":\"horizontal\",\"gap\":\"md\"},\"children\":[\"i\",\"j\"]},\"i\":{\"type\":\"Button\",\"props\":{\"label\":\"Hire Maya\",\"variant\":\"primary\"},\"on\":{\"press\":{\"action\":\"hire_employee\",\"params\":{\"name\":\"Maya\",\"role\":\"Receptionist\",\"apps\":[\"WhatsApp\",\"Google Calendar\"],\"trigger\":{\"kind\":\"app_event\",\"app\":\"WhatsApp\"},\"sendsVia\":\"WhatsApp\"}}},\"children\":[]},\"j\":{\"type\":\"Button\",\"props\":{\"label\":\"Change something\",\"variant\":\"secondary\"},\"on\":{\"press\":{\"action\":\"refine\"}},\"children\":[]}}}}",
+    "salvageable": true,
+    "expect": {
+      "text": "Meet Maya, your new receptionist.",
+      "hasAgent": "Maya",
+      "hireButtons": 1,
+      "refineButtons": 1,
+      "askFirstToggles": 1,
+      "sameAs": "clean minified reply"
+    }
+  },
+  {
+    "name": "on.press as a list, the first action unknown",
+    "reply": "{\"text\":\"Ivy keeps your diary.\",\"spec\":{\"root\":\"r\",\"elements\":{\"r\":{\"type\":\"Stack\",\"props\":{\"direction\":\"vertical\"},\"children\":[\"a\",\"row\"]},\"a\":{\"type\":\"AgentCard\",\"props\":{\"name\":\"Ivy\",\"role\":\"Diary keeper\",\"apps\":[\"Google Calendar\"]}},\"row\":{\"type\":\"Stack\",\"props\":{\"direction\":\"horizontal\"},\"children\":[\"h\",\"c\"]},\"h\":{\"type\":\"Button\",\"props\":{\"label\":\"Hire Ivy\",\"variant\":\"primary\"},\"on\":{\"press\":[{\"action\":\"wave\"},{\"action\":\"hire_employee\",\"params\":{\"name\":\"Ivy\",\"trigger\":{\"kind\":\"schedule\",\"every\":\"weekday\",\"at\":\"08:00\"}}}]}},\"c\":{\"type\":\"Button\",\"props\":{\"label\":\"Change something\"},\"on\":{\"press\":{\"action\":\"ask\",\"params\":{\"text\":\"Only mornings\"}}}}}}}",
+    "salvageable": true,
+    "expect": {
+      "hasAgent": "Ivy",
+      "hireLabel": "Hire Ivy",
+      "refineHasNoParams": true,
+      "trigger": {
+        "kind": "schedule",
+        "every": "weekday",
+        "at": "08:00"
+      }
+    }
+  },
+  {
+    "name": "on written inside props",
+    "reply": "{\"text\":\"Tom answers email.\",\"spec\":{\"root\":\"r\",\"elements\":{\"r\":{\"type\":\"Stack\",\"props\":{\"direction\":\"vertical\"},\"children\":[\"a\",\"row\"]},\"a\":{\"type\":\"AgentCard\",\"props\":{\"name\":\"Tom\",\"role\":\"Email helper\",\"apps\":[\"Gmail\"]}},\"row\":{\"type\":\"Stack\",\"props\":{\"direction\":\"horizontal\"},\"children\":[\"h\"]},\"h\":{\"type\":\"Button\",\"props\":{\"label\":\"Hire Tom\",\"variant\":\"primary\",\"on\":{\"press\":{\"action\":\"hire_employee\",\"params\":{\"name\":\"Tom\"}}}}}}}}",
+    "salvageable": true,
+    "expect": {
+      "hasAgent": "Tom",
+      "hireLabel": "Hire Tom"
+    }
+  },
+  {
+    "name": "buttons whose on.press names no known action",
+    "reply": "{\"text\":\"Nope.\",\"spec\":{\"root\":\"r\",\"elements\":{\"b1\":{\"type\":\"Button\",\"props\":{\"label\":\"Go\"},\"on\":{\"press\":{\"action\":\"delete_everything\"}}},\"b2\":{\"type\":\"Button\",\"props\":{\"label\":\"Stop\"},\"on\":{\"press\":[{\"action\":\"pushState\"}]}}}}}",
+    "salvageable": false
+  },
+  {
+    "name": "prototype paths in expressions",
+    "reply": "{\"text\":\"Paths.\",\"spec\":{\"root\":\"r\",\"state\":{\"rules\":{\"askFirst\":false}},\"elements\":{\"r\":{\"type\":\"Stack\",\"props\":{\"direction\":\"vertical\"},\"children\":[\"a\",\"t\",\"x\",\"rules\",\"row\"]},\"a\":{\"type\":\"AgentCard\",\"props\":{\"name\":\"Rex\",\"role\":\"Helper\",\"description\":{\"$state\":\"/__proto__/polluted\"}}},\"t\":{\"type\":\"Text\",\"props\":{\"text\":{\"$template\":\"Hi ${/constructor/name} and ${/rules/askFirst}\"}},\"visible\":{\"$state\":\"/prototype/x\"}},\"x\":{\"type\":\"Text\",\"props\":{\"text\":\"Shown\"},\"visible\":[{\"$state\":\"/rules/askFirst\",\"not\":true},{\"$state\":\"/a/__proto__\"}]},\"rules\":{\"type\":\"Card\",\"props\":{\"title\":\"Ground rules\"},\"children\":[\"f\",\"g\"]},\"f\":{\"type\":\"Toggle\",\"props\":{\"label\":\"Ask me before sending anything\",\"checked\":{\"$bindState\":\"/rules/askFirst\"}}},\"g\":{\"type\":\"Toggle\",\"props\":{\"label\":\"Weekends too\",\"checked\":{\"$bindState\":\"/rules/__proto__/weekends\"}}},\"row\":{\"type\":\"Stack\",\"props\":{\"direction\":\"horizontal\"},\"children\":[\"h\"]},\"h\":{\"type\":\"Button\",\"props\":{\"label\":\"Hire Rex\",\"variant\":\"primary\"},\"on\":{\"press\":{\"action\":\"hire_employee\",\"params\":{\"name\":\"Rex\",\"note\":{\"$state\":\"/constructor/prototype\"}}}}}}}}",
+    "salvageable": true,
+    "expect": {
+      "hasAgent": "Rex",
+      "noPollution": true,
+      "noForbiddenPaths": true,
+      "askFirstValue": false
+    }
+  },
+  {
+    "name": "watch, repeat, slots, $computed and confirm are dropped",
+    "reply": "{\"text\":\"Extras.\",\"spec\":{\"root\":\"r\",\"elements\":{\"r\":{\"type\":\"Stack\",\"props\":{\"direction\":\"vertical\"},\"children\":[\"a\",\"n\",\"row\"],\"slots\":{\"footer\":[\"n\"]},\"repeat\":{\"statePath\":\"/items\"}},\"a\":{\"type\":\"AgentCard\",\"props\":{\"name\":\"Lia\",\"role\":\"Helper\",\"apps\":[]},\"watch\":{\"/rules/askFirst\":{\"action\":\"hire_employee\"}}},\"n\":{\"type\":\"Metric\",\"props\":{\"label\":\"Score\",\"value\":{\"$computed\":\"secret\",\"args\":{\"x\":1}},\"hint\":{\"$item\":\"x\"}}},\"row\":{\"type\":\"Stack\",\"props\":{\"direction\":\"horizontal\"},\"children\":[\"h\"]},\"h\":{\"type\":\"Button\",\"props\":{\"label\":\"Hire Lia\",\"variant\":\"primary\"},\"on\":{\"press\":{\"action\":\"hire_employee\",\"params\":{\"name\":\"Lia\"},\"confirm\":{\"title\":\"Sure?\",\"message\":\"Hire?\"},\"onSuccess\":{\"set\":{\"/__proto__/x\":1}},\"onError\":{\"action\":\"refine\"},\"preventDefault\":true}}}}}}",
+    "salvageable": true,
+    "expect": {
+      "hasAgent": "Lia",
+      "strippedExtras": true,
+      "metricValue": ""
+    }
   }
 ]

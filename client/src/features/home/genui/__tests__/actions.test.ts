@@ -1,5 +1,13 @@
+/**
+ * The setup screen's action handlers (json-render's ActionProvider calls
+ * them with params already resolved at the press): connect an app by the
+ * name the reply used, else by the provider's name, else open Connectors;
+ * a change request carries nothing the model wrote; Hire gets its params;
+ * and each press reads Home's callbacks as they are now.
+ */
+
 import { describe, expect, it, vi } from 'vitest';
-import { matchProvider, runSpecAction, type SpecActionHandlers } from '../actions';
+import { hireActionHandlers, matchProvider, type HireActionContext, type HireActions } from '../actions';
 
 const providers = [
   { providerId: 'whatsapp', name: 'WhatsApp' },
@@ -8,14 +16,18 @@ const providers = [
   { providerId: 'stripe', name: 'Stripe' },
 ];
 
-function handlers(): SpecActionHandlers & Record<string, ReturnType<typeof vi.fn>> {
-  return {
-    setValue: vi.fn(),
-    refine: vi.fn(),
-    openConnectors: vi.fn(),
-    connect: vi.fn(),
-    hire: vi.fn(),
-  } as never;
+const apps = {
+  gmail: { app_id: 'gmail', provider_id: 'google', name: 'Gmail', icon_ref: null, connected: false, supported: true },
+  quickbooks: { app_id: 'quickbooks', provider_id: '', name: 'QuickBooks', icon_ref: null, connected: false, supported: false },
+};
+
+function homeActions() {
+  return { refine: vi.fn(), openConnectors: vi.fn(), connect: vi.fn(), hire: vi.fn() } satisfies HireActions;
+}
+
+function setup(actions = homeActions()) {
+  const context: HireActionContext = { apps, providers, actions };
+  return { handlers: hireActionHandlers(() => context), actions, context };
 }
 
 describe('matchProvider', () => {
@@ -34,42 +46,47 @@ describe('matchProvider', () => {
   });
 });
 
-describe('runSpecAction', () => {
-  const apps = {
-    gmail: { app_id: 'gmail', provider_id: 'google', name: 'Gmail', icon_ref: null, connected: false, supported: true },
-    quickbooks: { app_id: 'quickbooks', provider_id: '', name: 'QuickBooks', icon_ref: null, connected: false, supported: false },
-  };
-  const context = { state: { freq: 'weekly' }, apps, providers };
+describe('hireActionHandlers', () => {
+  it('handles the catalogue’s actions and leaves setState to json-render', () => {
+    const { handlers } = setup();
+    expect(Object.keys(handlers).sort()).toEqual(['connect_app', 'hire_employee', 'open_connectors', 'refine']);
+  });
 
   it('connects an app the server resolved, by its provider', () => {
-    const h = handlers();
-    runSpecAction('connect_app', { app: 'Gmail' }, context, h);
-    expect(h.connect).toHaveBeenCalledWith('google', 'Gmail');
+    const { handlers, actions } = setup();
+    handlers.connect_app({ app: 'Gmail' });
+    expect(actions.connect).toHaveBeenCalledWith('google', 'Gmail');
   });
 
   it('falls back to the provider names, and opens Connectors when nothing matches', () => {
-    const h = handlers();
-    runSpecAction('connect_app', { app: 'Stripe' }, context, h);
-    expect(h.connect).toHaveBeenCalledWith('stripe', 'Stripe');
-    runSpecAction('connect_app', { app: 'QuickBooks' }, context, h);
-    runSpecAction('connect_app', {}, context, h);
-    expect(h.openConnectors).toHaveBeenCalledTimes(2);
+    const { handlers, actions } = setup();
+    handlers.connect_app({ app: 'Stripe' });
+    expect(actions.connect).toHaveBeenCalledWith('stripe', 'Stripe');
+    handlers.connect_app({ app: 'QuickBooks' });
+    handlers.connect_app({});
+    handlers.connect_app({ app: 'constructor' });
+    expect(actions.openConnectors).toHaveBeenCalledTimes(3);
   });
 
-  it('resolves params against the screen state', () => {
-    const h = handlers();
-    runSpecAction('setState', { statePath: '/choices/freq', value: { $state: '/freq' } }, context, h);
-    expect(h.setValue).toHaveBeenCalledWith('/choices/freq', 'weekly');
-    runSpecAction('hire_employee', { name: 'Maya', note: { $template: 'Reports ${/freq}' } }, context, h);
-    expect(h.hire).toHaveBeenCalledWith({ name: 'Maya', note: 'Reports weekly' });
+  it('hands Hire its params, and a change request nothing', () => {
+    const { handlers, actions } = setup();
+    handlers.hire_employee({ name: 'Maya', note: 'Reports weekly' });
+    expect(actions.hire).toHaveBeenCalledWith({ name: 'Maya', note: 'Reports weekly' });
+    handlers.refine({ prompt: 'Only weekdays' });
+    expect(actions.refine).toHaveBeenCalledTimes(1);
+    expect(actions.refine).toHaveBeenCalledWith();
+    handlers.open_connectors({});
+    expect(actions.openConnectors).toHaveBeenCalledTimes(1);
   });
 
-  it('treats ask as a plain change request and ignores unknown actions', () => {
-    const h = handlers();
-    runSpecAction('ask', { prompt: 'Only weekdays' }, context, h);
-    expect(h.refine).toHaveBeenCalledTimes(1);
-    expect(h.refine).toHaveBeenCalledWith();
-    runSpecAction('delete_everything', {}, context, h);
-    expect(Object.values(h).every((fn) => fn.mock.calls.length <= 1)).toBe(true);
+  it('reads Home’s callbacks at each press', () => {
+    const first = homeActions();
+    const later = homeActions();
+    let context: HireActionContext = { apps, providers, actions: first };
+    const handlers = hireActionHandlers(() => context);
+    context = { ...context, actions: later };
+    handlers.hire_employee({});
+    expect(first.hire).not.toHaveBeenCalled();
+    expect(later.hire).toHaveBeenCalledTimes(1);
   });
 });

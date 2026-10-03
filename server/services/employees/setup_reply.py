@@ -14,7 +14,10 @@ The rules, as the client applies them: take the first ``{`` to the last
 open. A reply is renderable when its ``spec`` has an ``elements`` object
 with at least one usable element: a known component with a usable id,
 where a Button needs a label and a known action and an AgentCard needs a
-name.
+name. A Button's action is read as the client reads it: the element's
+``on.press`` (one binding, or the first of a list with a known action),
+else ``on`` written inside its props, else the older ``action`` /
+``actionParams`` props.
 """
 
 from __future__ import annotations
@@ -22,7 +25,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from services.employees.genui_catalog import canonical_action, component_types, limit
 
@@ -30,7 +33,8 @@ _FENCE = re.compile(r"```(?:json)?", re.IGNORECASE)
 _QUOTED_TEXT = re.compile(r'"text"\s*:\s*"((?:[^"\\]|\\.)*)"')
 _ID = re.compile(r"^[A-Za-z0-9_.:-]+$")
 _FORBIDDEN_KEYS = frozenset({"__proto__", "constructor", "prototype"})
-_META_KEYS = frozenset({"type", "props", "children", "visible", "watch", "id"})
+# Element keys that are never props; the client's normalize.ts META_KEYS.
+_META_KEYS = frozenset({"type", "props", "children", "visible", "watch", "id", "on", "repeat", "slots"})
 _MAX_REPAIR_CUTS = 80
 _MAX_RAW_ELEMENTS = 64
 
@@ -183,8 +187,36 @@ def _props(element: Dict[str, Any]) -> Dict[str, Any]:
     return props
 
 
+def _pressed(on: Any) -> Optional[Tuple[str, Dict[str, Any]]]:
+    """The first binding under ``on.press`` (one, or a list) whose action is known."""
+    if not isinstance(on, dict):
+        return None
+    press = on.get("press")
+    for binding in press if isinstance(press, list) else [press]:
+        if isinstance(binding, dict):
+            action = canonical_action(binding.get("action"))
+            if action:
+                params = binding.get("params")
+                return action, params if isinstance(params, dict) else {}
+    return None
+
+
+def button_press(element: Dict[str, Any], props: Dict[str, Any]) -> Optional[Tuple[str, Dict[str, Any]]]:
+    """A Button's action and params: ``on.press`` beside its props, or
+    inside them, else the older ``action`` / ``actionParams`` props."""
+    pressed = _pressed(element.get("on")) or _pressed(props.get("on"))
+    if pressed:
+        return pressed
+    action = canonical_action(props.get("action"))
+    if action is None:
+        return None
+    params = props.get("actionParams")
+    return action, params if isinstance(params, dict) else {}
+
+
 def usable_elements(spec: Any) -> List[Dict[str, Any]]:
-    """The elements the client would keep, with their props merged."""
+    """The elements the client would keep, with their props merged (and a
+    Button's ``press``: its action and params)."""
     if not isinstance(spec, dict) or not isinstance(spec.get("elements"), dict):
         return []
     known = component_types()
@@ -198,11 +230,15 @@ def usable_elements(spec: Any) -> List[Dict[str, Any]]:
         if kind not in known:
             continue
         props = _props(element)
-        if kind == "Button" and (not _text(props.get("label")) or canonical_action(props.get("action")) is None):
-            continue
+        usable: Dict[str, Any] = {"type": kind, "props": props}
+        if kind == "Button":
+            press = button_press(element, props)
+            if not _text(props.get("label")) or press is None:
+                continue
+            usable["press"] = press
         if kind == "AgentCard" and not _text(props.get("name")):
             continue
-        kept.append({"type": kind, "props": props})
+        kept.append(usable)
     return kept
 
 
@@ -242,8 +278,7 @@ def app_names(raw: Any) -> List[str]:
                 if isinstance(step, dict):
                     add(step.get("app"))
         elif element["type"] == "Button":
-            action = canonical_action(props.get("action"))
-            params = props.get("actionParams") if isinstance(props.get("actionParams"), dict) else {}
+            action, params = element["press"]
             if action == "connect_app":
                 add(params.get("app"))
             elif action == "hire_employee":
@@ -256,4 +291,4 @@ def app_names(raw: Any) -> List[str]:
     return list(seen.values())
 
 
-__all__ = ["ParsedReply", "app_names", "is_salvageable", "parse_reply", "repair_json", "usable_elements"]
+__all__ = ["ParsedReply", "app_names", "button_press", "is_salvageable", "parse_reply", "repair_json", "usable_elements"]

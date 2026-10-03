@@ -116,6 +116,27 @@ def test_every_component_has_a_prop_schema(catalog_ts):
     assert declared == set(_string_list(catalog_ts, "COMPONENT_TYPES"))
 
 
+def _prop_schema(catalog_ts: str, name: str) -> str:
+    """One component's schema in PROP_SCHEMAS, up to the next component."""
+    schemas = re.search(r"export const PROP_SCHEMAS = \{(.*)\} satisfies", catalog_ts, re.DOTALL)
+    assert schemas, "could not find PROP_SCHEMAS"
+    match = re.search(rf"^  {name}: z\.(.*?)(?=^  \w+: z\.|\Z)", schemas.group(1), re.MULTILINE | re.DOTALL)
+    assert match, f"could not find the {name} schema"
+    return match.group(1)
+
+
+def test_the_spec_is_in_json_renders_shape_on_both_sides(manifest, catalog_ts):
+    """spec_version 2: a Toggle binds `checked`, and a Button's action is
+    the element's on.press, never a prop. The prompt says so and the
+    renderer reads the same props."""
+    assert "checked:" in manifest["components"]["Toggle"]["props"]
+    assert re.search(r"\bchecked:", _prop_schema(catalog_ts, "Toggle"))
+    assert not re.search(r"\bvalue:", _prop_schema(catalog_ts, "Toggle"))
+    assert "action" not in manifest["components"]["Button"]["props"]
+    assert '"on":{"press":' in manifest["components"]["Button"]["description"]
+    assert not re.search(r"\baction(Params)?:", _prop_schema(catalog_ts, "Button"))
+
+
 def test_manifest_is_plain_json():
     raw = (Path(__file__).resolve().parents[1] / "config" / "genui_catalog.json").read_text(encoding="utf-8")
-    assert json.loads(raw)["spec_version"] == 1
+    assert json.loads(raw)["spec_version"] == 2

@@ -4,6 +4,9 @@ import reactHooks from 'eslint-plugin-react-hooks'
 import reactRefresh from 'eslint-plugin-react-refresh'
 import tseslint from 'typescript-eslint'
 
+const GENUI_PRIVATE =
+  'Import the setup-screen pipeline from features/home/genui (its index) only; its modules are private to that folder.'
+
 export default tseslint.config(
   { ignores: ['dist'] },
   {
@@ -83,20 +86,28 @@ export default tseslint.config(
   },
   // Normal mode's setup-screen pipeline (catalogue, parser, normalizer,
   // renderer, draft store) is private to its folder: everything else
-  // imports it through features/home/genui/index.ts.
+  // imports it through features/home/genui/index.ts. Only that folder is
+  // caught: the shared json-render glue (lib/jsonRender) and other
+  // generated-UI folders (features/chat/genui) are free to import.
   {
     files: ['src/**/*.{ts,tsx}'],
+    ignores: ['src/features/home/genui/**'],
+    rules: {
+      'no-restricted-imports': ['error', { patterns: [{ group: ['**/home/genui/*'], message: GENUI_PRIVATE }] }],
+    },
+  },
+  // Home's own folders reach it relatively ("../genui/catalog"), which the
+  // path pattern above cannot see; this block replaces it there.
+  {
+    files: ['src/features/home/**/*.{ts,tsx}'],
     ignores: ['src/features/home/genui/**'],
     rules: {
       'no-restricted-imports': [
         'error',
         {
           patterns: [
-            {
-              group: ['**/genui/*'],
-              message:
-                'Import the setup-screen pipeline from features/home/genui (its index) only; its modules are private to that folder.',
-            },
+            { group: ['**/home/genui/*'], message: GENUI_PRIVATE },
+            { regex: '^(?:\\./|(?:\\.\\./)+)genui/', message: GENUI_PRIVATE },
           ],
         },
       ],

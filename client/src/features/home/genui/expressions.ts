@@ -8,68 +8,44 @@
  * - conditions C (and an element's `visible`): `{"$state": "/path"}`, with
  *   optional `"eq"` / `"neq"` and `"not": true`; an array means all of them.
  *
- * Paths are `/`-separated keys. A path through `__proto__`, `constructor`
- * or `prototype` is refused, so model-written paths can never reach an
- * object's prototype. Writes copy along the path and keep arrays as
- * arrays.
+ * Paths are JSON Pointers ("/rules/askFirst"), the form json-render reads.
+ * The path rule (lib/jsonRender/paths.ts, shared with json-render's side)
+ * refuses a path through `__proto__`, `constructor` or `prototype`, so
+ * model-written paths can never reach an object's prototype. Writes copy
+ * along the path and keep arrays as arrays.
+ *
+ * json-render evaluates the screen as it renders; this evaluator is for
+ * reading the screen outside it: the hire payload and the normaliser.
  */
+
+// The file, not the index: this module is in Home's first chunk.
+import { isForbiddenSegment, parseStatePath, readPath, writePath } from '@/lib/jsonRender/paths';
 
 export type UiState = Record<string, unknown>;
 
-const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 const MAX_DEPTH = 8;
-const MAX_PATH_KEYS = 6;
 
 export function isForbiddenKey(key: string): boolean {
-  return FORBIDDEN_KEYS.has(key);
+  return isForbiddenSegment(key);
 }
 
 /** The keys of a path, or null when the path is not a usable string. */
 export function pathKeys(path: unknown): string[] | null {
-  if (typeof path !== 'string') return null;
-  const keys = path.split('/').filter(Boolean);
-  if (keys.length === 0 || keys.length > MAX_PATH_KEYS || keys.some(isForbiddenKey)) return null;
-  return keys;
+  return parseStatePath(path);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function childOf(value: unknown, key: string): unknown {
-  if (Array.isArray(value)) {
-    const index = Number(key);
-    return Number.isInteger(index) && index >= 0 ? value[index] : undefined;
-  }
-  if (isRecord(value) && Object.prototype.hasOwnProperty.call(value, key)) return value[key];
-  return undefined;
-}
-
 export function getPath(state: unknown, path: unknown): unknown {
-  const keys = pathKeys(path);
-  if (!keys) return undefined;
-  return keys.reduce<unknown>((value, key) => childOf(value, key), state);
+  return readPath(state, path);
 }
 
 /** A copy of `state` with `value` at `path`; `state` itself is unchanged.
  *  An unusable path returns `state` as it was. */
 export function setPath(state: UiState, path: unknown, value: unknown): UiState {
-  const keys = pathKeys(path);
-  if (!keys) return state;
-  const write = (node: unknown, index: number): unknown => {
-    const key = keys[index];
-    const last = index === keys.length - 1;
-    if (Array.isArray(node)) {
-      const at = Number(key);
-      if (!Number.isInteger(at) || at < 0 || at > node.length) return node;
-      const copy = node.slice();
-      copy[at] = last ? value : write(node[at], index + 1);
-      return copy;
-    }
-    const base = isRecord(node) ? node : {};
-    return { ...base, [key]: last ? value : write(childOf(base, key), index + 1) };
-  };
-  return write(state, 0) as UiState;
+  return writePath(state, path, value);
 }
 
 /** The path a control writes to (`{"$bindState": "/path"}`), or null. */

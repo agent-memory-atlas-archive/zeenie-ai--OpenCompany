@@ -309,12 +309,13 @@ export function buildHirePayload({ spec, state, params, job, idempotencyKey, sou
   for (const id of spec.order) {
     const element = spec.elements[id];
     if (!element) continue;
-    const path = bindingPath(element.props.value);
-    if (element.type === 'Toggle' && path !== STATE_PATHS.askFirst) {
-      const key = keyUnder(path, STATE_PATHS.rules);
+    // A Toggle binds `checked`; a Choice and an Input bind `value`.
+    const path = bindingPath(element.type === 'Toggle' ? element.props.checked : element.props.value);
+    if (element.type === 'Toggle') {
+      const key = path === STATE_PATHS.askFirst ? null : keyUnder(path, STATE_PATHS.rules);
       const props = resolved('Toggle', element, state);
       if (key && props && rules.items.length < HIRE_LIMITS.items) {
-        rules.items.push({ key, label: props.label.slice(0, HIRE_LIMITS.label), value: props.value });
+        rules.items.push({ key, label: props.label.slice(0, HIRE_LIMITS.label), value: props.checked });
       }
     } else if (element.type === 'Choice') {
       const key = keyUnder(path, STATE_PATHS.choices);

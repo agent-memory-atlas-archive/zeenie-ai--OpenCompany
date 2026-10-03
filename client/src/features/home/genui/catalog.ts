@@ -1,7 +1,8 @@
 /**
  * The setup screen's vocabulary: the components and actions a model may
  * use when it describes a new employee, and what each component's props
- * look like once resolved.
+ * look like once resolved. The screen is drawn by json-render; HIRE_CATALOG
+ * below is this vocabulary in the shape its defineCatalog takes.
  *
  * The server writes the model's prompt from server/config/genui_catalog.json;
  * tests/test_genui_catalog_sync.py reads the literal lists in this file off
@@ -10,6 +11,8 @@
  *
  * Prop schemas are forgiving by design: a model's odd value degrades that
  * one prop (a default, a clamped string) instead of failing the element.
+ * A Toggle binds `checked`; a Button names its action in the element's
+ * `on.press` (json-render's event binding), not in its props.
  */
 
 import { z } from 'zod';
@@ -162,7 +165,7 @@ export const PROP_SCHEMAS = {
     value: z.coerce.number().catch(0).transform((v) => Math.max(0, Math.min(100, Number.isFinite(v) ? v : 0))),
     tone,
   }),
-  Toggle: z.object({ label: line(), description: optionalLine(LIMITS.maxText), value: z.boolean().catch(false) }),
+  Toggle: z.object({ label: line(), description: optionalLine(LIMITS.maxText), checked: z.boolean().catch(false) }),
   Choice: z.object({
     label: line(),
     options: listOf(line(40), LIMITS.maxOptions).transform((options) => [...new Set(options.filter(Boolean))]),
@@ -173,10 +176,10 @@ export const PROP_SCHEMAS = {
     placeholder: optionalLine(),
     value: scalar.catch('').transform((s) => s.slice(0, LIMITS.maxInput)),
   }),
+  // What it runs is the element's on.press, which json-render resolves at the press.
   Button: z.object({
     label: line(40),
     variant: z.enum(['primary', 'secondary']).catch('secondary'),
-    action: z.string().catch(''),
   }),
   Divider: z.object({}),
 } satisfies Record<ComponentType, z.ZodType>;
@@ -198,6 +201,31 @@ export function isControl(type: ComponentType): boolean {
 /** The action a Button runs, with old names mapped; null when unknown. */
 export function actionOf(value: unknown): ActionType | null {
   if (typeof value !== 'string') return null;
-  const name = ACTION_ALIASES[value] ?? value;
+  const name = Object.prototype.hasOwnProperty.call(ACTION_ALIASES, value) ? ACTION_ALIASES[value] : value;
   return (ACTION_TYPES as readonly string[]).includes(name) ? (name as ActionType) : null;
 }
+
+// ----- the catalogue as json-render takes it -----
+
+type HireCatalogComponents = {
+  [T in ComponentType]: { props: (typeof PROP_SCHEMAS)[T]; slots?: string[] };
+};
+
+function catalogComponents(): HireCatalogComponents {
+  const components: Partial<Record<ComponentType, { props: z.ZodType; slots?: string[] }>> = {};
+  for (const type of COMPONENT_TYPES) {
+    components[type] = isContainer(type) ? { props: PROP_SCHEMAS[type], slots: ['default'] } : { props: PROP_SCHEMAS[type] };
+  }
+  return components as HireCatalogComponents;
+}
+
+/**
+ * What json-render's defineCatalog takes for the setup screen: every
+ * component with its props schema, containers with their children (the
+ * default slot). registry.ts defines the catalogue from it there, beside
+ * the renderer, because this file is in Home's first chunk and json-render
+ * loads only with the screen. No actions are declared: the screen's
+ * handlers come from Home when it renders (actions.ts), and setState is
+ * json-render's own.
+ */
+export const HIRE_CATALOG = { components: catalogComponents(), actions: {} };

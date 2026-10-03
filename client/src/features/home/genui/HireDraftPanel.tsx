@@ -4,28 +4,30 @@
  * has taken so far and Cancel; the screen itself when it arrives; or what
  * went wrong with a way to try again.
  *
- * Buttons on the screen act through genui/actions: a change request puts
- * the composer into editing mode, connect buttons open the provider's
- * connect dialog, and Hire goes through useHire. Discard and a finished
- * hire collapse the panel before it goes. The screen's layout JSON is a
- * developer's view, shown in development builds only.
+ * The screen is drawn by json-render (HireScreen, loaded lazily the first
+ * time one shows: json-render is not part of Home's first chunk). Its
+ * buttons act through genui/actions: a change request puts the composer
+ * into editing mode, connect buttons open the provider's connect dialog,
+ * and Hire goes through useHire. Discard and a finished hire collapse the
+ * panel before it goes. The spec and its patch stream are a developer's
+ * view, shown in development builds only.
  */
 
-import { Code, X } from 'lucide-react';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { X } from 'lucide-react';
+import { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ActionButton } from '@/components/ui/action-button';
 import { Button } from '@/components/ui/button';
 import { animate, finished } from '@/lib/motion';
-import { cn } from '@/lib/utils';
 import { isConnected, useConnectors } from '../data/connectors';
 import { useHomeStore } from '../state/homeStore';
 import { MicroLabel } from '../ui/primitives';
 import { pillToast } from '../ui/pillToast';
-import { runSpecAction, type ConnectCandidate } from './actions';
+import type { ConnectCandidate, HireActionContext } from './actions';
 import { triggerAppNames, useDraftActions, useDraftStore, type DraftFailure } from './draftStore';
-import { SpecView } from './render';
 import { useHire } from './useHire';
-import { useReveal } from './useReveal';
+
+const loadHireScreen = () => import('./HireScreen');
+const HireScreen = lazy(loadHireScreen);
 
 /** After this long, the line says some models take a few minutes. */
 const SLOW_AFTER_SECONDS = 45;
@@ -136,7 +138,6 @@ export function HireDraftPanel({ onConnect }: { onConnect: (providerId: string) 
   const failure = useDraftStore((s) => s.failure);
   const spec = useDraftStore((s) => s.spec);
   const intro = useDraftStore((s) => s.intro);
-  const uiState = useDraftStore((s) => s.uiState);
   const apps = useDraftStore((s) => s.apps);
   const version = useDraftStore((s) => s.version);
   const hiring = useDraftStore((s) => s.hiring);
@@ -146,12 +147,15 @@ export function HireDraftPanel({ onConnect }: { onConnect: (providerId: string) 
   const { providers } = useConnectors();
   const sectionRef = useRef<HTMLElement>(null);
   const introRef = useRef<HTMLParagraphElement>(null);
-  const [showJson, setShowJson] = useState(false);
 
   const visible = status !== 'idle';
   const showSpec = Boolean(spec) && (status === 'ready' || (status === 'failed' && failure?.refine));
-  const revealed = useReveal(showSpec && spec ? spec.order : [], version);
   const triggerApps = useMemo(() => triggerAppNames(apps), [apps]);
+
+  // Fetch the screen's code while the model writes, so it is there when the reply lands.
+  useEffect(() => {
+    if (status === 'working') void loadHireScreen();
+  }, [status]);
 
   // Enter: rise out of a blur the first time the panel appears.
   const wasVisible = useRef(false);
@@ -208,24 +212,20 @@ export function HireDraftPanel({ onConnect }: { onConnect: (providerId: string) 
     [onConnect, providers],
   );
 
-  const onAction = useCallback(
-    (action: string, rawParams: unknown) => {
-      runSpecAction(
-        action,
-        rawParams,
-        { state: useDraftStore.getState().uiState, apps, providers: candidates },
-        {
-          setValue: actions.setValue,
-          refine: () => {
-            actions.setRefining(true);
-            useHomeStore.getState().showHire({ focus: true });
-          },
-          openConnectors: () => openSettings('connectors'),
-          connect,
-          hire: (params) => void hire(params),
+  const actionContext = useMemo<HireActionContext>(
+    () => ({
+      apps,
+      providers: candidates,
+      actions: {
+        refine: () => {
+          actions.setRefining(true);
+          useHomeStore.getState().showHire({ focus: true });
         },
-      );
-    },
+        openConnectors: () => openSettings('connectors'),
+        connect,
+        hire: (params) => void hire(params),
+      },
+    }),
     [actions, apps, candidates, connect, hire, openSettings],
   );
 
@@ -268,38 +268,16 @@ export function HireDraftPanel({ onConnect }: { onConnect: (providerId: string) 
           </p>
         )}
         {showSpec && spec && (
-          <>
-            <div className={cn('flex min-w-0 flex-col gap-3', hiring && 'pointer-events-none opacity-60')}>
-              <SpecView
-                spec={spec}
-                state={uiState}
-                revealed={revealed}
-                onAction={onAction}
-                onValue={actions.setValue}
-                triggerApps={triggerApps}
-              />
-            </div>
-            {import.meta.env.DEV && (
-              <>
-                <Button
-                  variant="quiet"
-                  size="xs"
-                  onClick={() => setShowJson((on) => !on)}
-                  title="See the layout the assistant generated"
-                  aria-expanded={showJson}
-                  className="gap-1.5 self-start font-mono text-2xs font-normal text-fg-faint hover:border-border-default hover:bg-transparent hover:text-fg-muted"
-                >
-                  <Code aria-hidden />
-                  {showJson ? 'Hide layout JSON' : 'Layout JSON'}
-                </Button>
-                {showJson && (
-                  <pre className="m-0 max-h-70 overflow-auto rounded-row border border-border-default bg-bg-app px-3.5 py-3 font-mono text-2xs leading-normal whitespace-pre text-fg-muted">
-                    {JSON.stringify(spec, null, 2)}
-                  </pre>
-                )}
-              </>
-            )}
-          </>
+          <Suspense fallback={null}>
+            <HireScreen
+              key={version}
+              spec={spec}
+              version={version}
+              busy={hiring}
+              triggerApps={triggerApps}
+              actions={actionContext}
+            />
+          </Suspense>
         )}
       </div>
     </section>

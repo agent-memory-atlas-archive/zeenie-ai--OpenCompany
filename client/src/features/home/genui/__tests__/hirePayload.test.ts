@@ -24,9 +24,10 @@ function specOf(name: string): NormalizedSpec {
   return normalizeSpec(parsed.spec)!;
 }
 
+/** The hire button's params as json-render resolves them at the press. */
 function hireParams(spec: NormalizedSpec, state = spec.state) {
-  const id = spec.order.find((key) => spec.elements[key].props.action === 'hire_employee')!;
-  return resolveValue(spec.elements[id].props.actionParams ?? {}, state) as Record<string, unknown>;
+  const id = spec.order.find((key) => spec.elements[key].on?.press.action === 'hire_employee')!;
+  return resolveValue(spec.elements[id].on?.press.params ?? {}, state) as Record<string, unknown>;
 }
 
 describe('buildHirePayload', () => {
@@ -70,6 +71,19 @@ describe('buildHirePayload', () => {
     expect(payload.rules.ask_first).toBe(false);
     expect(payload.rules.items).toEqual([{ key: 'hours', label: 'Only reply 9 to 6', value: true }]);
     expect(payload.choices[0].value).toBe('Weekly');
+  });
+
+  it('reads a reply in json-render’s shape the same way', () => {
+    const shaped = specOf('json-render shape: on.press and checked');
+    const state = setPath(shaped.state, '/rules/hours', true);
+    const payload = buildHirePayload({ spec: shaped, state, params: hireParams(shaped, state), job: 'j', idempotencyKey: 'k' });
+    expect(payload).toMatchObject({
+      name: 'Maya',
+      rules: { ask_first: true, items: [{ key: 'hours', label: 'Only reply 9 to 6', value: true }] },
+      choices: [{ key: 'report', label: 'Report', value: 'Daily' }],
+      trigger: { kind: 'app_event', app: 'WhatsApp' },
+      sends_via: 'WhatsApp',
+    });
   });
 
   it('sends when they work as the owner left it, and the routine says so', () => {

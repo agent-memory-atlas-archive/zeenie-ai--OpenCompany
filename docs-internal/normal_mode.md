@@ -239,22 +239,33 @@ still holds that job as written, the chip shows as picked with the starter's
 summary and **Hire now** (see [One-click starters](#one-click-starters)).
 While the model writes, the draft panel shows one honest line, "Writing their
 setup…", with the time so far and Cancel, and after `SLOW_AFTER_SECONDS` a
-note that some models take a few minutes. The screen's layout JSON is shown
-in development builds only.
+note that some models take a few minutes. Development builds also show the
+screen's spec and its patch stream (`spec.json` / `patches.jsonl`).
 
-The reply is a flat JSON UI spec. The client parses, repairs and normalises it
-and renders it from a fixed component catalogue
-([genui/](../client/src/features/home/genui/): `catalog.ts`, `parse.ts`,
-`normalize.ts`, `expressions.ts`, `render.tsx`). The normaliser keeps the
-root a vertical stack, enforces a tree, guarantees one Hire button, one
-change button, the "Ask me before sending anything" toggle (on by default)
-and one `Schedule` (below), and caps sizes. The server mirrors the catalogue in
+The reply is a flat JSON UI spec in json-render's shape (catalogue
+`spec_version` 2): a Toggle binds `checked`, and a Button names its action in
+the element's `on.press` (`{action, params}`). The client parses, repairs and
+normalises it ([genui/](../client/src/features/home/genui/): `catalog.ts`,
+`parse.ts`, `normalize.ts`, `expressions.ts`) and json-render draws it from a
+fixed component catalogue (`registry.ts`, `views.tsx`, `HireScreen.tsx`,
+loaded lazily so json-render stays out of Home's first chunk). The normaliser
+still reads the older shape a model may write (a Toggle's `value`, a
+Button's `action` / `actionParams` props), keeps the root a vertical stack,
+enforces a tree, guarantees one Hire button, one change button, the "Ask me
+before sending anything" toggle (on by default) and one `Schedule` (below),
+caps sizes, and drops what json-render does not guard: any path through
+`__proto__`, `constructor` or `prototype`, and `watch`, `repeat`, `slots`,
+`$computed` and an action's `confirm`. That glue is shared with the chat's
+generated replies in [lib/jsonRender/](../client/src/lib/jsonRender/)
+(sanitising, the per-element guard that reads props through the catalogue's
+forgiving schema, the paced reveal, the guarded state store). The server
+mirrors the catalogue in
 [config/genui_catalog.json](../server/config/genui_catalog.json);
 `server/tests/test_genui_catalog_sync.py` keeps the two in step, and a shared
-corpus of bad model replies (`genui/__fixtures__/replies.json`) is parsed the
-same way on both sides. Only what `genui/index.ts` exports (`HireDraftPanel`,
-`useHireComposer`, `DraftMessagePreview`) leaves the folder: ESLint refuses
-imports of its internal modules.
+corpus of model replies in both shapes (`genui/__fixtures__/replies.json`) is
+parsed the same way on both sides. Only what `genui/index.ts` exports
+(`HireDraftPanel`, `useHireComposer`, `useStarterHire`, `DraftMessagePreview`)
+leaves the folder: ESLint refuses imports of its internal modules.
 
 **When they work.** Every screen shows one `Schedule` after the routine. The
 normaliser inserts it (the catalogue marks it `inserted`, so the model is
@@ -267,7 +278,7 @@ a weekday or day of the month. It reads as one sentence ("Every weekday at
 08:00"). Edit offers the owner messaging them, a schedule,
 or a new message in any app whose `can_trigger` is true; a change rewrites the
 routine's "When" step, and the hire payload reads `/trigger` before the
-button's params. `render.tsx` labels the routine "Their routine" and its steps
+button's params. `views.tsx` labels the routine "Their routine" and its steps
 in plain words (When, They, Using, Then).
 
 ### 2. Hire

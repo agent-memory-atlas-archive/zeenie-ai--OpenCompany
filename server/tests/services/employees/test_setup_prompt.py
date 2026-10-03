@@ -55,11 +55,20 @@ def test_catalogue_prompt_lists_every_component_and_action():
 def test_prompt_carries_the_additions():
     prompt = catalog_prompt()
     assert '"Ask me before sending anything" bound to "/rules/askFirst", true in "state"' in prompt
-    assert 'Toggles bound to state under "/rules"' in prompt
+    assert 'Toggles bound to state under "/rules" through "checked"' in prompt
     assert 'one Choice bound under "/choices"' in prompt
-    assert "actionParams {name, role, apps, trigger, sendsVia}" in prompt
+    assert 'on.press {"action": "hire_employee", "params": {name, role, apps, trigger, sendsVia}}' in prompt
     assert '"kind": "app_event"|"schedule"|"manual"' in prompt
     assert 'names it in "app"' in prompt
+
+
+def test_prompt_asks_for_json_renders_shape():
+    # A Button's action is the element's on.press, never a prop.
+    prompt = catalog_prompt()
+    assert '"on"?: {"press": {"action", "params"?}}' in prompt
+    assert '{"type":"Button","props":{"label":"…"},"on":{"press":{"action":"refine"}},"children":[]}' in prompt
+    assert "actionParams" not in prompt
+    assert "- Toggle {label, description?, checked:" in prompt
 
 
 def test_the_schedule_times_offered_are_the_ones_it_can_run():

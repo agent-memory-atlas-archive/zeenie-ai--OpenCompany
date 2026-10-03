@@ -210,6 +210,10 @@ client/src/
 │   │                               # 1 ms under reduced motion or a hidden page, no loops then
 │   ├── pageActivity.ts / useReducedMotion.ts # Whether anyone can see the page; the motion preference
 │   ├── debouncedInvalidate.ts      # Trailing-edge query invalidation (broadcast bursts)
+│   ├── jsonRender/                 # Generated-UI glue around json-render (hire setup screen, chat replies):
+│   │                               # sanitize (no prototype paths; no watch/repeat/slots/$computed/confirm),
+│   │                               # guard (props through the catalogue schema, live-only entrance),
+│   │                               # reveal (spec -> patch stream, paced), uiState (guarded store)
 │   └── utils.ts                    # cn() = clsx + tailwind-merge (shadcn convention)
 ├── schemas/workflowSchema.ts       # Structural pre-flight for workflow export (backend is the schema authority)
 ├── stores/

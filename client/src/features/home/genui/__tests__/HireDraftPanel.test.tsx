@@ -1,10 +1,13 @@
 /**
- * The draft panel end to end: the screen renders, a double-clicked Hire
+ * The draft panel end to end: the screen renders through json-render (its
+ * code loads lazily, so the first look waits for it), a double-clicked Hire
  * sends one request, a finished hire clears the draft and opens the new
  * employee's page (with what the hire said, and the AI connect dialog when
  * there is no model), "Change something" hands the composer the draft,
- * changing when they work reaches the hire, the wait is shown honestly with
- * a way to cancel, and the layout JSON is for developers only.
+ * controls write back into the draft, changing when they work reaches the
+ * hire, a reply in json-render's own shape works the same, the wait is
+ * shown honestly with a way to cancel, and the spec inspector is for
+ * developers only.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -45,15 +48,16 @@ import { resetDraftForTests, useDraftStore } from '../draftStore';
 import { normalizeSpec } from '../normalize';
 import { parseReply } from '../parse';
 
-const reply = (corpus as unknown as { name: string; reply: string }[]).find((c) => c.name === 'clean minified reply')!.reply;
+const replies = corpus as unknown as { name: string; reply: string }[];
+const reply = replies.find((c) => c.name === 'clean minified reply')!.reply;
 
-function seedReadyDraft() {
-  const parsed = parseReply(reply);
+function seedReadyDraft(text = reply) {
+  const parsed = parseReply(text);
   const spec = normalizeSpec(parsed.spec)!;
   useDraftStore.setState({
     status: 'ready',
     job: 'Answer WhatsApp',
-    turns: [{ change: null, reply }],
+    turns: [{ change: null, reply: text }],
     spec,
     intro: parsed.text,
     uiState: spec.state,
@@ -83,6 +87,11 @@ function hired(patch: Record<string, unknown> = {}) {
   };
 }
 
+/** The screen has loaded and shows everything (reduced motion: no reveal). */
+function hireButton() {
+  return screen.findByRole('button', { name: 'Hire Maya' });
+}
+
 let restoreMotion: () => void;
 
 beforeEach(() => {
@@ -103,12 +112,14 @@ afterEach(() => {
 });
 
 describe('HireDraftPanel', () => {
-  it('shows the introduction and the setup screen', () => {
+  it('shows the introduction and the setup screen', async () => {
     renderPanel();
     expect(screen.getByText('Meet Maya, your new receptionist.')).toBeInTheDocument();
-    expect(screen.getByText('Their routine')).toBeInTheDocument();
+    expect(await screen.findByText('Their routine')).toBeInTheDocument();
     expect(screen.getByText('When something new arrives in WhatsApp')).toBeInTheDocument();
     expect(screen.getByRole('switch', { name: 'Ask me before sending anything' })).toBeChecked();
+    expect(screen.getByRole('switch', { name: 'Only reply 9 to 6' })).not.toBeChecked();
+    expect(screen.getByRole('radio', { name: 'Daily' })).toBeChecked();
   });
 
   it('sends one hire for a double click, then clears the draft and opens the employee', async () => {
@@ -117,7 +128,7 @@ describe('HireDraftPanel', () => {
       type === 'hire_employee' ? new Promise((resolve) => (finish = resolve)) : Promise.resolve({}),
     );
     const { queryClient } = renderPanel();
-    const hire = screen.getByRole('button', { name: 'Hire Maya' });
+    const hire = await hireButton();
     fireEvent.click(hire);
     fireEvent.click(hire);
     const hires = sendRequest.mock.calls.filter(([type]) => type === 'hire_employee');
@@ -141,8 +152,9 @@ describe('HireDraftPanel', () => {
     const warnings = ['Google Calendar is left out while they ask before sending anything'];
     sendRequest.mockResolvedValue(hired({ started: false, needs_ai: true, warnings }));
     renderPanel();
+    const hire = await hireButton();
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: 'Hire Maya' }));
+      fireEvent.click(hire);
     });
     const home = useHomeStore.getState();
     expect(home.view).toEqual({ kind: 'employee', workflowId: 'w1' });
@@ -156,8 +168,9 @@ describe('HireDraftPanel', () => {
   it('tells the owner in plain words when the same hire is still going through', async () => {
     sendRequest.mockResolvedValue({ success: false, error: 'busy' });
     renderPanel();
+    const hire = await hireButton();
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: 'Hire Maya' }));
+      fireEvent.click(hire);
     });
     expect(pillToast).toHaveBeenCalledWith('They are still being set up. Give it a moment, then press Hire again.', {
       tone: 'error',
@@ -166,22 +179,25 @@ describe('HireDraftPanel', () => {
     expect(useHomeStore.getState().view).toEqual({ kind: 'hire' });
   });
 
-  it('hands the draft to the composer for a change', () => {
+  it('hands the draft to the composer for a change', async () => {
     renderPanel();
-    fireEvent.click(screen.getByRole('button', { name: 'Change something' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Change something' }));
     expect(useDraftStore.getState().refining).toBe(true);
   });
 
-  it('writes a toggle back into the screen state', () => {
+  it('writes a toggle and a choice back into the draft', async () => {
     renderPanel();
-    fireEvent.click(screen.getByRole('switch', { name: 'Only reply 9 to 6' }));
+    fireEvent.click(await screen.findByRole('switch', { name: 'Only reply 9 to 6' }));
     expect(useDraftStore.getState().uiState).toMatchObject({ rules: { hours: true } });
+    expect(screen.getByRole('switch', { name: 'Only reply 9 to 6' })).toBeChecked();
+    fireEvent.click(screen.getByRole('radio', { name: 'Weekly' }));
+    expect(useDraftStore.getState().uiState).toMatchObject({ choices: { report: 'Weekly' } });
   });
 
   it('hires on the schedule the owner picked, and the routine follows it', async () => {
     sendRequest.mockResolvedValue(hired());
     renderPanel();
-    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
     fireEvent.click(screen.getByRole('radio', { name: 'On a schedule' }));
     fireEvent.click(screen.getByRole('radio', { name: 'Weekdays' }));
     // The sentence and the routine's first step both say it.
@@ -192,6 +208,20 @@ describe('HireDraftPanel', () => {
     const payload = sendRequest.mock.calls.find(([type]) => type === 'hire_employee')![1];
     expect(payload.trigger).toEqual({ kind: 'schedule', every: 'weekday', at: '09:00' });
     expect(payload.steps[0]).toEqual({ title: 'Every weekday at 09:00', detail: '', role: 'trigger' });
+  });
+
+  it('works the same from a reply in json-render’s own shape', async () => {
+    resetDraftForTests();
+    seedReadyDraft(replies.find((c) => c.name === 'json-render shape: on.press and checked')!.reply);
+    sendRequest.mockResolvedValue(hired());
+    renderPanel();
+    expect(await screen.findByRole('switch', { name: 'Ask me before sending anything' })).toBeChecked();
+    fireEvent.click(screen.getByRole('switch', { name: 'Ask me before sending anything' }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Hire Maya' }));
+    });
+    const payload = sendRequest.mock.calls.find(([type]) => type === 'hire_employee')![1];
+    expect(payload).toMatchObject({ name: 'Maya', rules: { ask_first: false }, sends_via: 'WhatsApp' });
   });
 
   it('opens the guided AI connect dialog from a setup that found no AI model', () => {
@@ -227,15 +257,20 @@ describe('HireDraftPanel', () => {
     expect(useDraftStore.getState()).toMatchObject({ status: 'idle', input: 'Answer WhatsApp' });
   });
 
-  it('shows the layout JSON in development builds only', () => {
+  it('shows the spec and its patch stream in development builds only', async () => {
     vi.stubEnv('DEV', true);
     renderPanel();
-    expect(screen.getByRole('button', { name: /Layout JSON/ })).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole('button', { name: /Layout JSON/ }));
+    expect(screen.getByRole('tab', { name: 'spec.json' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByText(/"Their routine"/)).toBeInTheDocument();
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'patches.jsonl' }));
+    expect(screen.getByText(/\{"op":"add","path":"\/root","value":"a"\}/)).toBeInTheDocument();
   });
 
-  it('keeps the layout JSON out of a release build', () => {
+  it('keeps the spec inspector out of a release build', async () => {
     vi.stubEnv('DEV', false);
     renderPanel();
+    await hireButton();
     expect(screen.queryByRole('button', { name: /Layout JSON/ })).not.toBeInTheDocument();
   });
 });

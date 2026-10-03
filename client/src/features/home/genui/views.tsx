@@ -1,42 +1,38 @@
 /**
- * Draws a normalized setup screen. Every component here is private to the
- * genui folder (lint keeps it that way); pages use HireDraftPanel.
+ * The setup screen's 18 components, one per catalogue type, as json-render
+ * draws them. registry.ts wraps each in the guard (lib/jsonRender/guard.tsx),
+ * which reads the element's props through the catalogue's forgiving schema
+ * first, so these get props already parsed, plus the ref that plays their
+ * entrance. Private to the genui folder (lint keeps it that way), and
+ * loaded only with the screen (HireScreen).
  *
- * An element renders once the reveal reaches it and while its `visible`
- * condition holds. Its props are resolved against the screen's state, then
- * read through the catalogue's schema, so an odd value degrades one prop.
- * Each element sits in its own error boundary: one that throws disappears
- * and the rest of the screen stays.
+ * Controls write through json-render's bindings: a Toggle's `checked`, a
+ * Choice's and an Input's `value`, the Schedule's `value` (`/trigger`).
+ * A Button presses its `on.press` binding (emit), which json-render
+ * resolves against the screen's state and runs (actions.ts).
  *
  * When they work (Schedule) reads as one plain sentence; Edit offers only
  * what the hire can build: the owner messaging them, a schedule at the
  * times it can run, or a new message in one of the apps the server says can
  * start the work. Once the owner changes it, the routine's "When" step
- * follows.
+ * follows (Plan reads the state at /trigger itself, beside its own props).
  */
 
-import {
-  Component,
-  createContext,
-  Fragment,
-  useCallback,
-  useContext,
-  useLayoutEffect,
-  useRef,
-  useState,
-  type ReactNode,
-} from 'react';
+import { Fragment, useContext, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { useBoundProp, useStateValue } from '@json-render/react';
 import { ActionButton } from '@/components/ui/action-button';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import { useEntrance, type GuardedComponentProps } from '@/lib/jsonRender';
 import { animate } from '@/lib/motion';
 import { cn } from '@/lib/utils';
 import { MicroLabel } from '../ui/primitives';
-import { PROP_SCHEMAS, STATE_PATHS, type ComponentType, type PropsOf, type StepRole, type Tone } from './catalog';
-import { bindingPath, evalCondition, getPath, resolveValue, type UiState } from './expressions';
+import { STATE_PATHS, type PROP_SCHEMAS, type PropsOf, type StepRole, type Tone } from './catalog';
+import { getPath } from './expressions';
+import { HireSpecContext } from './hireSpecContext';
 import {
   LAST_MONTH_DAY,
   SCHEDULE_EVERY,
@@ -47,25 +43,9 @@ import {
   triggerSentence,
   type HireTrigger,
 } from './hirePayload';
-import type { NormalizedSpec, SpecElement } from './normalize';
+import { MessagePreview } from './MessagePreview';
 
-interface SpecContextValue {
-  spec: NormalizedSpec;
-  state: UiState;
-  revealed: ReadonlySet<string>;
-  onAction: (action: string, rawParams: unknown) => void;
-  onValue: (path: string, value: unknown) => void;
-  /** Apps that can start the work: any name the reply used -> the app's own name. */
-  triggerApps: Readonly<Record<string, string>>;
-}
-
-const SpecContext = createContext<SpecContextValue | null>(null);
-
-function useSpec(): SpecContextValue {
-  const value = useContext(SpecContext);
-  if (!value) throw new Error('Setup-screen components render inside SpecView');
-  return value;
-}
+type ViewProps<T extends keyof typeof PROP_SCHEMAS> = GuardedComponentProps<PropsOf<T>>;
 
 // ----- token maps (Tailwind scans these literals) -----
 
@@ -142,35 +122,17 @@ const AGENT_STATUS = {
   paused: { label: 'Paused', dot: 'bg-status-paused-dot', ink: 'text-status-paused-ink' },
 } as const;
 
-/** A soft entrance the first time an element appears. */
-function useEnter<T extends HTMLElement>() {
-  const done = useRef(false);
-  return useCallback((node: T | null) => {
-    if (!node || done.current) return;
-    done.current = true;
-    animate(
-      node,
-      [
-        { opacity: 0, transform: 'translateY(8px) scale(.985)', filter: 'blur(3px)' },
-        { opacity: 1, transform: 'none', filter: 'blur(0)' },
-      ],
-      { duration: 440 },
-    );
-  }, []);
-}
-
 function Pip({ className }: { className?: string }) {
   return <span aria-hidden className={cn('size-1.75 shrink-0 rounded-full', className)} />;
 }
 
 // ----- components -----
 
-function StackView({ props, children }: { props: PropsOf<'Stack'>; children: ReactNode }) {
-  const enter = useEnter<HTMLDivElement>();
+export function StackView({ props, children, enterRef }: ViewProps<'Stack'>) {
   const horizontal = props.direction === 'horizontal';
   return (
     <div
-      ref={enter}
+      ref={enterRef}
       className={cn('flex min-w-0', STACK_GAP[props.gap], horizontal ? 'flex-row flex-wrap items-center' : 'flex-col')}
     >
       {children}
@@ -178,11 +140,10 @@ function StackView({ props, children }: { props: PropsOf<'Stack'>; children: Rea
   );
 }
 
-function GridView({ props, children }: { props: PropsOf<'Grid'>; children: ReactNode }) {
-  const enter = useEnter<HTMLDivElement>();
+export function GridView({ props, children, enterRef }: ViewProps<'Grid'>) {
   return (
     <div
-      ref={enter}
+      ref={enterRef}
       className={cn(
         'grid gap-2.5',
         props.columns === 3 ? 'grid-cols-[repeat(auto-fit,minmax(150px,1fr))]' : 'grid-cols-[repeat(auto-fit,minmax(210px,1fr))]',
@@ -193,10 +154,9 @@ function GridView({ props, children }: { props: PropsOf<'Grid'>; children: React
   );
 }
 
-function CardView({ props, children }: { props: PropsOf<'Card'>; children: ReactNode }) {
-  const enter = useEnter<HTMLDivElement>();
+export function CardView({ props, children, enterRef }: ViewProps<'Card'>) {
   return (
-    <div ref={enter} className={cn('flex flex-col gap-3 rounded-card border p-4', TONE_CARD[props.tone ?? 'neutral'])}>
+    <div ref={enterRef} className={cn('flex flex-col gap-3 rounded-card border p-4', TONE_CARD[props.tone ?? 'neutral'])}>
       {(props.title || props.subtitle) && (
         <div className="flex flex-col gap-0.75">
           {props.title && <span className="text-lead font-semibold text-fg-default">{props.title}</span>}
@@ -208,28 +168,25 @@ function CardView({ props, children }: { props: PropsOf<'Card'>; children: React
   );
 }
 
-function HeadingView({ props }: { props: PropsOf<'Heading'> }) {
-  const enter = useEnter<HTMLHeadingElement>();
+export function HeadingView({ props, enterRef }: ViewProps<'Heading'>) {
   return (
-    <h3 ref={enter} className="m-0 text-md font-semibold tracking-[-0.01em] text-fg-default">
+    <h3 ref={enterRef} className="m-0 text-md font-semibold tracking-[-0.01em] text-fg-default">
       {props.text}
     </h3>
   );
 }
 
-function TextView({ props }: { props: PropsOf<'Text'> }) {
-  const enter = useEnter<HTMLParagraphElement>();
+export function TextView({ props, enterRef }: ViewProps<'Text'>) {
   return (
-    <p ref={enter} className={cn('m-0 text-base leading-relaxed text-pretty', props.muted ? 'text-fg-muted' : 'text-fg-default')}>
+    <p ref={enterRef} className={cn('m-0 text-base leading-relaxed text-pretty', props.muted ? 'text-fg-muted' : 'text-fg-default')}>
       {props.text}
     </p>
   );
 }
 
-function MetricView({ props }: { props: PropsOf<'Metric'> }) {
-  const enter = useEnter<HTMLDivElement>();
+export function MetricView({ props, enterRef }: ViewProps<'Metric'>) {
   return (
-    <div ref={enter} className="flex flex-col gap-1 rounded-card border border-border-default bg-bg-elevated p-3.5">
+    <div ref={enterRef} className="flex flex-col gap-1 rounded-card border border-border-default bg-bg-elevated p-3.5">
       <span className="text-xs text-fg-muted">{props.label}</span>
       <span className={cn('text-xl font-semibold tracking-[-0.02em]', TONE_INK[props.tone ?? 'neutral'])}>{props.value}</span>
       {props.hint && <span className="text-xs text-fg-faint">{props.hint}</span>}
@@ -237,11 +194,10 @@ function MetricView({ props }: { props: PropsOf<'Metric'> }) {
   );
 }
 
-function BadgeView({ props }: { props: PropsOf<'Badge'> }) {
-  const enter = useEnter<HTMLSpanElement>();
+export function BadgeView({ props, enterRef }: ViewProps<'Badge'>) {
   return (
     <span
-      ref={enter}
+      ref={enterRef}
       className={cn(
         'inline-flex h-5.5 items-center self-start rounded-pill border px-2.25 text-2xs font-medium whitespace-nowrap',
         TONE_BADGE[props.tone ?? 'neutral'],
@@ -252,13 +208,12 @@ function BadgeView({ props }: { props: PropsOf<'Badge'> }) {
   );
 }
 
-function DividerView() {
-  const enter = useEnter<HTMLDivElement>();
-  return <div ref={enter} className="h-px bg-border-default" />;
+export function DividerView({ enterRef }: ViewProps<'Divider'>) {
+  return <div ref={enterRef} className="h-px bg-border-default" />;
 }
 
 function PlanStep({ step }: { step: PropsOf<'Plan'>['steps'][number] }) {
-  const enter = useEnter<HTMLDivElement>();
+  const enter = useEntrance<HTMLDivElement>();
   return (
     <div
       ref={enter}
@@ -280,14 +235,13 @@ function appNameOf(trigger: HireTrigger, triggerApps: Readonly<Record<string, st
   return trigger.app ? (triggerApps[trigger.app.toLowerCase()] ?? trigger.app) : undefined;
 }
 
-function PlanView({ props }: { props: PropsOf<'Plan'> }) {
-  const enter = useEnter<HTMLDivElement>();
-  const { spec, state, triggerApps } = useSpec();
-  const current = snapTrigger(getPath(state, STATE_PATHS.trigger));
-  const written = snapTrigger(getPath(spec.state, STATE_PATHS.trigger));
+export function PlanView({ props, enterRef }: ViewProps<'Plan'>) {
+  const { writtenState, triggerApps } = useContext(HireSpecContext);
+  const current = snapTrigger(useStateValue<unknown>(STATE_PATHS.trigger));
+  const written = snapTrigger(getPath(writtenState, STATE_PATHS.trigger));
   const steps = routineSteps(props.steps, written, current, appNameOf(current, triggerApps));
   return (
-    <div ref={enter} className="flex min-w-0 flex-col gap-3.5 rounded-card border border-border-default bg-bg-elevated p-4">
+    <div ref={enterRef} className="flex min-w-0 flex-col gap-3.5 rounded-card border border-border-default bg-bg-elevated p-4">
       <div className="flex items-center gap-2">
         <span className="text-lead font-semibold text-fg-default">{props.title || 'Their routine'}</span>
         <span className="ml-auto font-mono text-2xs text-fg-faint">
@@ -346,28 +300,28 @@ function SchedulePicker({
   );
 }
 
-function ScheduleView({ props, raw }: { props: PropsOf<'Schedule'>; raw: SpecElement['props'] }) {
-  const enter = useEnter<HTMLDivElement>();
-  const { onValue, triggerApps } = useSpec();
+export function ScheduleView({ props, bindings, enterRef }: ViewProps<'Schedule'>) {
+  const { triggerApps } = useContext(HireSpecContext);
   const [editing, setEditing] = useState(false);
-  const path = bindingPath(raw.value);
+  const [, setValue] = useBoundProp<unknown>(props.value, bindings?.value);
+  const bound = Boolean(bindings?.value);
   const trigger = snapTrigger(props.value);
   const appName = appNameOf(trigger, triggerApps);
   const apps = [...new Set(Object.values(triggerApps))];
-  const change = (next: HireTrigger) => path && onValue(path, snapTrigger(next));
+  const change = (next: HireTrigger) => setValue(snapTrigger(next));
   const starts = trigger.kind === 'app_event' ? `app:${appName ?? ''}` : trigger.kind;
   const pickStart = (value: string) => {
     if (value === 'manual' || value === 'schedule') change({ kind: value });
     else change({ kind: 'app_event', app: value.slice('app:'.length) });
   };
   return (
-    <div ref={enter} className="flex flex-col gap-3 rounded-card border border-border-default bg-bg-elevated p-4">
+    <div ref={enterRef} className="flex flex-col gap-3 rounded-card border border-border-default bg-bg-elevated p-4">
       <div className="flex items-center gap-3">
         <div className="flex min-w-0 flex-1 flex-col gap-1">
           <MicroLabel>When they work</MicroLabel>
           <span className="text-base font-medium text-fg-default">{triggerSentence(trigger, appName)}</span>
         </div>
-        {path && (
+        {bound && (
           <Button
             variant="quiet"
             aria-expanded={editing}
@@ -378,7 +332,7 @@ function ScheduleView({ props, raw }: { props: PropsOf<'Schedule'>; raw: SpecEle
           </Button>
         )}
       </div>
-      {editing && path && (
+      {editing && bound && (
         <div className="flex flex-col gap-3 border-t border-border-default pt-3">
           <ScheduleField label="What starts their work">
             <ToggleGroup
@@ -456,11 +410,10 @@ function ScheduleView({ props, raw }: { props: PropsOf<'Schedule'>; raw: SpecEle
   );
 }
 
-function AgentCardView({ props }: { props: PropsOf<'AgentCard'> }) {
-  const enter = useEnter<HTMLDivElement>();
+export function AgentCardView({ props, enterRef }: ViewProps<'AgentCard'>) {
   const status = AGENT_STATUS[props.status];
   return (
-    <div ref={enter} className={cn('flex gap-3.5 rounded-card border p-4', TONE_CARD.agent)}>
+    <div ref={enterRef} className={cn('flex gap-3.5 rounded-card border p-4', TONE_CARD.agent)}>
       <span
         aria-hidden
         className="grid size-10.5 shrink-0 place-items-center rounded-full border-2 border-node-agent-edge bg-node-agent-fill text-md font-semibold text-node-agent-ink"
@@ -494,10 +447,9 @@ function AgentCardView({ props }: { props: PropsOf<'AgentCard'> }) {
   );
 }
 
-function ListView({ props }: { props: PropsOf<'List'> }) {
-  const enter = useEnter<HTMLDivElement>();
+export function ListView({ props, enterRef }: ViewProps<'List'>) {
   return (
-    <div ref={enter} className="flex flex-col rounded-card border border-border-default bg-bg-elevated p-1.5">
+    <div ref={enterRef} className="flex flex-col rounded-card border border-border-default bg-bg-elevated p-1.5">
       {props.items.map((item, index) => (
         <div key={index} className={cn('flex items-start gap-2.5 p-2.5', index > 0 && 'border-t border-border-default')}>
           <Pip className={cn('mt-1.5', TONE_DOT[item.tone ?? 'neutral'])} />
@@ -512,44 +464,15 @@ function ListView({ props }: { props: PropsOf<'List'> }) {
   );
 }
 
-/** A message waiting to go out: the channel, who it is for, the text.
- *  Shared with the approval step, which shows drafts the same way. */
-export function MessagePreview({
-  channel,
-  to,
-  subject,
-  body,
-  className,
-}: {
-  channel?: string;
-  to?: string;
-  subject?: string;
-  body: string;
-  className?: string;
-}) {
+export function DraftView({ props, enterRef }: ViewProps<'Draft'>) {
   return (
-    <div className={cn('overflow-hidden rounded-card border border-border-default bg-bg-elevated', className)}>
-      <div className="flex items-center gap-2 border-b border-border-default bg-bg-panel px-3.5 py-2.5">
-        <MicroLabel className="text-node-model-ink">{channel || 'Draft'}</MicroLabel>
-        <span className="truncate text-sm text-fg-muted">to {to || '…'}</span>
-      </div>
-      {subject && <div className="px-3.5 pt-3 text-base font-semibold text-fg-default">{subject}</div>}
-      <div className="px-3.5 pt-2.5 pb-3.5 text-base leading-relaxed whitespace-pre-wrap text-fg-default">{body}</div>
-    </div>
-  );
-}
-
-function DraftView({ props }: { props: PropsOf<'Draft'> }) {
-  const enter = useEnter<HTMLDivElement>();
-  return (
-    <div ref={enter}>
+    <div ref={enterRef}>
       <MessagePreview channel={props.channel} to={props.to} subject={props.subject} body={props.body} />
     </div>
   );
 }
 
-function ProgressView({ props }: { props: PropsOf<'Progress'> }) {
-  const enter = useEnter<HTMLDivElement>();
+export function ProgressView({ props, enterRef }: ViewProps<'Progress'>) {
   const barRef = useRef<HTMLDivElement>(null);
   const shown = useRef<number | null>(null);
   useLayoutEffect(() => {
@@ -558,7 +481,7 @@ function ProgressView({ props }: { props: PropsOf<'Progress'> }) {
     animate(barRef.current, [{ width: '0%' }, { width: `${props.value}%` }], { duration: 900, easing: 'spring', fill: 'none' });
   }, [props.value]);
   return (
-    <div ref={enter} className="flex flex-col gap-1.5">
+    <div ref={enterRef} className="flex flex-col gap-1.5">
       <div className="flex text-sm text-fg-muted">
         {props.label}
         <span className="ml-auto font-mono text-xs">{Math.round(props.value)}%</span>
@@ -575,41 +498,31 @@ function ProgressView({ props }: { props: PropsOf<'Progress'> }) {
   );
 }
 
-function ToggleView({ props, raw }: { props: PropsOf<'Toggle'>; raw: SpecElement['props'] }) {
-  const enter = useEnter<HTMLDivElement>();
-  const { onValue } = useSpec();
-  const path = bindingPath(raw.value);
+export function ToggleView({ props, bindings, enterRef }: ViewProps<'Toggle'>) {
+  const [, setChecked] = useBoundProp<boolean>(props.checked, bindings?.checked);
   return (
-    <div ref={enter} className="flex items-center gap-3.5 py-1">
+    <div ref={enterRef} className="flex items-center gap-3.5 py-1">
       <div className="flex flex-1 flex-col gap-0.5">
         <span className="text-base font-medium text-fg-default">{props.label}</span>
         {props.description && <span className="text-meta text-fg-muted">{props.description}</span>}
       </div>
-      <Switch
-        size="md"
-        tone="run"
-        aria-label={props.label}
-        checked={props.value}
-        onCheckedChange={(next) => path && onValue(path, next)}
-      />
+      <Switch size="md" tone="run" aria-label={props.label} checked={props.checked} onCheckedChange={setChecked} />
     </div>
   );
 }
 
-function ChoiceView({ props, raw }: { props: PropsOf<'Choice'>; raw: SpecElement['props'] }) {
-  const enter = useEnter<HTMLDivElement>();
-  const { onValue } = useSpec();
-  const path = bindingPath(raw.value);
+export function ChoiceView({ props, bindings, enterRef }: ViewProps<'Choice'>) {
+  const [, setValue] = useBoundProp<string>(props.value, bindings?.value);
   if (props.options.length === 0) return null;
   return (
-    <div ref={enter} className="flex flex-col gap-1.5">
+    <div ref={enterRef} className="flex flex-col gap-1.5">
       <span className="text-xs font-medium text-fg-muted">{props.label}</span>
       <ToggleGroup
         type="single"
         variant="segmented"
         aria-label={props.label}
         value={props.value ?? ''}
-        onValueChange={(next) => next && path && onValue(path, next)}
+        onValueChange={(next) => next && setValue(next)}
         className="flex-wrap self-start"
       >
         {props.options.map((option) => (
@@ -622,35 +535,31 @@ function ChoiceView({ props, raw }: { props: PropsOf<'Choice'>; raw: SpecElement
   );
 }
 
-function InputView({ props, raw }: { props: PropsOf<'Input'>; raw: SpecElement['props'] }) {
-  const enter = useEnter<HTMLLabelElement>();
-  const { onValue } = useSpec();
-  const path = bindingPath(raw.value);
+export function InputView({ props, bindings, enterRef }: ViewProps<'Input'>) {
+  const [, setValue] = useBoundProp<string>(props.value, bindings?.value);
   return (
-    <label ref={enter} className="flex flex-col gap-1.5 text-xs font-medium text-fg-muted">
+    <label ref={enterRef} className="flex flex-col gap-1.5 text-xs font-medium text-fg-muted">
       {props.label}
       <Input
         value={props.value}
         placeholder={props.placeholder}
         maxLength={200}
-        disabled={!path}
-        onChange={(event) => path && onValue(path, event.target.value)}
+        disabled={!bindings?.value}
+        onChange={(event) => setValue(event.target.value)}
         className="h-9.5 rounded-lg bg-bg-app px-3 text-base font-normal text-fg-default md:text-base dark:bg-bg-app"
       />
     </label>
   );
 }
 
-function ButtonView({ props, raw }: { props: PropsOf<'Button'>; raw: SpecElement['props'] }) {
-  const { onAction } = useSpec();
-  const enter = useEnter<HTMLButtonElement>();
-  const run = () => onAction(props.action, raw.actionParams);
+export function ButtonView({ props, emit, enterRef }: ViewProps<'Button'>) {
+  const press = () => emit('press');
   if (props.variant === 'primary') {
     return (
       <ActionButton
-        ref={enter}
+        ref={enterRef}
         intent="run"
-        onClick={run}
+        onClick={press}
         className="h-8.5 self-start rounded-lg px-4 whitespace-nowrap active:translate-y-px"
       >
         {props.label}
@@ -659,89 +568,12 @@ function ButtonView({ props, raw }: { props: PropsOf<'Button'>; raw: SpecElement
   }
   return (
     <Button
-      ref={enter}
+      ref={enterRef}
       variant="quiet"
-      onClick={run}
+      onClick={press}
       className="h-8.5 self-start rounded-lg border-border-strong px-3.5 font-semibold text-fg-default"
     >
       {props.label}
     </Button>
-  );
-}
-
-// ----- tree -----
-
-class ElementBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
-  state = { failed: false };
-  static getDerivedStateFromError() {
-    return { failed: true };
-  }
-  componentDidCatch(error: unknown) {
-    console.warn('[genui] a setup-screen element failed to render', error);
-  }
-  render() {
-    return this.state.failed ? null : this.props.children;
-  }
-}
-
-function renderLeaf(type: ComponentType, props: unknown, raw: SpecElement['props'], children: ReactNode): ReactNode {
-  switch (type) {
-    case 'Stack':
-      return <StackView props={props as PropsOf<'Stack'>}>{children}</StackView>;
-    case 'Grid':
-      return <GridView props={props as PropsOf<'Grid'>}>{children}</GridView>;
-    case 'Card':
-      return <CardView props={props as PropsOf<'Card'>}>{children}</CardView>;
-    case 'Heading':
-      return <HeadingView props={props as PropsOf<'Heading'>} />;
-    case 'Text':
-      return <TextView props={props as PropsOf<'Text'>} />;
-    case 'Metric':
-      return <MetricView props={props as PropsOf<'Metric'>} />;
-    case 'Badge':
-      return <BadgeView props={props as PropsOf<'Badge'>} />;
-    case 'Plan':
-      return <PlanView props={props as PropsOf<'Plan'>} />;
-    case 'Schedule':
-      return <ScheduleView props={props as PropsOf<'Schedule'>} raw={raw} />;
-    case 'AgentCard':
-      return <AgentCardView props={props as PropsOf<'AgentCard'>} />;
-    case 'List':
-      return <ListView props={props as PropsOf<'List'>} />;
-    case 'Draft':
-      return <DraftView props={props as PropsOf<'Draft'>} />;
-    case 'Progress':
-      return <ProgressView props={props as PropsOf<'Progress'>} />;
-    case 'Toggle':
-      return <ToggleView props={props as PropsOf<'Toggle'>} raw={raw} />;
-    case 'Choice':
-      return <ChoiceView props={props as PropsOf<'Choice'>} raw={raw} />;
-    case 'Input':
-      return <InputView props={props as PropsOf<'Input'>} raw={raw} />;
-    case 'Button':
-      return <ButtonView props={props as PropsOf<'Button'>} raw={raw} />;
-    case 'Divider':
-      return <DividerView />;
-  }
-}
-
-function SpecNode({ id }: { id: string }) {
-  const { spec, state, revealed } = useSpec();
-  const element = spec.elements[id];
-  if (!element || !revealed.has(id)) return null;
-  if (element.visible !== undefined && !evalCondition(element.visible, state)) return null;
-  const parsed = PROP_SCHEMAS[element.type].safeParse(resolveValue(element.props, state) ?? {});
-  if (!parsed.success) return null;
-  const children = element.children.map((child) => <SpecNode key={child} id={child} />);
-  return <ElementBoundary>{renderLeaf(element.type, parsed.data, element.props, children)}</ElementBoundary>;
-}
-
-export function SpecView({ spec, state, revealed, onAction, onValue, triggerApps }: SpecContextValue) {
-  return (
-    <SpecContext.Provider value={{ spec, state, revealed, onAction, onValue, triggerApps }}>
-      <div className="flex min-w-0 flex-col gap-3">
-        <SpecNode id={spec.root} />
-      </div>
-    </SpecContext.Provider>
   );
 }

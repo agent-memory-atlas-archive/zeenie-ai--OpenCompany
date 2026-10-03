@@ -213,10 +213,14 @@ Approvals are joined live from the approvals store; the part only names them.
   whose turn carries `[ui-event]{…}[/ui-event]`.
 - **Sanitising.** json-render 0.21 does not guard state paths (`setByPath` descends into `__proto__`), does not
   validate props against the catalog, and supports `watch` (actions fired by state changes), `repeat`, `$computed`
-  and `confirm`. Both sides therefore:
+  and an action binding's `confirm`, `onSuccess` and `onError` (the last two set state or run further actions).
+  Both sides therefore (the client in `client/src/lib/jsonRender/`):
   - refuse `__proto__`, `constructor` and `prototype` path segments everywhere (`$state`, `$bindState`, `$template`,
-    `visible`, action params, patch paths);
-  - strip `watch`, `repeat`, `slots`, `$computed` and `confirm`;
+    `visible`, action params, patch paths); an expression that reads such a path is dropped, and a `visible`
+    condition that reads one is false;
+  - keep only an element's `type`, `props`, `children`, `visible` and `on`, and only an action binding's `action`
+    and `params`: `watch`, `repeat`, `slots`, `confirm`, `onSuccess`, `onError` and `preventDefault` go;
+  - drop `$computed`, and `$item`, `$index` and `$bindItem`, which mean nothing without `repeat`;
   - validate every element's props (the client degrades one bad prop at a time with forgiving zod schemas);
   - drop unknown component types before rendering.
 
