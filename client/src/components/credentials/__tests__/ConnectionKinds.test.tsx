@@ -1,5 +1,5 @@
 /** Connection essentials stay usable in both presentations through the real renderer. */
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -40,6 +40,11 @@ function mount(config: ProviderConfig, showTechnicalSections: boolean) {
     loaded: () => waitFor(() => expect(client.getQueryData(queryKeys.credentialValues.byProvider(config.id).queryKey)).toBeDefined()),
   };
 }
+
+// Panels are lazy chunks: load them up front so no case's first 1 s wait includes the cold import.
+beforeAll(async () => {
+  await Promise.all([import('../panels/EmailPanel'), import('../panels/BrowserProfilesPanel'), import('../panels/OAuthPanel')]);
+});
 
 beforeEach(() => {
   vi.resetAllMocks();

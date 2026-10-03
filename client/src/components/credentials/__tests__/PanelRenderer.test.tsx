@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -61,6 +61,11 @@ function renderPanel(config: ProviderConfig, showTechnicalSections?: boolean) {
     loaded: (id: string) => waitFor(() => expect(client.getQueryData(queryKeys.credentialValues.byProvider(id).queryKey)).toBeDefined()),
   };
 }
+
+// Panels are lazy chunks: load them up front so no case's first 1 s wait includes the cold import.
+beforeAll(async () => {
+  await Promise.all([import('../panels/ApiKeyPanel'), import('../panels/OAuthPanel'), import('../panels/QrPairingPanel')]);
+});
 
 beforeEach(() => {
   vi.clearAllMocks();
