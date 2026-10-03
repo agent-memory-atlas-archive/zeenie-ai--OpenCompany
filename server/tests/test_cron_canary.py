@@ -644,6 +644,40 @@ class TestCronScheduleSpec:
         assert all(2000 <= r.start <= max(r.start, r.end) <= 2100 for c in calendars for r in c.year)
 
 
+class TestScheduleDescription:
+    """A deployed trigger's ``schedule`` output reads the way the node's does.
+
+    The deploy path keeps its own copy because services never import a
+    plugin folder, so this is what keeps the two from drifting.
+    """
+
+    @pytest.mark.parametrize(
+        "params",
+        [
+            pytest.param({"frequency": "seconds", "interval": 30}, id="seconds"),
+            pytest.param({"frequency": "minutes", "interval_minutes": 5}, id="minutes"),
+            pytest.param({"frequency": "hours", "interval_hours": 6}, id="hours"),
+            pytest.param({"frequency": "days", "daily_time": "09:00"}, id="days"),
+            pytest.param({"frequency": "weeks", "weekday": "5", "weekly_time": "18:00"}, id="weeks"),
+            pytest.param({"frequency": "months", "month_day": "15", "monthly_time": "08:00"}, id="months"),
+            pytest.param({"frequency": "months", "month_day": "L", "monthly_time": "18:00"}, id="last-day"),
+            pytest.param({"frequency": "once"}, id="once"),
+        ],
+    )
+    def test_the_deploy_path_matches_the_node(self, params):
+        from nodes.scheduler.cron_scheduler import _get_schedule_description
+        from services.deployment.manager import DeploymentManager
+
+        assert DeploymentManager._get_schedule_description(params) == _get_schedule_description(params)
+
+    def test_the_last_day_of_the_month_is_written_out(self):
+        from services.deployment.manager import DeploymentManager
+
+        params = {"frequency": "months", "month_day": "L", "monthly_time": "18:00"}
+
+        assert DeploymentManager._get_schedule_description(params) == "Monthly on the last day at 18:00"
+
+
 # ---------------------------------------------------------------------------
 # DeploymentManager cron canary integration
 # ---------------------------------------------------------------------------

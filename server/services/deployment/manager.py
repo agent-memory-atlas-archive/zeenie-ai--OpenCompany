@@ -1422,9 +1422,10 @@ class DeploymentManager:
                 day_name = days[int(weekday)] if str(weekday).isdigit() else weekday
                 return f"Weekly on {day_name} at {time_str}"
             case "months":
-                day = params.get("month_day", "1")
+                day = str(params.get("month_day", "1"))
                 time_str = params.get("monthly_time", "09:00")
-                return f"Monthly on day {day} at {time_str}"
+                on = "the last day" if day == "L" else f"day {day}"
+                return f"Monthly on {on} at {time_str}"
             case "once":
                 return "Once (no repeat)"
             case _:

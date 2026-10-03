@@ -147,6 +147,11 @@ flowchart TD
 
   Checked against a real Temporal dev server on 2026-10-01 for every
   frequency.
+- **A deployed run's `schedule` output** comes from the deploy path's own
+  copy of the description, `DeploymentManager._get_schedule_description`
+  (services never import a plugin folder). `TestScheduleDescription` in
+  `server/tests/test_cron_canary.py` keeps it reading the same as this
+  node's, `Monthly on the last day at 18:00` included.
 - `iteration` is always `1`. The op does not loop; repeated firings
   come from the deployed Schedule firing per tick (deployment mode).
 - `interval`, `interval_minutes`, `interval_hours` are Pydantic-validated
