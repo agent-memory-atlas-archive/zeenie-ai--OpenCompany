@@ -656,6 +656,27 @@ html.oc-theme-fade *::after {
  * bubble; code blocks and tables inside keep their own surfaces unglowed. */
 .chat-msg-bot pre,
 .chat-msg-bot table { text-shadow: none; }
+/* While an answer streams, a pulsing dot follows its last words (design
+ * handoff chat, "Streaming"): at the end of the last block, or of a list's
+ * last item. */
+.chat-markdown[data-streaming] > :last-child::after,
+.chat-markdown[data-streaming] > :is(ul, ol):last-child > li:last-child::after {
+  content: '';
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-left: 5px;
+  vertical-align: -0.5px;
+  border-radius: 50%;
+  background: var(--action-tools-ink);
+  box-shadow: 0 0 0 3px var(--action-tools-soft), 0 0 14px var(--action-tools-border);
+  animation: opencompany-caret-pulse var(--dur-caret, 1000ms) ease-in-out infinite;
+}
+.chat-markdown[data-streaming] > :is(ul, ol):last-child::after { content: none; }
+@media (prefers-reduced-motion: reduce) {
+  .chat-markdown[data-streaming] > :last-child::after,
+  .chat-markdown[data-streaming] > :is(ul, ol):last-child > li:last-child::after { animation: none; }
+}
 
 /* ============================================================================
  * Syntax-highlighting palette — used by react-simple-code-editor + the

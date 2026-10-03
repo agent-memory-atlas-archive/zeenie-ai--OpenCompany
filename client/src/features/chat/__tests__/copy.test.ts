@@ -1,12 +1,12 @@
 /**
  * What a turn says: when a message was written, why a run did not answer,
- * and what a working run is doing.
+ * what a working run is doing and showing, and its steps.
  */
 
 import { describe, expect, it } from 'vitest';
-import { emptyRun } from '@/lib/agui/reduceRun';
+import { emptyRun, type RunSnapshot, type RunStep } from '@/lib/agui/reduceRun';
 import { timeLabel } from '../thread/timeLabel';
-import { failureLines, liveLabel, streamedText } from '../turns/runCopy';
+import { failureLines, liveLabel, liveText, stepDetail, workLabel, writingRate } from '../turns/runCopy';
 
 describe('timeLabel', () => {
   const now = new Date(2026, 8, 28, 15, 30);
@@ -58,20 +58,52 @@ describe('failureLines', () => {
 describe('a working run', () => {
   it('says what it is doing', () => {
     const working = { ...emptyRun('r1', 'w1'), state: 'running' as const };
-    expect(liveLabel(working, false)).toBe('Working…');
-    expect(liveLabel(working, true)).toBe('Writing…');
+    expect(liveLabel(working, false)).toBe('Thinking');
+    expect(liveLabel(working, true)).toBe('Writing');
     expect(liveLabel({ ...working, state: 'stopping' }, true)).toBe('Stopping…');
   });
 
-  it('shows the reply it streamed, not its narration', () => {
-    const run = {
-      ...emptyRun('r1', 'w1'),
-      segments: [
-        { messageId: 'n', text: 'Let me look.', final: false },
-        { messageId: 'a', text: 'Two bookings', final: null },
-      ],
-    };
-    expect(streamedText(run)).toBe('Two bookings');
-    expect(streamedText(null)).toBe('');
+  it('says how fast the answer comes, once a second has passed', () => {
+    expect(writingRate(400, 2_000)).toBe('· 50 tok/s');
+    expect(writingRate(400, 500)).toBeNull();
+    expect(writingRate(0, 5_000)).toBeNull();
+  });
+
+  it('shows the latest text until the answer comes, then the answer', () => {
+    const run = (segments: RunSnapshot['segments']) => ({ ...emptyRun('r1', 'w1'), segments });
+    const narration = { messageId: 'n', text: 'Let me look.', final: false };
+    expect(liveText(run([narration]))).toEqual({ text: 'Let me look.', streaming: false, narration: true });
+    expect(liveText(run([narration, { messageId: 'a', text: 'Two bookings', final: null }]))).toEqual({
+      text: 'Two bookings',
+      streaming: true,
+      narration: false,
+    });
+    expect(liveText(run([narration, { messageId: 'a', text: 'Two bookings.', final: true }]))).toEqual({
+      text: 'Two bookings.',
+      streaming: false,
+      narration: false,
+    });
+    expect(liveText(null)).toEqual({ text: '', streaming: false, narration: false });
+    expect(liveText(run([{ messageId: 'a', text: '  ', final: null }])).text).toBe('');
+  });
+});
+
+describe('working steps', () => {
+  const step = (stepId: string, state: RunStep['state'], detail?: string): RunStep => ({ stepId, name: stepId, state, ...(detail ? { detail } : {}) });
+
+  it('say “Working…” while they come, then how long and how many', () => {
+    const steps = [step('a', 'done'), step('b', 'failed'), step('c', 'skipped')];
+    expect(workLabel(steps, true, null)).toBe('Working…');
+    expect(workLabel(steps, false, 12_400)).toBe('Worked for 12s · 2 steps');
+    expect(workLabel([step('a', 'done')], false, 200)).toBe('Worked for 1s · 1 step');
+    expect(workLabel(steps, false, 125_000)).toBe('Worked for 2m 5s · 2 steps');
+    expect(workLabel(steps, false, null)).toBe('Worked for 1s · 2 steps');
+  });
+
+  it('say what each step found', () => {
+    expect(stepDetail(step('a', 'done', '3 events on Saturday'))).toBe('3 events on Saturday');
+    expect(stepDetail(step('a', 'done'))).toBeNull();
+    expect(stepDetail(step('a', 'failed', 'quota'))).toBe('Failed · quota');
+    expect(stepDetail(step('a', 'skipped', 'x'))).toBe('Skipped');
   });
 });

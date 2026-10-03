@@ -54,6 +54,8 @@ export interface RunSnapshot {
   createdAt: string | null;
   startedAt: string | null;
   finishedAt: string | null;
+  /** How long it worked, once it has ended and the server said. */
+  durationMs: number | null;
   steps: RunStep[];
   segments: RunSegment[];
   outcome: RunOutcome | null;
@@ -82,12 +84,22 @@ export function emptyRun(runId: string, sessionId: string): RunSnapshot {
     createdAt: null,
     startedAt: null,
     finishedAt: null,
+    durationMs: null,
     steps: [],
     segments: [],
     outcome: null,
     result: {},
     error: null,
   };
+}
+
+/** How long a run worked: what the server said, else from its start and
+ *  end; null while either is unknown. */
+export function workedMs(run: Pick<RunSnapshot, 'durationMs' | 'startedAt' | 'finishedAt'>): number | null {
+  if (run.durationMs !== null) return run.durationMs;
+  if (!run.startedAt || !run.finishedAt) return null;
+  const span = Date.parse(run.finishedAt) - Date.parse(run.startedAt);
+  return Number.isFinite(span) && span >= 0 ? span : null;
 }
 
 const RUN_KINDS: readonly RunKind[] = ['message', 'edit', 'regenerate', 'action', 'resume'];
@@ -112,7 +124,9 @@ function oneOf<T extends string>(value: unknown, options: readonly T[], fallback
   return typeof value === 'string' && (options as readonly string[]).includes(value) ? (value as T) : fallback;
 }
 
-function wireSteps(raw: unknown): RunStep[] {
+/** A run's steps as the server stores and sends them; unreadable ones are
+ *  left out. */
+export function stepsFromWire(raw: unknown): RunStep[] {
   if (!Array.isArray(raw)) return [];
   return raw.flatMap((item) => {
     if (!isRecord(item)) return [];
@@ -162,7 +176,8 @@ export function snapshotFromWire(raw: unknown): RunSnapshot | null {
     createdAt: textOrNull(raw.created_at),
     startedAt: textOrNull(raw.started_at),
     finishedAt: textOrNull(raw.finished_at),
-    steps: wireSteps(raw.steps),
+    durationMs: typeof raw.duration_ms === 'number' && raw.duration_ms >= 0 ? raw.duration_ms : null,
+    steps: stepsFromWire(raw.steps),
     segments: wireSegments(raw.segments),
     outcome,
     result: parseResult(raw.result),
@@ -214,6 +229,7 @@ export function applyRunEvent(run: RunSnapshot, event: RunEvent): RunSnapshot {
         outcome: event.outcome,
         result: event.result,
         finishedAt: event.time ?? run.finishedAt,
+        durationMs: event.durationMs,
       };
     case 'failed':
       return { ...next, state: 'error', error: event.error, finishedAt: event.time ?? run.finishedAt };

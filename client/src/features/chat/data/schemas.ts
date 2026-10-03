@@ -8,16 +8,19 @@
 import { z } from 'zod';
 import type { RunError, RunState } from '@/lib/agui/events';
 import { parseError } from '@/lib/agui/events';
-import { snapshotFromWire, type RunSnapshot } from '@/lib/agui/reduceRun';
+import { snapshotFromWire, stepsFromWire, type RunSnapshot, type RunStep } from '@/lib/agui/reduceRun';
 
 const RUN_STATES = ['queued', 'pending', 'running', 'stopping', 'finished', 'error', 'stopped'] as const;
 
-/** How the run a message started or answers ended (or is going). */
+/** How the run a message started or answers ended (or is going), what the
+ *  employee did on the way and how long it took. */
 export interface MessageRun {
   runId: string;
   state: RunState;
   outcome: string | null;
   error: RunError | null;
+  steps: RunStep[];
+  durationMs: number | null;
 }
 
 const messageRunSchema = z
@@ -26,6 +29,8 @@ const messageRunSchema = z
     state: z.enum(RUN_STATES).catch('finished'),
     outcome: z.string().nullable().catch(null),
     error: z.record(z.string(), z.unknown()).nullable().catch(null),
+    steps: z.unknown().optional(),
+    duration_ms: z.number().nonnegative().nullable().optional().catch(null),
   })
   .transform(
     (run): MessageRun => ({
@@ -33,6 +38,8 @@ const messageRunSchema = z
       state: run.state,
       outcome: run.outcome,
       error: run.error ? parseError(run.error) : null,
+      steps: stepsFromWire(run.steps),
+      durationMs: run.duration_ms ?? null,
     }),
   );
 

@@ -50,6 +50,8 @@ export interface ChatThreadProps {
   emptyState?: ReactNode;
   liveNote?: string | null;
   compact: boolean;
+  /** Esc stops a working run here, so its status line says so. */
+  canStop?: boolean;
   onScrolledChange?: (scrolled: boolean) => void;
 }
 
@@ -64,6 +66,7 @@ export function ChatThread({
   emptyState,
   liveNote,
   compact,
+  canStop = false,
   onScrolledChange,
 }: ChatThreadProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -192,11 +195,13 @@ export function ChatThread({
                     <AssistantTurn
                       message={turn.message}
                       run={turn.run}
+                      work={turn.work}
                       persona={persona}
                       now={now}
                       latest={latest}
                       compact={compact}
                       liveNote={liveNote}
+                      canStop={canStop}
                     />
                   )}
                 </div>

@@ -5,16 +5,18 @@
  * host (`ChatHost`) says who answers, whether a message can go now and what
  * sits around the conversation; the chat owns the rest.
  *
- * The turns follow the session's runs (docs-internal/chat_protocol.md):
- * "Working…" shows while the run a message started is going, whatever
- * else arrives meanwhile, and the next message waits until it ends. A
- * message that does not go comes back into the box.
+ * The turns follow the session's runs (docs-internal/chat_protocol.md): the
+ * employee's steps and answer stream in while the run a message started is
+ * going, whatever else arrives meanwhile, and the next message waits until
+ * it ends. Meanwhile Send is Stop, and Esc anywhere in the pane stops the
+ * answer too. A message that does not go comes back into the box.
  */
 
-import { useCallback, useImperativeHandle, useRef, type Ref } from 'react';
+import { useCallback, useImperativeHandle, useRef, type KeyboardEvent, type Ref } from 'react';
 import { cn } from '@/lib/utils';
 import { useConversation } from './data/conversation';
 import { useSendChatMessage, type ChatSendError } from './data/send';
+import { useStopChatRun } from './data/stop';
 import { Composer } from './composer/Composer';
 import type { ChatHost, ChatPaneHandle } from './host';
 import { useComposerStore } from './state/composerStore';
@@ -34,7 +36,9 @@ export function ChatPane({ host, ref }: { host: ChatHost; ref?: Ref<ChatPaneHand
     [notify, onSendRefused],
   );
   const send = useSendChatMessage(sessionId, scope, onRefused);
+  const stop = useStopChatRun(sessionId, () => notify('Couldn’t stop the reply. Try again.', 'error'));
   const busy = send.isPending || lane !== null;
+  const stopping = lane?.state === 'stopping' || stop.isPending;
 
   const submit = () => {
     const store = useComposerStore.getState();
@@ -43,8 +47,18 @@ export function ChatPane({ host, ref }: { host: ChatHost; ref?: Ref<ChatPaneHand
     send.mutate({ ...draft, text: draft.text.trim() });
   };
 
+  const stopAnswer = () => {
+    if (lane && !stopping) stop.mutate(lane);
+  };
+
+  const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+    if (event.key !== 'Escape' || event.defaultPrevented || !lane || stopping) return;
+    event.preventDefault();
+    stopAnswer();
+  };
+
   return (
-    <section aria-label={`Chat with ${persona.name}`} className="flex min-h-0 w-full flex-1 flex-col">
+    <section aria-label={`Chat with ${persona.name}`} onKeyDown={onKeyDown} className="flex min-h-0 w-full flex-1 flex-col">
       <ChatThread
         persona={persona}
         turns={turns}
@@ -56,6 +70,7 @@ export function ChatPane({ host, ref }: { host: ChatHost; ref?: Ref<ChatPaneHand
         emptyState={host.emptyState}
         liveNote={host.liveNote}
         compact={compact}
+        canStop={composer !== 'closed'}
         onScrolledChange={host.onScrolledChange}
       />
       <div className={cn('relative flex-none', compact ? 'border-t border-border-default px-3 py-2' : 'px-6 pb-3')}>
@@ -68,6 +83,8 @@ export function ChatPane({ host, ref }: { host: ChatHost; ref?: Ref<ChatPaneHand
               ready={Boolean(thread.data)}
               busy={busy}
               onSend={submit}
+              onStop={lane ? stopAnswer : undefined}
+              stopping={stopping}
               compact={compact}
               boxRef={boxRef}
             />

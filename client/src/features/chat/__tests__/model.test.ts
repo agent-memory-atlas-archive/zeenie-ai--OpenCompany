@@ -38,6 +38,8 @@ const messageRun = (runId: string, state: MessageRun['state'], error: MessageRun
   state,
   outcome: state === 'finished' ? 'success' : null,
   error,
+  steps: [],
+  durationMs: null,
 });
 
 function shape(turns: ReturnType<typeof buildTurns>) {
@@ -142,5 +144,38 @@ describe('buildTurns', () => {
       r2: run('r2', { state: 'error', error: { message: 'Old', code: 'run_failed' } }),
     });
     expect(shape(turns)).toEqual(['user:m9', 'assistant:-:queued', 'assistant:-:running']);
+  });
+
+  it('keeps a run’s steps on its first turn, working and after', () => {
+    const steps = [{ stepId: 'c1', name: 'Searched the web', state: 'done' as const }];
+    const user = message('m1', 'user', { runId: 'r1' });
+    const working = buildTurns([user], { r1: run('r1', { state: 'running', steps }) });
+    const live = working[1];
+    expect(live.kind === 'assistant' && live.work).toEqual({ steps, live: true, durationMs: null });
+
+    const answers = [user, message('a1', 'assistant', { runId: 'r1' }), message('a2', 'assistant', { runId: 'r1' })];
+    const done = buildTurns(answers, {
+      r1: run('r1', { state: 'finished', steps, startedAt: '2026-10-03T09:00:00Z', finishedAt: '2026-10-03T09:00:12Z' }),
+    });
+    expect(done.map((turn) => (turn.kind === 'assistant' ? turn.work : undefined))).toEqual([
+      undefined,
+      { steps, live: false, durationMs: 12_000 },
+      null,
+    ]);
+    // A run that took no steps has none to show.
+    const plain = buildTurns([user, message('a1', 'assistant', { runId: 'r1' })], { r1: run('r1', { state: 'finished' }) });
+    expect(plain[1].kind === 'assistant' && plain[1].work).toBeNull();
+  });
+
+  it('reads the steps a thread sent after a reload', () => {
+    const withSteps: MessageRun = {
+      ...messageRun('r1', 'finished'),
+      steps: [{ stepId: 'c1', name: 'Checked Google Calendar', state: 'done', detail: '3 events' }],
+      durationMs: 8_000,
+    };
+    const thread = [message('m1', 'user', { runId: 'r1', run: withSteps }), message('a1', 'assistant', { runId: 'r1', run: withSteps })];
+    const turns = buildTurns(thread, knownRuns('w1', thread, {}, true));
+    const answer = turns[1];
+    expect(answer.kind === 'assistant' && answer.work).toEqual({ steps: withSteps.steps, live: false, durationMs: 8_000 });
   });
 });

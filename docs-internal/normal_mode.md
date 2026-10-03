@@ -449,24 +449,30 @@ sending and drafts belong to the chat (wire and client rules in
   owner's OK follow the conversation (the host's `afterThread`).
 - **Working** follows the run the message started, not timers: from the
   moment the server admits it, the avatar spins its ring and skeleton lines
-  stand where the answer will be, with "Working…" under them, until that run
-  ends, whatever else lands meanwhile (a routine report does not end it). A
-  run that failed says so where the answer would be ("{Name} didn't pick up
-  this message.", "…took too long to answer.", or "{Name} couldn't answer."
-  with the error and its hint), also after a reload; a late answer replaces a
-  failure that only said none came. While the talk agent waits to retry after
-  a failed attempt, its retry message sits on the status line
-  (`useRetryNote`, from the agent's node status).
+  stand where the answer will be, with "Thinking" under them, until that run
+  ends, whatever else lands meanwhile (a routine report does not end it). The
+  talk agent's answer streams in as it is written ("Writing · N tok/s", a
+  caret after the text), and the apps it uses show above it as steps
+  ("Working…", then "Worked for 12s · 3 steps"). A run that failed says so
+  where the answer would be ("{Name} didn't pick up this message.", "…took too
+  long to answer.", or "{Name} couldn't answer." with the error and its hint),
+  also after a reload; a late answer replaces a failure that only said none
+  came. While the talk agent waits to retry after a failed attempt, its retry
+  message sits on the status line (`useRetryNote`, from the agent's node
+  status).
+- **Stop.** While the run works, Send is Stop, and Esc stops it too: the
+  answer so far stays, marked "You stopped this reply." A message still
+  waiting for Resume is withdrawn the same way.
 - **The box** follows the control state the way `send_chat_message` does
   (`talkMode` in `presentation.ts`):
   - *send* (running, starting, resuming): a message shows at once
-    ("Sending…") and goes to the employee; Send then waits until the run
+    ("Sending…") and goes to the employee; Send is then Stop until the run
     ends, since overlapping runs would each save over the other's
     conversation (the server refuses a second message with
     `run_in_progress`).
   - *queue* (paused, pausing): one message waits for Resume ("Your message is
     waiting…" above the box, "Waiting for you to resume {Name}." in the
-    thread), and Send waits until it has been answered.
+    thread), and Send is Stop until it has been answered or withdrawn.
   - *start* (never started, ready, resetting, failed): no box; a line says
     they can't read messages, beside their main action (Start, Start again,
     or what they are missing), which the Workspace header offers too.
@@ -545,8 +551,8 @@ otherwise (a chat trigger that feeds no agent counts here). While a
 generation is live the summary reads the running snapshot, whose node ids are
 the ones that report status; otherwise the saved graph. `talk.agent_node_id`
 is the agent that answers. It stays out of `watch_node_ids`, and `useLiveTask`
-skips it: while it works, the conversation shows "Working…", and the
-Workspace's task line stays on their other work.
+skips it: while it works, the conversation shows it working (its steps and
+streamed answer), and the Workspace's task line stays on their other work.
 
 ### Turn on Talk and Apply
 

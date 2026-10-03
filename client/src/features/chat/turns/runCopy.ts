@@ -5,17 +5,34 @@
  */
 
 import type { RunError } from '@/lib/agui/events';
-import type { RunSnapshot } from '@/lib/agui/reduceRun';
+import type { RunSnapshot, RunStep } from '@/lib/agui/reduceRun';
 
-/** What a run that has not answered streamed so far: its reply text, not
- *  the narration beside its tool calls. */
-export function streamedText(run: RunSnapshot | null): string {
-  if (!run) return '';
-  return run.segments
-    .filter((segment) => segment.final !== false)
-    .map((segment) => segment.text)
-    .join('\n\n')
-    .trim();
+/** The text a run that has not posted its answer shows. */
+export interface LiveText {
+  text: string;
+  /** Still arriving: the caret follows it. */
+  streaming: boolean;
+  /** Written beside tool calls, not the answer (shown muted until the
+   *  answer replaces it). */
+  narration: boolean;
+}
+
+/**
+ * The run's answer as it streamed; before any, the latest thing it wrote,
+ * which may turn out to be narration beside its tool calls ("Let me check
+ * the calendar.") and gives way to the next.
+ */
+export function liveText(run: RunSnapshot | null): LiveText {
+  const none: LiveText = { text: '', streaming: false, narration: false };
+  if (!run || run.segments.length === 0) return none;
+  const answer = run.segments.filter((segment) => segment.final === true);
+  const last = run.segments.at(-1)!;
+  if (answer.length > 0 && last.final === true) {
+    return { text: answer.map((segment) => segment.text).join('\n\n').trim(), streaming: false, narration: false };
+  }
+  const text = last.text.trim();
+  if (!text) return none;
+  return { text, streaming: last.final === null, narration: last.final === false };
 }
 
 /** A failed run in the owner's words: the server's codes for a message
@@ -34,8 +51,39 @@ export function failureLines(error: RunError | null, name: string): { headline: 
   }
 }
 
-/** The status line's label while a run works. */
-export function liveLabel(run: RunSnapshot, hasText: boolean): string {
+/** The status line's label while a run works (design handoff: "Thinking"
+ *  until text comes, then "Writing"). */
+export function liveLabel(run: RunSnapshot, writing: boolean): string {
   if (run.state === 'stopping') return 'Stopping…';
-  return hasText ? 'Writing…' : 'Working…';
+  return writing ? 'Writing' : 'Thinking';
+}
+
+/** "· 42 tok/s": how fast the answer is coming, a token counted as four
+ *  characters; null before a second has passed. */
+export function writingRate(characters: number, elapsedMs: number): string | null {
+  if (characters <= 0 || elapsedMs < 1000) return null;
+  return `· ${Math.round(characters / 4 / (elapsedMs / 1000))} tok/s`;
+}
+
+function duration(ms: number | null): string {
+  const seconds = Math.max(1, Math.round((ms ?? 0) / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  return rest ? `${minutes}m ${rest}s` : `${minutes}m`;
+}
+
+/** The steps disclosure's label: "Working…" while the steps come, then
+ *  "Worked for 12s · 3 steps" (skipped steps not counted). */
+export function workLabel(steps: readonly RunStep[], live: boolean, durationMs: number | null): string {
+  if (live) return 'Working…';
+  const count = steps.filter((step) => step.state !== 'skipped').length;
+  return `Worked for ${duration(durationMs)} · ${count} ${count === 1 ? 'step' : 'steps'}`;
+}
+
+/** What a step says under its name. */
+export function stepDetail(step: RunStep): string | null {
+  if (step.state === 'skipped') return 'Skipped';
+  if (step.state === 'failed') return step.detail ? `Failed · ${step.detail}` : 'Failed';
+  return step.detail ?? null;
 }

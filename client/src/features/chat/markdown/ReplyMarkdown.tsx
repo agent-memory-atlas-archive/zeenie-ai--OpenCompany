@@ -4,6 +4,11 @@
  * chunk: the thread loads it lazily, so the markdown stack stays out of the
  * first load. Links open in a new tab, and images from outside the workspace
  * wait for the owner (CHAT_MARKDOWN_COMPONENTS).
+ *
+ * While the answer streams (`streaming`), it is rendered block by block
+ * (markdown/blocks.ts): a finished block renders once, only the growing last
+ * one again with each delta, and a caret follows the text
+ * (`.chat-markdown[data-streaming]` in index.css).
  */
 
 import Prism from 'prismjs';
@@ -13,10 +18,12 @@ import 'prismjs/components/prism-markdown';
 import 'prismjs/components/prism-python';
 import 'prismjs/components/prism-typescript';
 import 'prismjs/components/prism-yaml';
+import { memo, useMemo } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
 import { cn } from '@/lib/utils';
+import { markdownBlocks } from './blocks';
 import { CHAT_MARKDOWN_COMPONENTS } from './components';
 
 const REMARK_PLUGINS = [remarkGfm, remarkBreaks];
@@ -58,12 +65,21 @@ const CodeBlock: Components['code'] = ({ node: _node, className, children, ...pr
 
 const COMPONENTS: Components = { ...CHAT_MARKDOWN_COMPONENTS, code: CodeBlock };
 
-export default function ReplyMarkdown({ text, className }: { text: string; className?: string }) {
+const Block = memo(function Block({ text }: { text: string }) {
   return (
-    <div className={cn('chat-markdown min-w-0', className)}>
-      <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={COMPONENTS}>
-        {text}
-      </ReactMarkdown>
+    <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={COMPONENTS}>
+      {text}
+    </ReactMarkdown>
+  );
+});
+
+export default function ReplyMarkdown({ text, streaming = false, className }: { text: string; streaming?: boolean; className?: string }) {
+  const blocks = useMemo(() => (streaming ? markdownBlocks(text) : [text]), [text, streaming]);
+  return (
+    <div className={cn('chat-markdown min-w-0', className)} data-streaming={streaming || undefined}>
+      {blocks.map((block, index) => (
+        <Block key={index} text={block} />
+      ))}
     </div>
   );
 }

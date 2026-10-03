@@ -1,15 +1,17 @@
 /**
  * The message box (design handoff chat, "Composer"): a text box that grows
  * with what is written, up to `--h-chat-composer-max`, then scrolls; and
- * Send. Enter sends, Shift+Enter starts a new line, and the Enter that
- * confirms an input method's composition never sends (lib/composerKeys).
+ * Send, which becomes Stop while the employee is answering. Enter sends,
+ * Shift+Enter starts a new line, and the Enter that confirms an input
+ * method's composition never sends (lib/composerKeys). Esc stops an answer
+ * (ChatPane).
  *
  * What is written lives in the composer store per conversation, so it
  * survives switching to another employee and back. While the employee is
  * still answering the last message the box takes text but Send waits.
  */
 
-import { ArrowUp } from 'lucide-react';
+import { ArrowUp, Square } from 'lucide-react';
 import type { KeyboardEvent, RefObject } from 'react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -26,12 +28,16 @@ export interface ComposerProps {
   /** A message is on its way, or the employee is still answering one. */
   busy: boolean;
   onSend: () => void;
+  /** Stops the answer under way; absent while there is none. */
+  onStop?: () => void;
+  /** The answer is already stopping. */
+  stopping?: boolean;
   compact: boolean;
   /** The text box, for the host's focus requests. */
   boxRef: RefObject<HTMLTextAreaElement | null>;
 }
 
-export function Composer({ sessionId, name, ready, busy, onSend, compact, boxRef }: ComposerProps) {
+export function Composer({ sessionId, name, ready, busy, onSend, onStop, stopping = false, compact, boxRef }: ComposerProps) {
   const draft = useComposerDraft(sessionId);
   const setText = useComposerStore((state) => state.setText);
   useAutoGrow(boxRef, draft.text);
@@ -43,7 +49,20 @@ export function Composer({ sessionId, name, ready, busy, onSend, compact, boxRef
     if (canSend) onSend();
   };
 
-  const send = (
+  const iconSize = compact ? 'size-3.5' : 'size-4';
+  const button = onStop ? (
+    <Button
+      variant="invert"
+      size="icon"
+      disabled={stopping}
+      onClick={onStop}
+      aria-label={stopping ? 'Stopping' : 'Stop reply'}
+      title={stopping ? 'Stopping…' : 'Stop (Esc)'}
+      className={cn('shrink-0 rounded-full', compact ? 'size-7' : 'size-8.5')}
+    >
+      <Square aria-hidden fill="currentColor" strokeWidth={0} className={compact ? 'size-2.75' : 'size-3'} />
+    </Button>
+  ) : (
     <Button
       variant="invert"
       size="icon"
@@ -53,7 +72,7 @@ export function Composer({ sessionId, name, ready, busy, onSend, compact, boxRef
       title={busy ? `${name} is still answering` : 'Send (Enter)'}
       className={cn('shrink-0 rounded-full', compact ? 'size-7' : 'size-8.5')}
     >
-      <ArrowUp aria-hidden strokeWidth={2.25} className={compact ? 'size-3.5' : 'size-4'} />
+      <ArrowUp aria-hidden strokeWidth={2.25} className={iconSize} />
     </Button>
   );
 
@@ -78,7 +97,7 @@ export function Composer({ sessionId, name, ready, busy, onSend, compact, boxRef
           compact ? 'py-1 text-sm leading-normal' : 'py-1.5 text-md leading-normal',
         )}
       />
-      {compact ? send : <div className="flex items-center justify-end gap-1.5">{send}</div>}
+      {compact ? button : <div className="flex items-center justify-end gap-1.5">{button}</div>}
     </div>
   );
 }

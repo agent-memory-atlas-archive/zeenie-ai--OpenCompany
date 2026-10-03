@@ -1,9 +1,14 @@
 /**
  * The employee's side of a turn (design handoff chat, "Assistant row"):
- * their avatar on the left and, with no bubble, what they said in markdown.
- * While their run works the avatar spins its ring and skeleton lines stand
- * in for text that has not come yet, with a status line under; a run that
- * waits for Resume, failed or was stopped says so where its answer would be.
+ * their avatar on the left and, with no bubble, in order: what they did on
+ * the way (the steps disclosure), and what they said in markdown.
+ *
+ * While their run works the avatar spins its ring; skeleton lines stand in
+ * for text that has not come yet; the answer streams in with a caret after
+ * it; and a status line says "Thinking" or "Writing · N tok/s" and that Esc
+ * stops it. Text written beside tool calls shows muted until the answer
+ * replaces it. A run that waits for Resume, failed or was stopped says so
+ * where its answer would be.
  *
  * `chat-msg chat-msg-bot` (on the text only) is the theme hook the stylized
  * themes paint as a bubble.
@@ -16,10 +21,13 @@ import { cn } from '@/lib/utils';
 import type { ChatMessage } from '../data/schemas';
 import type { ChatPersona } from '../host';
 import { ChatAvatar } from '../thread/ChatAvatar';
+import type { TurnWork } from '../thread/model';
 import { timeLabel } from '../thread/timeLabel';
-import { failureLines, liveLabel, streamedText } from './runCopy';
+import { failureLines, liveLabel, liveText } from './runCopy';
 import { StatusLine } from './StatusLine';
+import { StepsDisclosure } from './StepsDisclosure';
 import { TurnMeta } from './TurnMeta';
+import { useWritingRate } from './useWritingRate';
 
 // Its own chunk: the markdown stack stays out of the first load.
 const ReplyMarkdown = lazy(() => import('../markdown/ReplyMarkdown'));
@@ -47,24 +55,34 @@ function Note({ icon, tone = 'muted', children }: { icon: 'alert' | 'pause' | 's
 export function AssistantTurn({
   message,
   run,
+  work,
   persona,
   now,
   latest,
   compact,
   liveNote,
+  canStop = false,
 }: {
   message: ChatMessage | null;
   run: RunSnapshot | null;
+  work: TurnWork | null;
   persona: ChatPersona;
   now: Date;
   latest: boolean;
   compact: boolean;
   /** Said on the status line while the run works (an automatic retry). */
   liveNote?: string | null;
+  /** The pane stops a working run on Esc, so the status line says so. */
+  canStop?: boolean;
 }) {
   const queued = run?.state === 'queued';
   const live = Boolean(run && isLiveRun(run) && !queued);
-  const text = message ? message.text : streamedText(run);
+  // A saved answer is the answer; until then, what the run streamed.
+  const streamed = liveText(message ? null : run);
+  const text = message ? message.text : streamed.text;
+  const streaming = live && streamed.streaming;
+  const narration = streamed.narration;
+  const rate = useWritingRate(text, streaming, now);
   const failure = run?.state === 'error' ? failureLines(run.error, persona.name) : null;
 
   return (
@@ -77,16 +95,30 @@ export function AssistantTurn({
     >
       <ChatAvatar persona={persona} live={live} compact={compact} />
       <div className="flex min-w-0 flex-1 flex-col gap-2.5">
+        {work && <StepsDisclosure work={work} compact={compact} />}
         {live && !text && <Thinking />}
         {text && (
-          <div className={cn('chat-msg chat-msg-bot text-fg-default wrap-anywhere', compact ? 'leading-normal' : 'text-md leading-relaxed')}>
+          <div
+            data-narration={narration || undefined}
+            className={cn(
+              'chat-msg chat-msg-bot wrap-anywhere',
+              narration ? 'text-fg-muted' : 'text-fg-default',
+              compact ? 'leading-normal' : 'text-md leading-relaxed',
+            )}
+          >
             <Suspense fallback={<p className="m-0 whitespace-pre-wrap">{text}</p>}>
-              <ReplyMarkdown text={text} />
+              <ReplyMarkdown text={text} streaming={streaming} />
             </Suspense>
           </div>
         )}
         {live && run && (
-          <StatusLine label={liveLabel(run, Boolean(text))} note={liveNote} compact={compact} />
+          <StatusLine
+            label={liveLabel(run, streaming)}
+            rate={rate}
+            note={liveNote}
+            stopHint={canStop && run.state !== 'stopping'}
+            compact={compact}
+          />
         )}
         {queued && (
           <Note icon="pause">
