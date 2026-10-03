@@ -212,6 +212,12 @@ function Conversation({ employee, control, drafts }: { employee: EmployeeSummary
         cancel();
         setDraft((current) => current || text);
         if (error.message === 'not_running') invalidateEmployees(queryClient);
+        if (error.message === 'run_in_progress') {
+          // One answer at a time: the server refuses a second message while
+          // the employee is still working on the last one.
+          pillToast(`${name} is still working on your last message. Send this once they answer.`, { tone: 'info' });
+          return;
+        }
         pillToast(error.message === 'not_running' ? `${name} isn’t running. Start them first.` : 'Your message didn’t send. Try again.', {
           tone: 'error',
         });

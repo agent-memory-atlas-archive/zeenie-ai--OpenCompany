@@ -290,6 +290,8 @@ const ConsolePanel: React.FC<ConsolePanelProps> = ({
     } catch (error) {
       // Nothing listens while the workflow is stopped, so the server saved nothing.
       if (error instanceof Error && error.message === 'not_running') toast.error('Start this workflow to chat with it.');
+      // One answer at a time per conversation; the text stays in the box.
+      else if (error instanceof Error && error.message === 'run_in_progress') toast.info('The workflow is still answering your last message.');
       else console.error('Failed to send chat message:', error);
     } finally {
       setIsSending(false);
