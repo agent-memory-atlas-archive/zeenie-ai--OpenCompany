@@ -89,6 +89,7 @@ class BraveSearchNode(ActionNode):
     credentials = (BraveSearchCredential,)
     annotations = {"destructive": False, "readonly": True, "open_world": True}
     task_queue = TaskQueue.REST_API
+    chat_step = "Searched the web"
     usable_as_tool = True
 
     Params = BraveSearchParams

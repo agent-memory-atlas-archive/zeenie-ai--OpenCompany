@@ -243,8 +243,47 @@ async def list_conversations(
         ]
 
 
+#: The result a tool call gets when its run ended before the tool answered.
+UNANSWERED_TOOL_RESULT = "This step did not finish: the run ended before its result came back."
+
+
+def close_unanswered_tool_calls(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Answer the tool calls a stored conversation left open.
+
+    A run that ends between asking for a tool and getting its result (the
+    watchdog cancelling a stopped run mid-tool, a crash) saves a last
+    assistant turn whose calls have no result, and every provider refuses to
+    continue such a conversation. Each open call gets
+    :data:`UNANSWERED_TOOL_RESULT`, after the results the turn already has.
+    Returns ``messages`` itself when nothing is open.
+    """
+    from services.llm.protocol import Message, message_to_wire
+
+    latest = next((i for i in range(len(messages) - 1, -1, -1) if messages[i].get("role") == "assistant"), None)
+    if latest is None:
+        return messages
+    answered = {m.get("tool_call_id") for m in messages[latest + 1:] if m.get("role") == "tool"}
+    open_calls = [
+        call
+        for call in messages[latest].get("tool_calls") or []
+        if isinstance(call, dict) and call.get("id") and call.get("id") not in answered
+    ]
+    if not open_calls:
+        return messages
+    end = latest + 1
+    while end < len(messages) and messages[end].get("role") == "tool":
+        end += 1
+    closing = [
+        dict(message_to_wire(Message(role="tool", content=UNANSWERED_TOOL_RESULT, tool_call_id=call["id"], name=call.get("name"))))
+        for call in open_calls
+    ]
+    return [*messages[:end], *closing, *messages[end:]]
+
+
 __all__ = [
+    "UNANSWERED_TOOL_RESULT",
     "clear_conversation",
+    "close_unanswered_tool_calls",
     "list_conversations",
     "load_conversation",
     "save_conversation",

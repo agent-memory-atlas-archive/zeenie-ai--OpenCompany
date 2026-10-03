@@ -317,11 +317,86 @@ async def _await_with_llm_heartbeats(
             await asyncio.gather(task, return_exceptions=True)
 
 
+#: ``_until_chat_run_stops`` result when the owner stopped the run.
+_STOPPED = object()
+
+
+async def _chat_run_stopping(run_id: str) -> bool:
+    """Whether the owner asked this chat run to stop. A failed read is
+    "no": stopping is never worth failing a step over."""
+    try:
+        from core.container import container
+        from services.chat import ledger
+
+        return await ledger.is_stopping(container.database(), run_id)
+    except Exception:  # noqa: BLE001
+        logger.warning("Could not read whether a chat run is stopping", exc_info=True)
+        return False
+
+
+async def _until_chat_run_stops(call: Any, run_id: Optional[str]) -> Any:
+    """Await a model call, or return ``_STOPPED`` as soon as the chat run it
+    works for is stopped (polled every ``runs.stop_poll_s``: a heartbeat-
+    borne cancel arrives too late to stop a stream mid-sentence)."""
+    if not run_id:
+        return await call
+    from services.chat.config import runs_setting
+
+    poll = max(0.05, runs_setting("stop_poll_s"))
+
+    async def watch() -> None:
+        while not await _chat_run_stopping(run_id):
+            await asyncio.sleep(poll)
+
+    task = asyncio.ensure_future(call)
+    watcher = asyncio.ensure_future(watch())
+    try:
+        done, _ = await asyncio.wait({task, watcher}, return_when=asyncio.FIRST_COMPLETED)
+        if task in done:
+            return task.result()
+        return _STOPPED
+    finally:
+        for pending in (task, watcher):
+            if not pending.done():
+                pending.cancel()
+        await asyncio.gather(task, watcher, return_exceptions=True)
+
+
+async def _stopped_llm_step(payload: Dict[str, Any], messages: List[Any], *, partial: str) -> Dict[str, Any]:
+    """The step's result when the owner stopped the run: what was written so
+    far (possibly nothing) as the final answer. The conversation keeps the
+    turn as far as it went: the request (its tool results included, so no
+    call is left unanswered) and the partial answer, marked stopped; nothing
+    is added when nothing was written."""
+    from services.llm.protocol import ContentBlock, Message, Usage, message_to_wire
+
+    sent = [dict(message_to_wire(message)) for message in messages]
+    assistant = Message(
+        role="assistant",
+        content=partial,
+        blocks=[ContentBlock(type="text", text=partial, metadata={"stopped": True})] if partial else [],
+    )
+    assistant_wire = dict(message_to_wire(assistant))
+    await _save_conversation(payload, sent=sent, assistant_wire=assistant_wire if partial else None)
+    result: Dict[str, Any] = {
+        "kind": "final",
+        "assistant_message": assistant_wire,
+        "content": partial,
+        "thinking": None,
+        "usage": asdict(Usage()),
+        "stopped": True,
+    }
+    if payload.get("include_finish_reason"):
+        result["finish_reason"] = "stopped"
+    return result
+
+
 async def _execute_native_llm_step(payload: Dict[str, Any]) -> Dict[str, Any]:
     """Run one native-SDK model turn and retain the v1 activity envelope."""
 
     from core.container import container
     from services.agent_runtime import run_native_llm_step
+    from services.chat.stream import ChatStreamEmitter, shown_text
     from services.llm.messages import filter_empty_messages
     from services.llm.protocol import (
         LLMError,
@@ -357,27 +432,39 @@ async def _execute_native_llm_step(payload: Dict[str, Any]) -> Dict[str, Any]:
         if isinstance(thinking_data, dict)
         else None
     )
+    # A chat run the owner stopped ends at this step, before paying for it.
+    chat_run_id = payload.get("chat_run_id")
+    if isinstance(chat_run_id, str) and chat_run_id and await _chat_run_stopping(chat_run_id):
+        return await _stopped_llm_step(payload, messages, partial="")
+    emitter = ChatStreamEmitter.from_payload(payload, attempt=_llm_activity_attempt())
+    if emitter is not None:
+        emitter.begin()
+
     api_key = await _resolve_activity_api_key(payload)
     try:
         response = await _await_with_llm_heartbeats(
-            run_native_llm_step(
-                container.chat_unifier(),
-                provider=payload["provider"],
-                api_key=api_key,
-                messages=messages,
-                model=payload["model"],
-                temperature=payload.get("temperature", 0.7),
-                max_tokens=payload.get("max_tokens", 4096),
-                thinking=thinking,
-                tools=tool_defs,
-                context_management=payload.get("context_management"),
-                # Temporal owns retries; nested SDK retries would bypass
-                # quota classification and hide the wait from the UI.
-                sdk_max_retries=0,
-                explicit_max_retries=0,
-                # Keep structured metadata until this activity boundary,
-                # where it is converted to a safe Temporal failure.
-                translate_errors=False,
+            _until_chat_run_stops(
+                run_native_llm_step(
+                    container.chat_unifier(),
+                    provider=payload["provider"],
+                    api_key=api_key,
+                    messages=messages,
+                    model=payload["model"],
+                    temperature=payload.get("temperature", 0.7),
+                    max_tokens=payload.get("max_tokens", 4096),
+                    thinking=thinking,
+                    tools=tool_defs,
+                    context_management=payload.get("context_management"),
+                    # Temporal owns retries; nested SDK retries would bypass
+                    # quota classification and hide the wait from the UI.
+                    sdk_max_retries=0,
+                    explicit_max_retries=0,
+                    # Keep structured metadata until this activity boundary,
+                    # where it is converted to a safe Temporal failure.
+                    translate_errors=False,
+                    on_event=emitter,
+                ),
+                chat_run_id if isinstance(chat_run_id, str) else None,
             ),
             detail=f"LLM step waiting: {payload.get('model')}",
         )
@@ -395,6 +482,17 @@ async def _execute_native_llm_step(payload: Dict[str, Any]) -> Dict[str, Any]:
         # The safe category and diagnostic fields are sufficient here. Raw
         # SDK bodies in chained tracebacks can include prompts or credentials.
         raise failure from None
+
+    if response is _STOPPED:
+        # What the owner saw so far is the answer: the reply node posts it,
+        # saved as stopped, and the run finishes ``stopped``.
+        partial = shown_text(emitter.text).rstrip() if emitter is not None else ""
+        if emitter is not None:
+            emitter.end(final=True)
+        return await _stopped_llm_step(payload, messages, partial=partial)
+    if emitter is not None:
+        # Text beside tool calls is narration; without them it is the reply.
+        emitter.end(final=not response.tool_calls)
 
     assistant = response.assistant_message or Message(
         role="assistant",
@@ -456,7 +554,7 @@ async def _save_conversation(
     payload: Dict[str, Any],
     *,
     sent: List[Dict[str, Any]],
-    assistant_wire: Dict[str, Any],
+    assistant_wire: Optional[Dict[str, Any]],
 ) -> None:
     """Persist the full transcript for this turn, when a key is attached.
 
@@ -464,7 +562,8 @@ async def _save_conversation(
     exact list handed to the provider; ``sent + [assistant]`` IS the
     conversation after this turn, saved whole (last-write-wins upsert per
     key). Living inside the LLM activity means per-turn durability with
-    zero extra activities and zero Temporal-history payload.
+    zero extra activities and zero Temporal-history payload. A step stopped
+    before the model wrote anything saves ``sent`` alone.
     """
     key = payload.get("conversation_key")
     if not isinstance(key, dict):
@@ -473,7 +572,7 @@ async def _save_conversation(
         from core.container import container
         from services.agent_context import save_conversation
 
-        messages = [*sent, assistant_wire]
+        messages = [*sent, assistant_wire] if assistant_wire is not None else list(sent)
         saved_bytes = len(json.dumps(messages, default=str).encode("utf-8"))
         if saved_bytes > _SEED_TRANSCRIPT_MAX_BYTES // 2:
             # The next firing refuses to load a row over the cap
@@ -1169,10 +1268,15 @@ async def prepare_agent_payload(context: Dict[str, Any]) -> Dict[str, Any]:
         }
         try:
             from services.agent_context import load_conversation
+            from services.agent_context.conversation import close_unanswered_tool_calls
 
-            conversation = await load_conversation(
-                database,
-                **conversation_key,
+            # A run stopped or crashed mid-tool left calls without results,
+            # which no provider accepts: answer them before continuing.
+            conversation = close_unanswered_tool_calls(
+                await load_conversation(
+                    database,
+                    **conversation_key,
+                )
             )
         except Exception as exc:
             raise ApplicationError(
@@ -1381,8 +1485,13 @@ async def prepare_agent_payload(context: Dict[str, Any]) -> Dict[str, Any]:
         CONTEXT_PRESSURE_VERSION,
         transcript_budget_bytes,
     )
+    from services.chat.stream import chat_run_id_of, chat_stream_for
 
     return {
+        # The chat run this agent works for (stops when the owner presses
+        # Stop), and, for the agent that answers it, where its text streams.
+        "chat_run_id": chat_run_id_of(context),
+        "chat_stream": chat_stream_for(context),
         "node_id": node_id,
         "node_type": node_type,
         "workflow_id": workflow_id,

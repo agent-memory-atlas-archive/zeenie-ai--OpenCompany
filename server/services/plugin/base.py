@@ -274,6 +274,17 @@ class BaseNode:
     tool_name: ClassVar[str] = ""
     tool_description: ClassVar[str] = ""
 
+    # Chat (docs-internal/chat_protocol.md). ``answers_chat_run``: this node
+    # posts the answer to a chat run (Reply in Chat), so the agent whose
+    # output it takes streams its text into the chat as it writes.
+    # ``chat_step``: how a call of this tool reads as a working step while
+    # the employee answers ("Checked Google Calendar"); empty falls back to
+    # "Used <display name>". ``chat_step_hidden``: housekeeping (the clock,
+    # a checklist) that shows no step.
+    answers_chat_run: ClassVar[bool] = False
+    chat_step: ClassVar[str] = ""
+    chat_step_hidden: ClassVar[bool] = False
+
     # Set by __init_subclass__: {op_name: OperationSpec}
     _operations: ClassVar[Dict[str, OperationSpec]] = {}
     # Flag so concrete subclasses auto-register; abstract kinds don't.
@@ -1086,6 +1097,29 @@ class BaseNode:
                 )
                 return result
 
+            # Chat (services/chat/steps.py): a tool call of a run the owner
+            # stopped is answered without running; a tool call of the agent
+            # answering a chat run shows as a working step.
+            from services.chat import steps as chat_steps
+
+            if await chat_steps.run_stopped(context):
+                result = {
+                    "success": True,
+                    "node_id": node_id,
+                    "node_type": cls.type,
+                    "result": dict(chat_steps.STOPPED_RESULT),
+                    "execution_id": execution_id,
+                    "timestamp": datetime.now().isoformat(),
+                }
+                await broadcaster.update_node_status(
+                    node_id,
+                    "skipped",
+                    {"stopped": True, "execution_id": execution_id},
+                    workflow_id=workflow_id,
+                )
+                return result
+            chat_step = chat_steps.begin(context, cls)
+
             # Broadcast executing — UI cyan-glow.
             await broadcaster.update_node_status(
                 node_id,
@@ -1180,7 +1214,12 @@ class BaseNode:
                 # / TriggerNode return the {success, result} envelope.
                 # cls.interpret_result() normalizes both into (success,
                 # payload, error_message).
+                step_detail = chat_steps.take_detail(result)
                 success, payload, error = cls.interpret_result(result)
+                if chat_step is not None and not (
+                    not success and result.get("error_type") == NODE_WAIT_INTERRUPTED
+                ):
+                    await chat_steps.end(chat_step, state="done" if success else "failed", detail=step_detail)
                 if not success and result.get("error_type") == NODE_WAIT_INTERRUPTED:
                     # The body stopped waiting because this worker is going
                     # away, not because the work failed. Fail the attempt
@@ -1229,6 +1268,7 @@ class BaseNode:
                     raise
                 error_msg = f"{type(e).__name__}: {e}"
                 activity.logger.error(f"Node {node_id} crashed: {error_msg}")
+                await chat_steps.end(chat_step, state="failed")
                 await broadcaster.update_node_status(
                     node_id,
                     "error",

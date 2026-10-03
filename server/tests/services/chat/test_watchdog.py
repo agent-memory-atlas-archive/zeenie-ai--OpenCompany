@@ -1,6 +1,6 @@
 """The chat run watchdog (services/chat/watchdog.py): sweeps at once when it
-starts and then every interval, survives a failing sweep, stops cleanly, and
-asks Temporal whether a run's workflow has closed."""
+starts and then every interval, survives a failing sweep, stops cleanly, asks
+Temporal whether a run's workflow has closed, and cancels a stopped run's."""
 
 from __future__ import annotations
 
@@ -15,8 +15,8 @@ from services.chat import watchdog
 async def test_it_sweeps_at_once_and_keeps_sweeping_after_a_failure(monkeypatch):
     sweeps = []
 
-    async def sweep(database, *, temporal_status):
-        sweeps.append((database, temporal_status))
+    async def sweep(database, *, temporal_status, temporal_cancel):
+        sweeps.append((database, temporal_status, temporal_cancel))
         if len(sweeps) == 1:
             raise RuntimeError("database is locked")
         return []
@@ -32,7 +32,10 @@ async def test_it_sweeps_at_once_and_keeps_sweeping_after_a_failure(monkeypatch)
     await dog.stop()
     await dog.stop()  # stopping twice is harmless
     assert len(sweeps) >= 3
-    assert all(database == "db" and status is watchdog.temporal_workflow_closed for database, status in sweeps)
+    assert all(
+        database == "db" and status is watchdog.temporal_workflow_closed and cancel is watchdog.cancel_temporal_workflow
+        for database, status, cancel in sweeps
+    )
     count = len(sweeps)
     await asyncio.sleep(0.05)
     assert len(sweeps) == count, "the loop kept running after stop"
@@ -91,3 +94,31 @@ async def test_a_workflow_temporal_no_longer_knows_is_closed(monkeypatch):
     assert await watchdog.temporal_workflow_closed("w", "r") is True
     client.status = RPCStatusCode.UNAVAILABLE
     assert await watchdog.temporal_workflow_closed("w", "r") is None
+
+
+async def test_cancelling_a_stopped_runs_workflow(monkeypatch):
+    from temporalio.service import RPCError, RPCStatusCode
+
+    cancelled = []
+
+    class Handle:
+        def __init__(self, workflow_id, run_id):
+            self.ids = (workflow_id, run_id)
+
+        async def cancel(self):
+            if self.ids[0] == "gone":
+                raise RPCError("already closed", RPCStatusCode.NOT_FOUND, b"")
+            cancelled.append(self.ids)
+
+    class Client:
+        def get_workflow_handle(self, workflow_id, run_id=None):
+            return Handle(workflow_id, run_id)
+
+    _container(monkeypatch, Client())
+    await watchdog.cancel_temporal_workflow("w", "r")
+    # A workflow that already closed has nothing left to cancel.
+    await watchdog.cancel_temporal_workflow("gone", "r")
+    assert cancelled == [("w", "r")]
+    # Without Temporal there is nothing to do.
+    _container(monkeypatch, None)
+    await watchdog.cancel_temporal_workflow("w", "r")

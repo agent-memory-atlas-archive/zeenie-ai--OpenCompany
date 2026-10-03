@@ -128,15 +128,24 @@ async def test_each_message_says_how_its_run_ended(chat):
     await ledger.post_reply(chat.database, run=run, node_id="n", text="Booked.", execution_id="gen-1")
     await ledger.finish_run(chat.database, run_id=answered["run_id"], temporal_workflow_id="tw2", temporal_run_id="tr", success=True)
 
+    await ledger.record_step(chat.database, answered["run_id"], {"step_id": "c1", "state": "done", "name": "Checked Google Calendar"})
+
     result = await chat.handlers.handle_get_chat_messages({"session_id": "wf", "all_generations": True}, None)
     first, second, reply = result["messages"]
+    # How long each run worked comes with it.
+    assert all(message["run"].pop("duration_ms") >= 0 for message in (first, second, reply))
     assert first["run"] == {
         "run_id": failed["run_id"],
         "state": "error",
         "outcome": None,
         "error": {"message": "Calendar said no", "code": "run_failed", "hint": "Reconnect Google"},
     }
-    assert second["run"] == reply["run"] == {"run_id": answered["run_id"], "state": "finished", "outcome": "success"}
+    assert second["run"] == reply["run"] == {
+        "run_id": answered["run_id"],
+        "state": "finished",
+        "outcome": "success",
+        "steps": [{"step_id": "c1", "state": "done", "name": "Checked Google Calendar"}],
+    }
     assert result["active_runs"] == []
 
 

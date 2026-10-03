@@ -901,6 +901,20 @@ class AgentWorkflow:
                 # indistinguishable from a normal completion and gets
                 # returned to the user as a truncated final answer.
                 "include_finish_reason": True,
+                # The chat run this agent works for: the step stops when the
+                # owner presses Stop, and the agent that answers the run
+                # streams its text into the chat (services/chat/stream.py).
+                # Activity input only, so recorded histories replay as before.
+                **(
+                    {"chat_run_id": payload["chat_run_id"]}
+                    if payload.get("chat_run_id")
+                    else {}
+                ),
+                **(
+                    {"chat_stream": payload["chat_stream"]}
+                    if payload.get("chat_stream")
+                    else {}
+                ),
             }
 
             # Transient provider failures (429 rate limit, 5xx, network)
@@ -1785,6 +1799,19 @@ class AgentWorkflow:
                         call.get("id") or f"{iteration + 1}:{call_index + 1}"
                     ),
                     **call_metadata,
+                    # Chat (services/chat/steps.py): a call of a stopped run
+                    # is not run, and a call of the agent answering the run
+                    # shows as a working step. Activity input only.
+                    **(
+                        {"chat_run_id": payload["chat_run_id"]}
+                        if payload.get("chat_run_id")
+                        else {}
+                    ),
+                    **(
+                        {"chat_stream": payload["chat_stream"]}
+                        if payload.get("chat_stream")
+                        else {}
+                    ),
                 }
 
                 tool_activity_name = (

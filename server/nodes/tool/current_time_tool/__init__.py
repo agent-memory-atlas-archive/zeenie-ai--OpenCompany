@@ -39,6 +39,7 @@ class CurrentTimeToolNode(ToolNode):
     ui_hints = {"hideRunButton": True}
     annotations = {"destructive": False, "readonly": True, "open_world": False}
     task_queue = TaskQueue.DEFAULT
+    chat_step_hidden = True
 
     Params = CurrentTimeParams
     Output = CurrentTimeOutput

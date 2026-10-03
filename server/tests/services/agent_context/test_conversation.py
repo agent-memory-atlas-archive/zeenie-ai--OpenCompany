@@ -114,6 +114,31 @@ async def test_blocked_tool_turn_is_saved_once_and_stale_results_are_ignored(con
     assert len(await load_conversation(conversation_database, **_KEY)) == 1
 
 
+def test_calls_a_stopped_run_left_open_are_answered():
+    """A run ended between asking for tools and getting their results (Stop
+    while a tool ran, a crash) leaves calls no provider will continue from;
+    each open call gets a result after the ones the turn already has."""
+    from services.agent_context.conversation import UNANSWERED_TOOL_RESULT, close_unanswered_tool_calls
+    from services.llm.protocol import ToolCall
+
+    assistant = dict(message_to_wire(Message(
+        role="assistant",
+        tool_calls=[ToolCall(id="c1", name="search", args={}), ToolCall(id="c2", name="calendar", args={})],
+    )))
+    answered = dict(message_to_wire(Message(role="tool", tool_call_id="c1", name="search", content="3 results")))
+    stored = [_wire("user", "Book Saturday"), assistant, answered]
+    repaired = close_unanswered_tool_calls(stored)
+    assert [(m["role"], m.get("tool_call_id")) for m in repaired] == [
+        ("user", None), ("assistant", None), ("tool", "c1"), ("tool", "c2"),
+    ]
+    assert (repaired[-1]["content"], repaired[-1]["name"]) == (UNANSWERED_TOOL_RESULT, "calendar")
+    # A closed turn, or no assistant turn at all, is returned as it is.
+    assert close_unanswered_tool_calls(repaired) is repaired
+    plain = [_wire("user", "hi"), _wire("assistant", "hello")]
+    assert close_unanswered_tool_calls(plain) is plain
+    assert close_unanswered_tool_calls([]) == []
+
+
 def _sans_ts(messages: list[dict]) -> list[dict]:
     return [{k: v for k, v in m.items() if k != "ts"} for m in messages]
 

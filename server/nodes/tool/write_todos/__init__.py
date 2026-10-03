@@ -76,6 +76,7 @@ class WriteTodosNode(ToolNode):
     ui_hints = {"hideRunButton": True, "isTodoEditor": True}
     annotations = {"destructive": False, "readonly": False, "open_world": False}
     task_queue = TaskQueue.DEFAULT
+    chat_step_hidden = True
 
     Params = WriteTodosParams
     Output = WriteTodosOutput

@@ -10,9 +10,11 @@ writing a second one; the id maps to a message id that only this session can
 produce (``client_message_uid``).
 
 **Start** (``start_run``) moves ``pending``/``queued`` to ``running`` and
-records the Temporal workflow that claimed it. Several chatTrigger nodes in
-one graph each spawn a run for the same message: the first claims the chat
-run, the others run untracked. **Finish** (``finish_run``) is accepted only
+records the Temporal workflow that claimed it; a run stopped before anything
+picked it up is claimed still ``stopped``, so the workflow that answers it
+stops at its first step instead of answering untracked. Several chatTrigger
+nodes in one graph each spawn a run for the same message: the first claims
+the chat run, the others run untracked. **Finish** (``finish_run``) is accepted only
 from the claimant. A retried start or finish publishes nothing new: events
 carry an ``event_key`` the hub publishes once.
 
@@ -23,6 +25,18 @@ queued run whose deployment stopped or did not pick it up after resuming, a
 running run past ``runs.max_running_s`` (``timed_out``), and a running run
 whose Temporal workflow closed without finishing it: finished when its reply
 was saved, ``interrupted`` otherwise.
+
+**Stop** (``request_stop``) ends a run nothing has picked up at once
+(``stopped``, no reply) and moves a running run to ``stopping``. A running
+run stops itself: its agent's next model step returns what it has written so
+far, and a tool not started yet is skipped (``services/chat/stream.py``,
+``services/chat/steps.py``); its reply, if any, is saved ``stopped`` and the
+run finishes with outcome ``stopped``. A run still stopping
+``runs.stop_grace_s`` later (a tool that takes long, a lost workflow) is
+ended by the watchdog, which also cancels its workflow.
+
+**Steps** (``record_step``) are saved on the run as they finish, so a reload
+can say how long it worked and what it did.
 
 Every transition commits before its event is published, so a client that
 reads the run after an event never sees an older state than the event.
@@ -43,7 +57,7 @@ from sqlmodel import select
 from core.logging import get_logger
 from models.chat import LIVE_STATES, TERMINAL_STATES, ChatRun
 from models.database import ChatMessage
-from services.chat.config import runs_setting
+from services.chat.config import runs_setting, steps_setting
 from services.chat.hub import get_chat_hub
 from services.chat_thread import delivery_for
 
@@ -59,6 +73,9 @@ _CLOSED_GRACE = timedelta(seconds=60)
 #: ``await status(temporal_workflow_id, temporal_run_id)`` -> True when the
 #: workflow has closed, False while it runs, None when unknown.
 TemporalStatus = Callable[[str, Optional[str]], Awaitable[Optional[bool]]]
+#: ``await cancel(temporal_workflow_id, temporal_run_id)``: ask Temporal to
+#: cancel a workflow (best effort).
+TemporalCancel = Callable[[str, Optional[str]], Awaitable[None]]
 
 
 class RunInProgress(Exception):
@@ -269,6 +286,8 @@ async def post_reply(
         uid = run.reply_message_uid or reply_uid(run.run_id)
         if replies:
             uid = f"{uid}.{len(replies) + 1}"
+        current = await session.get(ChatRun, run.run_id)
+        stopped = current is not None and current.state in ("stopping", "stopped")
         row = await database.append_chat_row(
             session,
             session_id=run.session_id,
@@ -277,6 +296,7 @@ async def post_reply(
             execution_id=execution_id,
             uid=uid,
             run_id=run.run_id,
+            status="stopped" if stopped else "complete",
             meta={"node_id": node_id},
         )
         await session.commit()
@@ -362,16 +382,25 @@ async def start_run(
                 temporal_run_id=temporal_run_id,
             )
         )
+        # Stopped before anything picked it up: claimed as it is, so the
+        # workflow's agent stops at its first step rather than answering
+        # untracked.
+        await session.execute(
+            update(ChatRun)
+            .where(ChatRun.run_id == run_id, ChatRun.state == "stopped", ChatRun.temporal_workflow_id.is_(None))
+            .values(temporal_workflow_id=temporal_workflow_id, temporal_run_id=temporal_run_id)
+        )
         await session.commit()
     run = await get_run(database, run_id)
     if (
         run is None
-        or run.state not in ("running", "stopping")
+        or run.state not in ("running", "stopping", "stopped")
         or run.temporal_workflow_id != temporal_workflow_id
         or run.temporal_run_id != temporal_run_id
     ):
         return None
-    publish_started(run)
+    if run.state != "stopped":
+        publish_started(run)
     return run
 
 
@@ -437,6 +466,74 @@ async def finish_run(
     return await _settle(database, run, values)
 
 
+async def request_stop(database: Any, run_id: str) -> Optional[ChatRun]:
+    """Stop a live run. Returns the run as it now is (unchanged when it was
+    not stoppable), None when it does not exist.
+
+    A run nothing has picked up yet (pending, or queued until the employee
+    resumes) ends ``stopped`` at once, which frees the lane; a workflow that
+    picks it up later claims it stopped (``start_run``) and answers nothing.
+    A running run moves to ``stopping`` and stops itself."""
+    now = _utcnow()
+    async with database.get_session() as session:
+        unclaimed = await session.execute(
+            update(ChatRun)
+            .where(
+                ChatRun.run_id == run_id,
+                ChatRun.state.in_(("pending", "queued")),
+                ChatRun.temporal_workflow_id.is_(None),
+            )
+            .values(
+                state="stopped",
+                outcome="stopped",
+                result={"no_reply": True},
+                stop_requested_at=now,
+                finished_at=now,
+            )
+        )
+        ended = bool(unclaimed.rowcount)
+        stopping = False
+        if not ended:
+            result = await session.execute(
+                update(ChatRun)
+                .where(ChatRun.run_id == run_id, ChatRun.state.in_(("pending", "queued", "running")))
+                .values(state="stopping", stop_requested_at=now)
+            )
+            stopping = bool(result.rowcount)
+        await session.commit()
+    run = await get_run(database, run_id)
+    if run is not None and ended:
+        publish_terminal(run)
+    elif run is not None and stopping:
+        _publish(run, "custom", {"name": "opencompany.stopping", "value": {}}, "stopping")
+    return run
+
+
+async def is_stopping(database: Any, run_id: str) -> bool:
+    """Whether the owner asked the run to stop (or it already has)."""
+    run = await get_run(database, run_id)
+    return run is not None and run.state in ("stopping", "stopped")
+
+
+async def record_step(database: Any, run_id: str, step: Dict[str, Any]) -> None:
+    """Save a finished step on the run (replacing an earlier save of the
+    same step), up to ``steps.max_per_run``."""
+    step_id = step.get("step_id")
+    if not step_id:
+        return
+    async with database.reserved_session() as session:
+        run = await session.get(ChatRun, run_id)
+        if run is None:
+            return
+        steps = [dict(item) for item in (run.steps or []) if item.get("step_id") != step_id]
+        if len(steps) >= steps_setting("max_per_run"):
+            return
+        steps.append(dict(step))
+        run.steps = steps
+        session.add(run)
+        await session.commit()
+
+
 async def fail_run(database: Any, run: ChatRun, *, code: str, message: str) -> Optional[ChatRun]:
     """End a live run with an error. None when it moved meanwhile."""
     if run.state not in LIVE_STATES:
@@ -461,6 +558,7 @@ async def sweep(
     now: Optional[datetime] = None,
     process_started: datetime = PROCESS_STARTED,
     temporal_status: Optional[TemporalStatus] = None,
+    temporal_cancel: Optional[TemporalCancel] = None,
 ) -> List[str]:
     """End the live runs nothing will end. Returns their ids."""
     now = now or _utcnow()
@@ -469,7 +567,10 @@ async def sweep(
     ended: List[str] = []
     for run in await live_runs(database):
         try:
-            closed = await _sweep_one(database, run, now, process_started, pickup, longest, temporal_status)
+            if run.state == "stopping":
+                closed = await _sweep_stopping(database, run, now, temporal_cancel)
+            else:
+                closed = await _sweep_one(database, run, now, process_started, pickup, longest, temporal_status)
         except Exception:  # noqa: BLE001 - one bad row must not stop the sweep
             logger.warning("Chat run sweep failed for a run", run_id=run.run_id, exc_info=True)
             continue
@@ -478,6 +579,22 @@ async def sweep(
     if ended:
         logger.info("Ended chat runs nothing would finish", count=len(ended))
     return ended
+
+
+async def _sweep_stopping(
+    database: Any, run: ChatRun, now: datetime, temporal_cancel: Optional[TemporalCancel]
+) -> Optional[ChatRun]:
+    """End a run still stopping ``runs.stop_grace_s`` after Stop, cancelling
+    its workflow: its reply so far, if any, stays."""
+    requested = _aware(run.stop_requested_at) or _aware(run.started_at) or _aware(run.created_at) or now
+    if now - requested < timedelta(seconds=runs_setting("stop_grace_s")):
+        return None
+    if temporal_cancel is not None and run.temporal_workflow_id:
+        try:
+            await temporal_cancel(run.temporal_workflow_id, run.temporal_run_id)
+        except Exception:  # noqa: BLE001 - the run ends either way
+            logger.warning("Could not cancel a stopped run's workflow", run_id=run.run_id, exc_info=True)
+    return await _settle(database, run, await _success_values(database, run, "stopped"))
 
 
 async def _sweep_one(
@@ -529,6 +646,7 @@ __all__ = [
     "fail_run",
     "finish_run",
     "get_run",
+    "is_stopping",
     "lane_run",
     "live_runs",
     "new_run_id",
@@ -536,7 +654,9 @@ __all__ = [
     "publish_cleared",
     "publish_started",
     "publish_terminal",
+    "record_step",
     "reply_uid",
+    "request_stop",
     "runs_by_id",
     "start_run",
     "sweep",

@@ -45,13 +45,20 @@ _DENIED = {"success": False, "error": "access_denied"}
 
 def _wire_run(run: Any) -> Dict[str, Any]:
     """The run a message started or answers, as a message carries it: enough
-    to show how it ended after a reload (a failed run leaves no reply)."""
+    to show how it ended after a reload (a failed run leaves no reply), what
+    the employee did on the way and how long it took."""
     wire: Dict[str, Any] = {"run_id": run.run_id, "state": run.state, "outcome": run.outcome}
     if run.state == "error":
         wire["error"] = {"message": run.error, "code": run.error_code}
         hint = (run.result or {}).get("hint")
         if hint:
             wire["error"]["hint"] = hint
+    if run.steps:
+        wire["steps"] = [dict(step) for step in run.steps]
+    if run.started_at and run.finished_at:
+        started = run.started_at if run.started_at.tzinfo else run.started_at.replace(tzinfo=timezone.utc)
+        finished = run.finished_at if run.finished_at.tzinfo else run.finished_at.replace(tzinfo=timezone.utc)
+        wire["duration_ms"] = max(0, int((finished - started).total_seconds() * 1000))
     return wire
 
 
@@ -302,6 +309,26 @@ async def handle_get_chat_run(data: Dict[str, Any], websocket: WebSocket) -> Dic
     return {"success": True, "run": {**snapshot, "hub_epoch": hub.epoch}}
 
 
+@ws_handler("run_id")
+async def handle_stop_chat_run(data: Dict[str, Any], websocket: WebSocket) -> Dict[str, Any]:
+    """Stop a live run (``ledger.request_stop``). One nothing picked up yet
+    ends ``stopped`` at once; a running one stops itself at its next step,
+    keeping its reply so far. Answers the run's state: ``stopping`` or
+    ``stopped``, ``not_stoppable`` for a run that ended otherwise."""
+    database = container.database()
+    run = await ledger.get_run(database, str(data["run_id"]))
+    if run is None:
+        return {"success": False, "error": "not_found"}
+    try:
+        await authorize_session(database, websocket, run.session_id)
+    except ChatAccessDenied:
+        return dict(_DENIED)
+    run = await ledger.request_stop(database, run.run_id) or run
+    if run.state not in ("stopping", "stopped"):
+        return {"success": False, "error": "not_stoppable", "run_id": run.run_id, "state": run.state}
+    return {"success": True, "run_id": run.run_id, "state": run.state}
+
+
 @ws_handler()
 async def handle_clear_chat_messages(data: Dict[str, Any], websocket: WebSocket) -> Dict[str, Any]:
     """Clear a session's chat, every generation of it, with its runs. For a
@@ -339,6 +366,7 @@ WS_HANDLERS = {
     "chat_subscribe": handle_chat_subscribe,
     "chat_unsubscribe": handle_chat_unsubscribe,
     "get_chat_run": handle_get_chat_run,
+    "stop_chat_run": handle_stop_chat_run,
     "clear_chat_messages": handle_clear_chat_messages,
     "save_chat_message": handle_save_chat_message,
 }

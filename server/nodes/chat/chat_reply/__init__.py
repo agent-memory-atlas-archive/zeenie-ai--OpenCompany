@@ -77,6 +77,9 @@ class ChatReplyNode(ActionNode):
     hide_output_handle = True
     annotations = {"destructive": False, "readonly": False, "open_world": False}
     task_queue = TaskQueue.DEFAULT
+    # The agent wired into this node answers the chat run: its text streams
+    # into the chat as it writes (services/chat/stream.py).
+    answers_chat_run = True
 
     Params = ChatReplyParams
     Output = ChatReplyOutput

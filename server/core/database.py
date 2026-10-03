@@ -138,6 +138,7 @@ class Database:
             await self._migrate_workflow_controls()
             await self._migrate_generation_scoped_runtime_data()
             await self._migrate_chat_messages()
+            await self._migrate_chat_runs()
 
             logger.info("Database initialized successfully")
 
@@ -523,6 +524,21 @@ class Database:
                     ))
         except Exception as exc:
             logger.warning(f"Generation runtime-data migration check failed: {exc}")
+
+    async def _migrate_chat_runs(self):
+        """Give an older ``chat_runs`` table the columns added since."""
+        try:
+            async with self.engine.begin() as conn:
+                result = await conn.execute(text("PRAGMA table_info(chat_runs)"))
+                columns = {row[1] for row in result.fetchall()}
+                if not columns:
+                    return
+                additions = {"stop_requested_at": "DATETIME"}
+                for column, definition in additions.items():
+                    if column not in columns:
+                        await conn.execute(text(f"ALTER TABLE chat_runs ADD COLUMN {column} {definition}"))
+        except Exception as exc:
+            logger.warning(f"Chat run migration check failed: {exc}")
 
     async def _migrate_chat_messages(self):
         """Give older chat rows the columns chat runs need.

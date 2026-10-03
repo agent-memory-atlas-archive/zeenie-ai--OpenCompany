@@ -114,6 +114,25 @@ checks below, even when the carried transcript is what seeds it. If that
 stored row is over the 1 MB seed cap, the resumed run fails with
 `ConversationTooLarge`.
 
+### Stopped turns and unanswered calls
+
+The owner can stop a chat run mid-answer ([Chat Protocol → Streaming, steps
+and Stop](./chat_protocol.md#streaming-steps-and-stop)). The LLM step then
+saves the turn as far as it went, like any other step: the exact sent list,
+plus the partial answer when the model had written something (its text block
+carries `metadata: {"stopped": true}`); with nothing written, the sent list
+alone, so the owner's message stays in the conversation unanswered. A tool call
+of a stopped run gets a result saying it was not run, so the transcript stays
+whole.
+
+A run cancelled while a tool ran (the watchdog cancels a run still stopping
+after the grace; a crash) can leave the last assistant turn with calls that
+have no result, which no provider will continue from. The load therefore
+passes the stored row through `close_unanswered_tool_calls`
+(`services/agent_context/conversation.py`), which answers each open call of the
+latest assistant turn with `UNANSWERED_TOOL_RESULT`, after the results the turn
+already has. A closed conversation is returned unchanged.
+
 ## Transcript size: capped results, cleared old results
 
 The transcript is the `agent.execute_llm_step` input on every turn and the
@@ -297,6 +316,7 @@ workflow, not only the removed Context's agent.
 | 8 | Specialized bridges record the ORIGINAL prompt, never the augmented one. | Recording the rendered transcript nests the conversation inside itself and grows without bound. |
 | 9 | The store never imports `nodes/`; the plugin registers its broadcaster via `register_conversation_listener`, and a listener failure can never fail a save. | Same layering rule as every plugin registry; a UI notification must not break execution. |
 | 10 | External tool results are capped before they enter the transcript; the latest turn is never cleared or summarized; the pressure rules are chosen by the recorded `context_pressure_version`. | Uncapped results bricked every later firing (`errors.md` #28); an unread turn summarized away loses what the model asked for; a replay must schedule the commands it recorded. |
+| 11 | A stopped turn is saved as far as it went, and a load answers any tool call the stored row left open. | A provider refuses a conversation with an unanswered call, so one cancelled run would otherwise break every later firing. |
 
 ## How this broke (August 2026 regression), and why the journal went away
 

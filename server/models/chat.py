@@ -3,7 +3,8 @@
 A run is admitted in the same transaction as the owner's message
 (``services/chat/ledger.py``). It moves ``queued`` (the employee is paused)
 or ``pending`` -> ``running`` -> ``finished`` | ``error`` | ``stopped``, each
-step a compare-and-swap on ``state``. ``kind`` says what started it:
+step a compare-and-swap on ``state``; Stop moves a pending or running run to
+``stopping`` on the way to ``stopped``. ``kind`` says what started it:
 ``message`` (the owner wrote), ``edit``, ``regenerate``, ``action`` (a button
 in generated UI) or ``resume`` (an approved send executing later).
 
@@ -79,6 +80,9 @@ class ChatRun(SQLModel, table=True):
     created_at: datetime = Field(default_factory=_utcnow, sa_column=Column(DateTime(timezone=True), nullable=False))
     started_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
     finished_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
+    #: When the owner pressed Stop; the watchdog ends a run still stopping
+    #: ``runs.stop_grace_s`` later.
+    stop_requested_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
 
 
 class ChatRunPart(SQLModel, table=True):

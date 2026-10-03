@@ -88,6 +88,7 @@ class SerperSearchNode(ActionNode):
     credentials = (SerperCredential,)
     annotations = {"destructive": False, "readonly": True, "open_world": True}
     task_queue = TaskQueue.REST_API
+    chat_step = "Searched the web"
     usable_as_tool = True
 
     Params = SerperSearchParams

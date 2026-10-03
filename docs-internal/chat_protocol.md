@@ -15,8 +15,9 @@ meaning.
 
 Built so far: runs and their storage, the lifecycle events (`started`, `finished`, `failed`), subscriptions,
 `get_chat_messages` v2 (with each message's `run`), `get_chat_run`, the watchdog and the MachinaWorkflow patch (see
-[Runs](#runs)), and the shared chat UI on both hosts (see [Client](#client)). Every other event, handler and part
-below is the contract the later phases build to.
+[Runs](#runs)); the answer streaming as text events, working steps and Stop (see [Streaming, steps and
+Stop](#streaming-steps-and-stop)); and the shared chat UI on both hosts (see [Client](#client)). Every other event,
+handler and part below is the contract the later phases build to.
 
 ## Concepts
 
@@ -53,8 +54,9 @@ internal socket, load the workflow, and compare its owner with the socket's exec
   with `seq` at or below the snapshot's, and buffer events that arrive before the response.
 - Each subscriber has a bounded queue (`hub.subscriber_queue_size` in `server/config/chat_defaults.json`). A socket
   that falls that far behind has its queue replaced by one `custom` `opencompany.resync` per session it follows
-  (`data: {session_id, hub_epoch, name, value}`, no `run_id`); the client then takes fresh snapshots. Merging
-  consecutive text deltas of one segment comes with streaming.
+  (`data: {session_id, hub_epoch, name, value}`, no `run_id`); the client then takes fresh snapshots. Text deltas
+  are batched before they are published (see [Streaming, steps and Stop](#streaming-steps-and-stop)), not merged in
+  the queue.
 - Delivery is in-process: events published by an activity on a worker in another process do not reach sockets here
   yet (a relay is planned).
 - `chat.updated` remains an identity-only broadcast (`{workflow_id, session_id, role}`) that tells every open thread
@@ -70,11 +72,11 @@ Every event's `data` carries `{workflow_id, session_id, run_id, seq, hub_epoch}`
 | RUN_STARTED | `started` | `kind`, `parent_run_id?`, `user_message_id?`, `reply_message_id`, `started_at` |
 | RUN_FINISHED | `finished` | `outcome` (below), `result {reply_message_id?, no_reply?}`, `duration_ms`, `step_count` |
 | RUN_ERROR | `failed` | `message` (safe to show, at most 500 chars), `code`, `hint?`, `requires_user_action?` |
-| STEP_STARTED | `step.started` | `step_id`, `step_name`, `icon?`, `agent_node_id`, `tool_node_id?`, `attempt` |
-| STEP_FINISHED | `step.finished` | `step_id`, `step_name` (the done label), `state` (`done`, `failed`, `skipped`), `detail?`, `duration_ms`, `narration?` |
-| TEXT_MESSAGE_START | `text.started` | `message_id` (segment id `{run_id}.{iteration}.{attempt}`), `role: "assistant"`, `agent_node_id` |
+| STEP_STARTED | `step.started` | `step_id` (the tool call's id), `step_name`, `icon?` |
+| STEP_FINISHED | `step.finished` | `step_id`, `step_name`, `state` (`done`, `failed`, `skipped`), `detail?` (at most 200 chars), `duration_ms`, `narration?` |
+| TEXT_MESSAGE_START | `text.started` | `message_id` (segment id `{run_id}.{iteration}.{attempt}`), `role: "assistant"` |
 | TEXT_MESSAGE_CONTENT | `text.content` | `message_id`, `delta` (never empty) |
-| TEXT_MESSAGE_END | `text.ended` | `message_id`, `final` (bool), `reply_message_id?`, `output_tokens?` |
+| TEXT_MESSAGE_END | `text.ended` | `message_id`, `final` (bool), `reply_message_id?` (with `final: true`) |
 | TOOL_CALL_START | `tool_call.started` | `tool_call_id`, `tool_call_name`, `parent_message_id?`, `label` (sending tools only) |
 | TOOL_CALL_ARGS | `tool_call.args` | `tool_call_id`, `delta` |
 | TOOL_CALL_END | `tool_call.ended` | `tool_call_id` |
@@ -89,9 +91,9 @@ Every event's `data` carries `{workflow_id, session_id, run_id, seq, hub_epoch}`
 `custom` names: `opencompany.segment_discarded` (`{message_id}`: a retried LLM attempt replaces this segment),
 `opencompany.retrying` (`{retry_after?, attempt}`), `opencompany.stopping`, `opencompany.resync`.
 
-**Text segments.** Only the agent that answers the owner streams text. A segment that ends with `final: false`
-accompanied a tool call: the client folds it into the steps as narration. The segment with `final: true` is the
-reply. Text that could still turn out to be `NO_REPLY` or a `<followups>` block is held back on the server and never
+**Text segments.** Only the agent that answers the owner streams text. A segment that ends with `final: false` was
+written beside tool calls (narration, "Let me check the calendar."); the segment with `final: true` is the reply.
+Text that could still turn out to be `NO_REPLY` or a `<followups>` block is held back on the server and never
 streamed.
 
 **Outcomes** (`run.finished`):
@@ -121,7 +123,7 @@ All are WebSocket request/response handlers with snake_case payloads. Failures a
 | `chat_subscribe` | `{session_id}` | `{success, session_id, hub_epoch, active_runs: [RunSnapshot]}` |
 | `chat_unsubscribe` | `{session_id}` | `{success, session_id, hub_epoch}` |
 | `get_chat_run` | `{run_id}` | `{success, run: RunSnapshot}`, or `not_found` |
-| `stop_chat_run` | `{run_id}` or `{session_id}` | `{success, run_id, state}` |
+| `stop_chat_run` | `{run_id}` | `{success, run_id, state: "stopping" \| "stopped"}`; `not_stoppable` (with `state`) for a run that ended otherwise |
 | `edit_chat_message` | `{message_id, text, attachments?, expected_revision}` | `{success, message_id, run_id}` |
 | `regenerate_chat_reply` | `{message_id, expected_revision}` | `{success, run_id}` |
 | `switch_chat_branch` | `{message_id, target_id, expected_revision}` | `{success, thread}` |
@@ -170,7 +172,8 @@ summary adds `kind` (`gate` or `tool_call`), `node_type`, `tool_name`, `tool_cal
 ```
 {id, legacy_id, role, kind, text, message, timestamp, run_key, run_id, parent_id, status, attachments,
  parts, feedback, siblings: {index, count, ids}, editable, client_message_id?,
- run?: {run_id, state, outcome, error?: {message, code, hint?}}}
+ run?: {run_id, state, outcome, error?: {message, code, hint?}, steps?: [{step_id, name, state, detail?,
+        duration_ms?}], duration_ms?}}
 ```
 
 - `id` is the message's stable id (`m_…` for the owner's, `a_<run id>` for a run's reply; rows saved before chat
@@ -178,9 +181,10 @@ summary adds `kind` (`gate` or `tool_call`), `node_type`, `tool_name`, `tool_cal
 - `message` equals `text`; it is kept for older readers.
 - `client_message_id` is echoed on the owner's messages that carried one, so an optimistic row and its saved row
   keep one key.
-- `run` says how the run a message started (or answers) stood when the thread was read: its `state`, `outcome`, and
-  for a failed run the error with the hint the run recorded. It is how a reload still shows that a message went
-  unanswered; while the session is subscribed, the run's events are fresher (see [Client](#client)).
+- `run` says how the run a message started (or answers) stood when the thread was read: its `state`, `outcome`, for
+  a failed run the error with the hint the run recorded, the steps it saved, and once it has ended how long it
+  worked (`duration_ms`). It is how a reload still shows that a message went unanswered and what the employee did;
+  while the session is subscribed, the run's events are fresher (see [Client](#client)).
 - Until branches land, `siblings` always holds the message alone and `editable` is false.
 - `kind`: `text`, `report` (Post to Talk: no parent, not editable), `action` (a button press), `notice`.
 - `status`: `complete`, `stopped`, `error`.
@@ -259,6 +263,43 @@ Approvals are joined live from the approvals store; the part only names them.
   ends the runs nothing will finish (codes above). A pending run's wait (`runs.pickup_timeout_s`) counts from the
   later of its creation and the server's start.
 
+## Streaming, steps and Stop
+
+Settings are in `server/config/chat_defaults.json` (`stream`, `steps`, `runs`).
+
+- **Who streams.** `agent.prepare_payload` gives an agent a `chat_stream` (`services/chat/stream.py`
+  `chat_stream_for`) when the run's `run_scope` reached it, it is not working for another agent (no
+  `parent_node_id`), and its output goes straight to a node whose plugin declares `answers_chat_run` (Reply in Chat).
+  The payload also carries `chat_run_id` for every agent of the run. Both ride the AgentWorkflow's activity inputs
+  only (LLM steps and tool calls), so no workflow patch was needed and recorded histories replay unchanged.
+- **Text.** `agent.execute_llm_step` passes a `ChatStreamEmitter` as the provider's `on_event` sink (providers that
+  declare `streaming` in `llm_defaults.json` stream; for the others the unifier replays the finished response as
+  events: see [Native LLM SDK](./native_llm_sdk.md)). Deltas go out every `stream.flush_ms` or `stream.flush_chars`.
+  A retried attempt first sends `opencompany.segment_discarded` for each earlier attempt's segment. Streaming never
+  changes the step's result.
+- **Steps.** `BaseNode.as_activity` wraps every tool call that carries a `chat_stream` and a `tool_call_id`
+  (`services/chat/steps.py`): `step.started` when it begins, `step.finished` when it ends, saved on the run as it
+  finishes (`ledger.record_step`, at most `steps.max_per_run`). The label is the plugin's `chat_step`
+  ("Searched the web"), else "Used <display name>"; plugins with `chat_step_hidden` (the clock, the checklist) show
+  none, and skill loads (`agent.skill.invoke`) never pass through it. A tool may put a short line in its result as
+  `_step_detail` ("3 events on Saturday"): it is shown under the step and taken out before the model reads the
+  result.
+- **Stop** (`stop_chat_run`, `ledger.request_stop`). A run nothing has picked up (pending, or queued until Resume)
+  ends `stopped` at once and frees the lane; a workflow that picks it up later claims it still `stopped`
+  (`chat_run.start`) and its agent answers nothing. A running run moves to `stopping` (`custom`
+  `opencompany.stopping`) and stops itself:
+  - its agent's model step polls the run every `runs.stop_poll_s` while the provider writes (an activity heartbeat
+    arrives too late to stop a stream mid-sentence), drops the call, and returns what the owner saw so far as the
+    final answer; a step about to start returns at once, before paying for a request;
+  - a tool call not started yet is answered "Not run: the owner stopped this answer." without running;
+  - Reply in Chat saves the partial answer with `status: "stopped"`, and the run finishes with outcome `stopped`.
+  
+  A run still stopping `runs.stop_grace_s` after Stop (a long tool, a lost workflow) is ended by the watchdog, which
+  cancels its Temporal workflow. The conversation keeps the stopped turn: the request and the partial answer (its
+  text block marked `stopped`), or the request alone when nothing was written; a tool call a cancelled run left
+  without a result is answered when the conversation is next loaded (see
+  [Agent Context Flow](./agent_context_flow.md)).
+
 ## Client
 
 `client/src/features/chat/` is the shared chat; only its `index.ts` is public (an ESLint rule keeps the rest
@@ -280,16 +321,24 @@ editor's console pane (`ConsoleChat`, compact, scope `live`) are the two hosts.
   `active_runs` stand in; after it the store alone says which runs are live, and a message whose `run` still reads
   live is read with `get_chat_run` (`useThreadRunReconcile`).
 - **Turns** (`thread/model.ts`): one per message with a divider where `run_key` changes. A run that is going,
-  failed or was stopped shows on its last answer, or on a turn of its own right after its last message before it
-  has answered (a live run whose messages are out of view goes last). Failures whose code only says no answer came
+  failed or was stopped (or finished, while its answer is on the way) shows on its last answer, or on a turn of its
+  own right after its last message before it has answered (a live run whose messages are out of view goes last). Failures whose code only says no answer came
   (`not_delivered`, `timed_out`, `interrupted`) disappear once an answer lands; `reset` and `cleared` never show. A
   message sent from this tab and its saved row share a key (its `client_message_id`), and a run's first answer takes
   the key its run's turn had, so neither remounts.
 - **Sending** (`data/send.ts`): the message shows at once; the server's answer admits its run into the store
   (`queued` or `pending`), so the employee shows working before the run's first event. While the lane is held, Send
-  waits. A refused or failed send takes the message out of the thread and puts its text back in the box
+  is Stop. A refused or failed send takes the message out of the thread and puts its text back in the box
   (`state/composerStore.ts`, a draft per session that survives switching conversations); after a failure in transit
   the draft keeps its `client_message_id`, so sending it again is the same message.
+- **A working run** (`turns/AssistantTurn.tsx`): skeleton lines until text comes; then the latest segment, muted
+  while it is narration, with a caret while it streams (`ReplyMarkdown` renders each finished block once,
+  `markdown/blocks.ts`); a status line saying "Thinking", "Writing · N tok/s" or "Stopping…", with an Esc hint. The
+  steps disclosure (`turns/StepsDisclosure.tsx`) sits on the run's first turn: "Working…" and open while the run
+  works, "Worked for 12s · 3 steps" after; a run read back later starts it closed. A finished run keeps its turn
+  until its saved reply lands in the thread, so the streamed answer and the reply stay one element.
+- **Stop** (`data/stop.ts`): the Stop button, or Esc anywhere in the pane, sends `stop_chat_run` for the lane's run
+  and applies the answer to the store at once; the run's events take it from there.
 
 ## Notes to the employee
 
@@ -319,7 +368,8 @@ and server tests alike:
 | `not_running` | send | The employee is not running and cannot queue messages. |
 | `invalid_request` | send, save | A malformed field (`detail` says which): an empty message, a role other than the owner's, or a bad `client_message_id`. |
 | `read_failed` | get_chat_messages, chat_subscribe | The thread could not be read. Never answered as an empty thread. |
-| `not_found` | get_chat_run | No such run. |
+| `not_found` | get_chat_run, stop_chat_run | No such run. |
+| `not_stoppable` | stop_chat_run | The run ended before Stop reached it; `state` says how. |
 | `conflict` | edit, regenerate, switch, set_ask_first | `expected_revision` is stale. |
 | `not_editable` | edit, regenerate, decide | The message belongs to an older generation, its prefix was compacted, or an edited argument is not editable. |
 | `ui_event_rejected` | send | The element or action does not match the saved spec. |

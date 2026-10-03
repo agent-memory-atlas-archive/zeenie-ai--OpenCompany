@@ -24,4 +24,13 @@ def hub_setting(name: str) -> int:
     return int(load_chat_config()["hub"][name])
 
 
-__all__ = ["CONFIG_PATH", "hub_setting", "load_chat_config", "runs_setting"]
+def stream_setting(name: str) -> float:
+    """``stream.<name>``: how the answer's text is batched into events."""
+    return float(load_chat_config()["stream"][name])
+
+
+def steps_setting(name: str) -> int:
+    return int(load_chat_config()["steps"][name])
+
+
+__all__ = ["CONFIG_PATH", "hub_setting", "load_chat_config", "runs_setting", "steps_setting", "stream_setting"]
