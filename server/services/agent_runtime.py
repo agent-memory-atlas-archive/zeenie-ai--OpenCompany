@@ -33,6 +33,7 @@ from services.llm.protocol import (
     LLMError,
     LLMResponse,
     Message,
+    StreamSink,
     ThinkingConfig,
     ToolCall,
     ToolDef,
@@ -111,12 +112,14 @@ async def run_native_llm_step(
     sdk_max_retries: int = 0,
     explicit_max_retries: int = 2,
     translate_errors: bool = True,
+    on_event: Optional[StreamSink] = None,
 ) -> LLMResponse:
     """Execute one native SDK turn and return its lossless response envelope.
 
     Agent retries are deliberately outside the provider SDK so only failures
     normalized as retryable :class:`LLMError` values are repeated. Temporal
     passes ``explicit_max_retries=0`` and owns activity-level retry itself.
+    ``on_event`` receives the response as it is written (ChatUnifier.chat).
     """
 
     if chat_unifier is None:
@@ -144,6 +147,7 @@ async def run_native_llm_step(
                 sdk_max_retries=max(0, int(sdk_max_retries)),
                 # Preserve structured metadata until this agent-step boundary.
                 translate_errors=False,
+                on_event=on_event,
             )
         except LLMError as error:
             if not error.retryable or attempt + 1 >= attempts:

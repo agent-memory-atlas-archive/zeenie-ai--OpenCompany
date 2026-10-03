@@ -30,6 +30,8 @@ from services.llm.protocol import (
     LLMProvider,
     LLMResponse,
     Message,
+    StreamEvent,
+    StreamSink,
     ThinkingConfig,
     ToolDef,
 )
@@ -93,6 +95,7 @@ class ChatUnifier:
         context_management: Optional[Dict[str, Any]] = None,
         sdk_max_retries: int = 2,
         translate_errors: bool = True,
+        on_event: Optional[StreamSink] = None,
     ) -> LLMResponse:
         """Execute a chat completion against the named provider.
 
@@ -104,23 +107,36 @@ class ChatUnifier:
 
         ``provider`` is a provider reference: a registered id, or a named
         endpoint ``openai_compatible:<slug>`` (RFC-0003 D13).
+
+        ``on_event`` receives the response as it is produced. A provider
+        that declares ``streaming`` in llm_defaults.json streams it; for any
+        other the events come from the finished response, one per kind, so
+        a caller handles both the same way. The response is the same either
+        way.
         """
-        spec = get_provider(split_provider_ref(provider)[0])
+        provider_id = split_provider_ref(provider)[0]
+        spec = get_provider(provider_id)
+        streams = on_event is not None and self._streams(provider_id)
         api_key = self._resolve_credential(provider, api_key)
         entry: Optional[_ClientEntry] = None
         try:
             entry = await self._acquire_client(
                 spec, api_key, provider_ref=provider, sdk_max_retries=sdk_max_retries
             )
-            return await entry.client.chat(
-                messages,
-                model=model,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                thinking=thinking,
-                tools=tools,
-                context_management=context_management,
-            )
+            kwargs: Dict[str, Any] = {
+                "model": model,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "thinking": thinking,
+                "tools": tools,
+                "context_management": context_management,
+            }
+            if streams:
+                kwargs["on_event"] = on_event
+            response = await entry.client.chat(messages, **kwargs)
+            if on_event is not None and not streams:
+                await _replay_response(response, on_event)
+            return response
         except LLMError as error:
             # Raised by provider logic rather than the SDK, e.g. a 2xx that
             # carried an error body instead of a completion. Logged whether
@@ -218,6 +234,13 @@ class ChatUnifier:
         if not blocklist:
             return models
         return [m for m in models if m not in blocklist]
+
+    def _streams(self, provider_id: str) -> bool:
+        """Whether the provider streams its responses (``streaming`` in
+        llm_defaults.json). Declared per provider once its stream is known
+        to report what the finished response does, usage included."""
+        config = (self._defaults.get("providers") or {}).get(provider_id) or {}
+        return config.get("streaming") is True
 
     def is_registered(self, provider: str) -> bool:
         """Cheap probe used by callers that want graceful fallback when a
@@ -451,3 +474,12 @@ class ChatUnifier:
             url=redact_url(getattr(client, "endpoint_url", None)),
             url_source=getattr(client, "url_source", None),
         )
+
+
+async def _replay_response(response: LLMResponse, on_event: StreamSink) -> None:
+    """Hand a finished response to a sink as if it had streamed: its
+    reasoning, then its text, each in one event."""
+    if response.thinking:
+        await on_event(StreamEvent("reasoning", response.thinking))
+    if response.content:
+        await on_event(StreamEvent("text", response.content))

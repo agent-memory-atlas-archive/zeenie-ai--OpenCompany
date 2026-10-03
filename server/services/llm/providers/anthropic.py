@@ -11,6 +11,8 @@ from services.llm.protocol import (
     encode_binary_state,
     LLMResponse,
     Message,
+    StreamEvent,
+    StreamSink,
     ThinkingConfig,
     ToolCall,
     ToolDef,
@@ -54,6 +56,7 @@ class AnthropicProvider:
         thinking: Optional[ThinkingConfig] = None,
         tools: Optional[List[ToolDef]] = None,
         context_management: Optional[Dict[str, Any]] = None,
+        on_event: Optional[StreamSink] = None,
     ) -> LLMResponse:
         system, api_msgs = self._split_system(messages)
         policy = self._model_policy(model)
@@ -130,6 +133,20 @@ class AnthropicProvider:
             stream_ctx = self._client.messages.stream(**params)
 
         async with stream_ctx as stream:
+            if on_event is not None:
+                # The SDK's helper events carry each delta once (the raw
+                # ``content_block_delta`` they come from is skipped), and
+                # ``get_final_message`` still returns the accumulated message.
+                async for event in stream:
+                    kind = getattr(event, "type", None)
+                    if kind == "text":
+                        delta = getattr(event, "text", "") or ""
+                        if delta:
+                            await on_event(StreamEvent("text", delta))
+                    elif kind == "thinking":
+                        delta = getattr(event, "thinking", "") or ""
+                        if delta:
+                            await on_event(StreamEvent("reasoning", delta))
             resp = await stream.get_final_message()
         return self._normalize(resp, model)
 

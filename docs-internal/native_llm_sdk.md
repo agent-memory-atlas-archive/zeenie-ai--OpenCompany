@@ -212,6 +212,7 @@ class LLMProvider(Protocol):
         max_tokens: int = 4096,
         thinking: Optional[ThinkingConfig] = None,
         tools: Optional[List[ToolDef]] = None,
+        on_event: Optional[StreamSink] = None,
     ) -> LLMResponse: ...
 
     async def fetch_models(self, api_key: str) -> List[str]: ...
@@ -235,6 +236,37 @@ class LLMResponse:
 `assistant_message` is the durable source of truth. The flat `content`,
 `thinking`, and `tool_calls` fields remain convenience views; `raw` is never
 written to memory or Temporal history.
+
+### Streaming (`on_event`)
+
+`chat()` takes an optional `on_event: StreamSink`, an async callable that
+receives each `StreamEvent(kind, delta)` (`kind` is `text` or `reasoning`) while
+the response is written. Streaming never changes the response: the provider
+still returns the whole `LLMResponse` it would have returned without a sink,
+and the text deltas, joined, are its `content`. The chat answer of an employee
+streams this way (see [Chat Protocol](./chat_protocol.md)).
+
+A provider streams only when its `llm_defaults.json` block declares
+`"streaming": true` (today `anthropic` and `openai`); `ChatUnifier._streams`
+reads the flag, so no code branches on a provider name. For every other
+provider the unifier calls `chat()` without a sink and replays the finished
+response into it (reasoning, then text), so a caller sees the same events
+either way, only later. How each declared provider streams:
+
+- **Anthropic** iterates the `messages.stream(...)` context it already opened
+  (`text` and `thinking` events), then takes `get_final_message()` as before.
+- **OpenAI chat completions** call `create(stream=True, stream_options=
+  {"include_usage": True})` and fold the chunks with the SDK's own
+  `ChatCompletionStreamState`, whose `current_completion_snapshot` is parsed
+  exactly like a non-streamed completion (the `.stream()` helper is not used:
+  it insists on strict tools and raises on `length`).
+- **OpenAI Responses** call `responses.create(stream=True)`, send
+  `response.output_text.delta` and `response.reasoning_summary_text.delta`, and
+  return the terminal event's `response` (`completed`, `incomplete` or
+  `failed`); a stream that ends without one raises a retryable connection error.
+
+Turning streaming on for another provider means declaring the flag after a
+recorded-stream test shows its response is unchanged (`tests/llm/test_streaming.py`).
 
 ## Registry, Unifier, and Lazy SDK Clients
 

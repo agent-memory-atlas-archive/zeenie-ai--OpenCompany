@@ -18,6 +18,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import (
     Any,
+    Awaitable,
+    Callable,
     Dict,
     Iterable,
     List,
@@ -102,6 +104,24 @@ class ThinkingConfig:
     # 2.5-era models (400 INVALID_ARGUMENT).
     level: Optional[str] = None
     format: str = "parsed"
+
+
+@dataclass(frozen=True)
+class StreamEvent:
+    """A piece of a response as the provider produces it.
+
+    ``kind`` is ``text`` (answer text) or ``reasoning`` (thinking text).
+    Streaming never changes the response: the provider still returns the
+    whole :class:`LLMResponse` it would have returned without a sink, and
+    the deltas, joined, are that response's text.
+    """
+
+    kind: str
+    delta: str
+
+
+#: Receives each :class:`StreamEvent` while a response streams.
+StreamSink = Callable[[StreamEvent], Awaitable[None]]
 
 
 @dataclass
@@ -842,6 +862,11 @@ class LLMProvider(Protocol):
         thinking: Optional[ThinkingConfig] = None,
         tools: Optional[List[ToolDef]] = None,
         context_management: Optional[Dict[str, Any]] = None,
-    ) -> LLMResponse: ...
+        on_event: Optional[StreamSink] = None,
+    ) -> LLMResponse:
+        """One turn. A provider that streams (``streaming`` in
+        llm_defaults.json) hands each delta to ``on_event`` as it arrives and
+        still returns the same response; the others never receive one."""
+        ...
 
     async def fetch_models(self, api_key: str) -> List[str]: ...
