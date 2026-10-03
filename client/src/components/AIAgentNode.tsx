@@ -7,6 +7,7 @@ import { useAppStore } from '../store/useAppStore';
 import { useAppTheme } from '../hooks/useAppTheme';
 import { useNodeStatus } from '../contexts/WebSocketContext';
 import { useNodeSpec } from '../lib/nodeSpec';
+import { AGENT_PHASE } from '../lib/agentPhases';
 import { NodeIcon } from '../assets/icons';
 import { Badge } from '@/components/ui/badge';
 import EditableNodeLabel from './ui/EditableNodeLabel';
@@ -25,8 +26,8 @@ const PHASE_CONFIG: Record<string, { icon: string; label: string; color: string 
   retry_wait: { icon: '⏳', label: 'Retrying automatically…', color: 'var(--warning)' },
   executing_tool: { icon: '⚡', label: 'Using Tool', color: 'var(--node-trigger)' },
   tool_completed: { icon: '✓', label: 'Tool Done', color: 'var(--success)' },
-  loading_skill: { icon: '📚', label: 'Loading Skill', color: 'var(--node-agent)' },
-  skill_loaded: { icon: '✓', label: 'Skill Loaded', color: 'var(--success)' },
+  [AGENT_PHASE.loadingSkill]: { icon: '📚', label: 'Loading Skill', color: 'var(--node-agent)' },
+  [AGENT_PHASE.skillLoaded]: { icon: '✓', label: 'Skill Loaded', color: 'var(--success)' },
   saving_memory: { icon: '💾', label: 'Saving Memory', color: 'var(--node-agent)' },
 };
 

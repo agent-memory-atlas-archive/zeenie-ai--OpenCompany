@@ -13,6 +13,11 @@ logger = get_logger(__name__)
 
 MAX_RESOURCE_CHARS = 16_000
 MAX_SEARCH_MATCHES = 50
+# The agent node's `data.phase` while a skill loads and once it has. The
+# canvas reads the same words from client/src/lib/agentPhases.ts;
+# tests/test_agent_phase_names.py keeps the two equal.
+SKILL_LOADING_PHASE = "loading_skill"
+SKILL_LOADED_PHASE = "skill_loaded"
 _loaded: Dict[Tuple[str, str, str, str], str] = {}
 _turn_activity: Dict[Tuple[str, str, str], Dict[str, Dict[str, Any]]] = {}
 
@@ -149,7 +154,7 @@ async def _event(config: Dict[str, Any], descriptor: Dict[str, Any], action: str
     public = [{k: v for k, v in item.items() if k != "master_skill_node_id"} for item in activities.values()]
     broadcaster = get_status_broadcaster()
     payload = {
-        "phase": "loading_skill" if state == "loading" else "skill_loaded",
+        "phase": SKILL_LOADING_PHASE if state == "loading" else SKILL_LOADED_PHASE,
         "active_skills": public,
         "last_capability": {"kind": "skill", "name": name, "state": state},
     }

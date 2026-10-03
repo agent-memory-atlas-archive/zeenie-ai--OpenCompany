@@ -32,6 +32,7 @@ import {
 import { WS_CLOSE, WS_RECONNECT } from '../lib/connectionConfig';
 import { startWebSocketHeartbeat } from '../lib/webSocketHeartbeat';
 import { todoQueryKeyFromEvent } from '../lib/todoQuery';
+import { AGENT_PHASE } from '../lib/agentPhases';
 import { useCanvasDockStore } from '../stores/canvasDockStore';
 // Cycle note: lib/nodeSpec imports useWebSocket from this module. Safe in
 // both evaluation orders because neither side calls the other's binding at
@@ -1508,7 +1509,7 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
               ];
               nextData = {
                 ...nextData,
-                phase: payload.state === 'loading' ? 'loading_skill' : 'skill_loaded',
+                phase: payload.state === 'loading' ? AGENT_PHASE.loadingSkill : AGENT_PHASE.skillLoaded,
                 active_skills: nextSkills,
                 last_capability: {
                   kind: 'skill',

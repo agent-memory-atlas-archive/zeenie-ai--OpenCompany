@@ -15,6 +15,7 @@ import {
 } from 'reactflow';
 import { featureFlags } from './lib/featureFlags';
 import { deriveCanvasLock } from './lib/canvasLock';
+import { AGENT_PHASE } from './lib/agentPhases';
 import { prefetchAllNodeSpecs, listCachedNodeSpecs, cachedNodeSpecTypesKey } from './lib/nodeSpec';
 import AIAgentNode from './components/AIAgentNode';
 import SquareNode from './components/SquareNode';
@@ -487,7 +488,7 @@ const DashboardContent: React.FC = () => {
         // Skill connection highlights during skill loading phase (Zeenie)
         // Skills provide context to LLM, so highlight only when loading skills
         else if (isSkillConnection) {
-          if (phase === 'loading_skills') {
+          if (phase === AGENT_PHASE.loadingSkill) {
             className = 'skill-active';
           }
         }
