@@ -1,10 +1,15 @@
 """Approval gate: hold a draft until the owner sends or discards it.
 
-An employee that asks before sending anything answers through ``agent ->
-approvalGate -> reply``. The gate records the agent's draft (who it goes
-to, what it says), shows it on the employee's card, and waits. Send lets
-the draft (or the owner's edit of it) through; Discard, an expired draft
-or a Reset lets nothing through.
+An employee answers through ``agent -> approvalGate -> reply``. The gate
+records the agent's draft (who it goes to, what it says), shows it on the
+employee's card, and waits. Send lets the draft (or the owner's edit of it)
+through once the Undo window has passed; Discard (once Restore can no longer
+bring it back), an expired draft or a Reset lets nothing through.
+
+The workflow's Ask first rule is read live (services/approvals/rules.py):
+with it off, the draft goes straight through and its row records that it
+went without asking (``approved_by: auto``), so the owner still sees it. A
+workflow with no rule (one built in the editor) always asks.
 
 The wait is durable. Its whole state is one ``approval_requests`` row,
 found again by an idempotency key on every attempt: on Temporal the
@@ -30,7 +35,7 @@ from typing import Any, Optional, Tuple
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from core.logging import get_logger
-from services.approvals import store, waiter
+from services.approvals import rules, store, waiter
 from services.approvals.contract import APPROVAL_GATE_TYPE, DEFAULT_TIMEOUT_HOURS, NO_REPLY
 from services.approvals.listeners import change_of, notify_approval_changed
 from services.plugin import ActionNode, NodeContext, Operation, TaskQueue
@@ -89,7 +94,7 @@ class ApprovalGateParams(BaseModel):
 
 class ApprovalGateOutput(BaseModel):
     approved: bool = False
-    #: pending | approved | discarded | expired | cancelled | skipped
+    #: approved | discarded | expired | cancelled | skipped
     status: str = "skipped"
     skipped: bool = False
     text: str = ""
@@ -98,6 +103,8 @@ class ApprovalGateOutput(BaseModel):
     recipient_label: str = ""
     approval_id: Optional[str] = None
     edited: bool = False
+    #: It went without asking: Ask first was off.
+    automatic: bool = False
 
 
 def _identity(ctx: NodeContext) -> Tuple[str, str]:
@@ -127,7 +134,12 @@ def _outcome(row: Any) -> ApprovalGateOutput:
         recipient_label=row.recipient_label if approved else "",
         approval_id=row.id,
         edited=bool(row.edited) if approved else False,
+        automatic=approved and row.approved_by == "auto",
     )
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 def _worker_shutting_down() -> bool:
@@ -185,47 +197,84 @@ class ApprovalGateNode(ActionNode):
 
         database = container.database()
         runtime, key = _identity(ctx)
-        now = datetime.now(timezone.utc)
-        row, created = await store.get_or_create(
-            database,
-            idempotency_key=key,
-            fields={
-                "owner_id": ctx.user_id or "owner",
-                "workflow_id": ctx.workflow_id or "",
-                "node_id": ctx.node_id,
-                "generation": int(ctx.raw.get("generation") or 0),
-                "execution_id": ctx.execution_id,
-                "runtime": runtime,
-                "channel": params.channel,
-                "recipient": params.recipient,
-                "recipient_label": params.recipient_label,
-                "subject": params.subject or None,
-                "draft_text": draft[: params.max_length],
-                "context_excerpt": params.context_excerpt or None,
-                "max_length": params.max_length,
-                "expires_at": now + timedelta(hours=params.timeout_hours),
-            },
-        )
+        now = _utcnow()
+        fields = {
+            "owner_id": ctx.user_id or "owner",
+            "workflow_id": ctx.workflow_id or "",
+            "node_id": ctx.node_id,
+            "generation": int(ctx.raw.get("generation") or 0),
+            "execution_id": ctx.execution_id,
+            "runtime": runtime,
+            "channel": params.channel,
+            "recipient": params.recipient,
+            "recipient_label": params.recipient_label,
+            "subject": params.subject or None,
+            "draft_text": draft[: params.max_length],
+            "context_excerpt": params.context_excerpt or None,
+            "max_length": params.max_length,
+            "expires_at": now + timedelta(hours=params.timeout_hours),
+        }
+        if await store.get_by_key(database, key) is None and await rules.ask_first(database, ctx.workflow_id) is False:
+            # Ask first is off: it goes now, and the card says it went.
+            fields.update(
+                status="approved",
+                approved_by="auto",
+                decided_at=now,
+                consumed_at=now,
+                final_text=draft[: params.max_length],
+                final_subject=params.subject or None,
+            )
+        row, created = await store.get_or_create(database, idempotency_key=key, fields=fields)
         if created:
-            await notify_approval_changed(change_of(row, "requested"))
+            await notify_approval_changed(change_of(row, "decided" if row.status == "approved" else "requested"))
         if row.status == "pending":
             await _show_waiting(ctx, row)
-        while row.status == "pending":
-            expires = row.expires_at
-            if expires is not None:
-                expires = expires if expires.tzinfo else expires.replace(tzinfo=timezone.utc)
-            if expires is not None and datetime.now(timezone.utc) >= expires:
-                try:
-                    row = await store.settle(database, row.id, expected_revision=row.revision, status="expired")
-                    await notify_approval_changed(change_of(row, "expired"))
-                except store.ApprovalConflict:
-                    row = await store.get(database, row.id) or row
-                continue
+        row = await self._wait(database, row)
+        return _outcome(row)
+
+    async def _wait(self, database: Any, row: Any) -> Any:
+        """Wait until the row settles for this gate: approved and past its
+        Undo window (then it is handed on), discarded past Restore, expired
+        or cancelled."""
+        while True:
+            now = _utcnow()
+            if row.status == "pending":
+                expires = store.aware(row.expires_at)
+                if expires is not None and now >= expires:
+                    try:
+                        row = await store.settle(database, row.id, expected_revision=row.revision, status="expired")
+                        await notify_approval_changed(change_of(row, "expired"))
+                    except store.ApprovalConflict:
+                        row = await store.get(database, row.id) or row
+                    continue
+                wait = POLL_SECONDS
+            elif row.status == "approved" and row.consumed_at is None:
+                grace = store.aware(row.grace_until)
+                if grace is None or now >= grace:
+                    try:
+                        return await store.transition(
+                            database,
+                            row.id,
+                            expected_revision=row.revision,
+                            from_statuses=("approved",),
+                            status="approved",
+                            values={"consumed_at": now},
+                        )
+                    except store.ApprovalConflict:
+                        row = await store.get(database, row.id) or row
+                        continue
+                wait = min(POLL_SECONDS, (grace - now).total_seconds())
+            elif row.status == "discarded":
+                restore = store.aware(row.restore_until)
+                if restore is None or now >= restore:
+                    return row
+                wait = min(POLL_SECONDS, (restore - now).total_seconds())
+            else:
+                return row
             if _worker_shutting_down():
                 raise NodeWaitInterrupted("worker shutting down while a draft waits")
-            await waiter.wait_for_change(row.id, POLL_SECONDS)
+            await waiter.wait_for_change(row.id, max(0.01, wait))
             row = await store.get(database, row.id) or row
-        return _outcome(row)
 
     @classmethod
     async def reset_execution_state(
@@ -251,15 +300,5 @@ class ApprovalGateNode(ActionNode):
 __all__ = ["ApprovalGateNode", "ApprovalGateOutput", "ApprovalGateParams"]
 
 
-# Plugin-owned side channels: the owner's list and decisions, and the
-# broadcast every change produces.
-from services.approvals.listeners import register_approval_listener  # noqa: E402
-from services.workflow_storage.hooks import register_workflow_deleted_hook  # noqa: E402
-from services.ws_handler_registry import register_ws_handlers  # noqa: E402
-
-from ._events import broadcast_approval_change  # noqa: E402
-from ._handlers import WS_HANDLERS, on_workflow_deleted  # noqa: E402
-
-register_ws_handlers(WS_HANDLERS)
-register_approval_listener(broadcast_approval_change)
-register_workflow_deleted_hook(on_workflow_deleted)
+# The owner's side (listing and deciding drafts, the approval_lifecycle
+# broadcast, the cleanup on workflow delete) lives in services/approvals.

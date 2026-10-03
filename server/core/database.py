@@ -56,7 +56,9 @@ from models.employees import (  # noqa: F401 - registers SQLModel tables
     WorkflowRunRecord,
 )
 from models.approvals import (  # noqa: F401 - registers SQLModel tables
+    ApprovalDecision,
     ApprovalRequest,
+    WorkflowRule,
 )
 from models.chat import (  # noqa: F401 - registers SQLModel tables
     ChatNote,
@@ -140,6 +142,7 @@ class Database:
             await self._migrate_generation_scoped_runtime_data()
             await self._migrate_chat_messages()
             await self._migrate_chat_runs()
+            await self._migrate_approvals()
 
             logger.info("Database initialized successfully")
 
@@ -545,6 +548,55 @@ class Database:
                             await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {definition}"))
         except Exception as exc:
             logger.warning(f"Chat run migration check failed: {exc}")
+
+    async def _migrate_approvals(self):
+        """Give an older ``approval_requests`` table the columns approvals v2
+        added (held tool calls, Undo and Restore, outcomes). A draft approved
+        before them was handed on when it was decided, so it gets that as
+        ``consumed_at`` and never reads as still undoable."""
+        columns_added = {
+            "kind": "VARCHAR(20) NOT NULL DEFAULT 'gate'",
+            "action": "VARCHAR(200)",
+            "details": "JSON",
+            "node_type": "VARCHAR(100)",
+            "tool_node_id": "VARCHAR(255)",
+            "tool_call_id": "VARCHAR(255)",
+            "agent_node_id": "VARCHAR(255)",
+            "run_id": "VARCHAR(64)",
+            "ui_part_id": "VARCHAR(64)",
+            "node_data": "JSON",
+            "args": "JSON",
+            "original_args": "JSON",
+            "body_field": "VARCHAR(100)",
+            "subject_field": "VARCHAR(100)",
+            "approved_by": "VARCHAR(20)",
+            "grace_until": "DATETIME",
+            "restore_until": "DATETIME",
+            "consumed_at": "DATETIME",
+            "claim_token": "VARCHAR(64)",
+            "outcome": "VARCHAR(20)",
+            "outcome_error": "VARCHAR(1000)",
+            "outcome_at": "DATETIME",
+        }
+        try:
+            async with self.engine.begin() as conn:
+                result = await conn.execute(text("PRAGMA table_info(approval_requests)"))
+                columns = {row[1] for row in result.fetchall()}
+                if not columns:
+                    return
+                for column, definition in columns_added.items():
+                    if column not in columns:
+                        await conn.execute(text(f"ALTER TABLE approval_requests ADD COLUMN {column} {definition}"))
+                if "consumed_at" not in columns:
+                    await conn.execute(text(
+                        "UPDATE approval_requests SET consumed_at = COALESCE(decided_at, updated_at) WHERE status = 'approved'"
+                    ))
+                if "run_id" not in columns:
+                    await conn.execute(text(
+                        "CREATE INDEX IF NOT EXISTS ix_approval_requests_run_id ON approval_requests(run_id)"
+                    ))
+        except Exception as exc:
+            logger.warning(f"Approval migration check failed: {exc}")
 
     async def _migrate_chat_messages(self):
         """Give older chat rows the columns chat runs need.

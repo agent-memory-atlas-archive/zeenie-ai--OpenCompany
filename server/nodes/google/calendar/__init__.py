@@ -8,6 +8,7 @@ from typing import List, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 from services.plugin import ActionNode, NodeContext, Operation, TaskQueue
+from services.plugin.approval import ApprovalSpec
 
 from .._credentials import GoogleCredential
 
@@ -111,6 +112,18 @@ class CalendarNode(ActionNode):
     credentials = (GoogleCredential,)
     task_queue = TaskQueue.REST_API
     usable_as_tool = True
+    # An event change that notifies its guests reaches people outside.
+    approval = ApprovalSpec(
+        channel="Google Calendar",
+        action="Send calendar invites",
+        operations=frozenset({"create", "update", "delete"}),
+        when=lambda data: (data.get("send_updates") or "all") != "none"
+        and (bool(str(data.get("attendees") or "").strip()) or data.get("operation") in ("update", "delete")),
+        recipient=("attendees",),
+        recipient_otherwise="the event's guests",
+        body=("description", "update_description"),
+        details=(("Event", "title"), ("Starts", "start_time"), ("Ends", "end_time"), ("Where", "location")),
+    )
 
     Params = CalendarParams
     Output = CalendarOutput

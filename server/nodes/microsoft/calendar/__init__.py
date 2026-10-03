@@ -18,6 +18,7 @@ from typing import List, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 from services.plugin import ActionNode, NodeContext, NodeUserError, Operation, TaskQueue
+from services.plugin.approval import ApprovalSpec
 
 from .._base import graph_request, mailbox_base, track_microsoft_usage
 from .._credentials import MicrosoftCredential
@@ -136,6 +137,16 @@ class CalendarNode(ActionNode):
     annotations = {"destructive": False, "readonly": False, "open_world": True}
     task_queue = TaskQueue.REST_API
     usable_as_tool = True
+    # An event with attendees sends them invites.
+    approval = ApprovalSpec(
+        channel="Outlook Calendar",
+        action="Send meeting invites",
+        operations=frozenset({"create", "update"}),
+        when=lambda data: bool(str(data.get("attendees") or "").strip()),
+        recipient=("attendees",),
+        body=("body", "update_body"),
+        details=(("Event", "title"), ("Starts", "start_time"), ("Ends", "end_time"), ("Where", "location")),
+    )
 
     Params = CalendarParams
     Output = CalendarOutput

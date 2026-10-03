@@ -13,6 +13,7 @@ from typing import Any, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 from services.plugin import ActionNode, NodeContext, Operation, TaskQueue
+from services.plugin.approval import ApprovalSpec
 
 
 class WhatsAppSendParams(BaseModel):
@@ -278,6 +279,17 @@ class WhatsAppSendNode(ActionNode):
     annotations = {"destructive": False, "readonly": False, "open_world": True}
     task_queue = TaskQueue.MESSAGING
     usable_as_tool = True
+    # While the owner asks first, a message the employee sends as a tool
+    # call waits for their OK on a card (services/approvals/tool_calls.py).
+    approval = ApprovalSpec(
+        channel="WhatsApp",
+        action="Send a WhatsApp message",
+        recipient=("phone", "group_id", "channel_jid"),
+        to_owner=lambda data: (data.get("recipient_type") or "self") == "self",
+        body=("message", "caption"),
+        details=(("File", "file_path"), ("Link", "media_url")),
+        max_length=4096,
+    )
 
     Params = WhatsAppSendParams
     Output = WhatsAppSendOutput

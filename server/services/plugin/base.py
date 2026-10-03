@@ -288,6 +288,13 @@ class BaseNode:
     chat_step_hidden: ClassVar[bool] = False
     chat_sources: ClassVar[bool] = False
 
+    # ``approval``: an ``ApprovalSpec`` (services/plugin/approval.py) for a
+    # tool that reaches someone outside: which calls send, and what the
+    # owner's card shows. While the workflow asks first, an agent's call
+    # that sends is held for the owner instead of running
+    # (services/approvals/tool_calls.py).
+    approval: ClassVar[Optional[Any]] = None
+
     # Set by __init_subclass__: {op_name: OperationSpec}
     _operations: ClassVar[Dict[str, OperationSpec]] = {}
     # Flag so concrete subclasses auto-register; abstract kinds don't.
@@ -1123,6 +1130,36 @@ class BaseNode:
                 return result
             chat_step = chat_steps.begin(context, cls)
 
+            # Approvals (services/approvals/tool_calls.py): a tool call that
+            # sends waits for the owner while the workflow asks first, and a
+            # send the owner approved runs only under its claim.
+            from services.approvals import tool_calls as approval_calls
+
+            checked = await approval_calls.check(context, cls)
+            if checked.result is not None:
+                result = {
+                    "node_id": node_id,
+                    "node_type": cls.type,
+                    "execution_id": execution_id,
+                    "timestamp": datetime.now().isoformat(),
+                    **checked.result,
+                }
+                held = result.get("success") is not False
+                await chat_steps.end(chat_step, state="done" if held else "failed", detail="Waiting for your OK" if result.get("approval_id") else None)
+                await broadcaster.update_node_status(
+                    node_id,
+                    "success" if held else "error",
+                    {"held": bool(result.get("approval_id")), "execution_id": execution_id}
+                    if held
+                    else {"error": result.get("error"), "execution_id": execution_id},
+                    workflow_id=workflow_id,
+                )
+                return result
+            if checked.node_data is not None:
+                node_data = checked.node_data
+            if checked.tool_args is not None:
+                context = {**context, "tool_args": checked.tool_args}
+
             # Broadcast executing — UI cyan-glow.
             await broadcaster.update_node_status(
                 node_id,
@@ -1225,6 +1262,8 @@ class BaseNode:
                 success, payload, error = cls.interpret_result(result)
                 if success:
                     await chat_steps.number_sources(context, cls, result)
+                if checked.record is not None:
+                    await checked.record(result)
                 if chat_step is not None and not (
                     not success and result.get("error_type") == NODE_WAIT_INTERRUPTED
                 ):

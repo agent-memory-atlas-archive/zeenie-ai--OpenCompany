@@ -32,6 +32,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serial
 
 from core.logging import get_logger
 from services.plugin import NodeContext, Operation, TaskQueue, ToolNode
+from services.plugin.approval import ApprovalSpec
 from services.plugin.base import NodeUserError
 from services.plugin.scaling import RetryPolicy
 
@@ -352,6 +353,13 @@ class BrowserNode(ToolNode):
     ui_hints = {"isBrowserPanel": True, "isConfigNode": False}
     annotations = {"destructive": True, "readonly": False, "open_world": True}
     task_queue = TaskQueue.BROWSER
+    # A page can do anything its logins allow; while the owner asks first
+    # it only reads, and hands changes to them (request_user).
+    approval = ApprovalSpec(
+        channel="Web browser",
+        action="Use the web browser",
+        restrict_while_asking={"interaction": "read_only"},
+    )
     retry_policy = RetryPolicy(maximum_attempts=3)
     # Long enough for request_user on a workflow node (up to 30 min); also
     # turns on the base 30 s heartbeat loop while a step runs.

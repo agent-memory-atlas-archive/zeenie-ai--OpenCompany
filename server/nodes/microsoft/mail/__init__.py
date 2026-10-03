@@ -23,6 +23,7 @@ from typing import List, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 from services.plugin import ActionNode, NodeContext, NodeUserError, Operation, TaskQueue
+from services.plugin.approval import ApprovalSpec
 
 from .._base import graph_request, mailbox_base, track_microsoft_usage, write_attachment_bytes
 from .._credentials import MicrosoftCredential
@@ -166,6 +167,18 @@ class MailNode(ActionNode):
     annotations = {"destructive": False, "readonly": False, "open_world": True}
     task_queue = TaskQueue.REST_API
     usable_as_tool = True
+    # Which mailbox sends is the node's setting, never the model's choice.
+    server_controlled_fields = frozenset({"mailbox"})
+    approval = ApprovalSpec(
+        channel="Outlook",
+        action="Send an email",
+        operations=frozenset({"send", "reply"}),
+        recipient=("to",),
+        recipient_otherwise="the sender",
+        body=("body", "comment"),
+        subject="subject",
+        details=(("Cc", "cc"), ("Bcc", "bcc")),
+    )
 
     Params = MailParams
     Output = MailOutput

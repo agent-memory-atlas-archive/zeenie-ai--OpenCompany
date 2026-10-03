@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from services.plugin import ActionNode, NodeContext, NodeUserError, Operation, TaskQueue
+from services.plugin.approval import ApprovalSpec
 
 from ._base import (
     graph_get,
@@ -403,6 +404,27 @@ class WhatsAppBusinessSendNode(ActionNode):
     annotations = {"destructive": False, "readonly": False, "open_world": True}
     task_queue = TaskQueue.MESSAGING
     usable_as_tool = True
+    approval = ApprovalSpec(
+        channel="WhatsApp Business",
+        action="Send a WhatsApp message",
+        operations=frozenset(
+            {
+                "send_text",
+                "send_media",
+                "send_template",
+                "send_buttons",
+                "send_list",
+                "send_cta_url",
+                "send_reaction",
+                "send_location",
+                "send_contacts",
+            }
+        ),
+        recipient=("to",),
+        body=("text", "body", "caption"),
+        details=(("Template", "template_name"), ("Link", "media_url")),
+        max_length=4096,
+    )
 
     # ToolInput / server_controlled_fields are deliberately NOT declared.
     # They are ToolNode extensions; on a dual-purpose ActionNode they are

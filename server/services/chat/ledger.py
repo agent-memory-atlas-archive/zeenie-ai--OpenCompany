@@ -160,6 +160,13 @@ async def runs_by_id(database: Any, run_ids: List[str]) -> Dict[str, ChatRun]:
         return {run.run_id: run for run in result.scalars().all()}
 
 
+async def session_run_ids(database: Any, session_id: str) -> List[str]:
+    """Every run of a session, live or ended."""
+    async with database.get_session() as session:
+        result = await session.execute(select(ChatRun.run_id).where(ChatRun.session_id == session_id))
+        return [str(run_id) for run_id in result.scalars().all()]
+
+
 async def live_runs(database: Any, session_id: Optional[str] = None) -> List[ChatRun]:
     """Live runs, oldest first: one session's, or every session's."""
     async with database.get_session() as session:
@@ -713,6 +720,7 @@ __all__ = [
     "reply_uid",
     "request_stop",
     "runs_by_id",
+    "session_run_ids",
     "start_run",
     "sweep",
 ]

@@ -90,6 +90,10 @@ from services.graph_build import (
 )
 
 BUILDER_VERSION = 2
+#: The first builder whose graphs follow the live Ask first rule (every app
+#: reply behind a gate, sending tools attached and held per call). Older
+#: graphs need Apply for a changed rule to take full effect.
+LIVE_RULE_BUILDER_VERSION = 3
 
 AGENT_TYPE = "aiAgent"
 CHAT_TRIGGER_TYPE = "chatTrigger"
@@ -806,6 +810,7 @@ def build_employee_graph(inputs: BuildInputs) -> BuiltEmployee:
 __all__ = [
     "APPROVED_CONDITION",
     "BUILDER_VERSION",
+    "LIVE_RULE_BUILDER_VERSION",
     "BuildError",
     "BuildInputs",
     "BuiltEmployee",

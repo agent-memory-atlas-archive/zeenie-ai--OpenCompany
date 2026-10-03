@@ -1,0 +1,237 @@
+"""A tool call that sends, while the workflow asks first: held as a draft
+(once, however often the activity retries), shown in the chat it was made
+in, never with the identity the model chose; run as usual with no rule, run
+and recorded with Ask first off; refused or restricted for tools that
+cannot wait; sent after Send, once, under its claim."""
+
+from __future__ import annotations
+
+from types import SimpleNamespace
+
+import pytest
+
+from services.approvals import execution, rules, store, tool_calls
+from services.approvals.handlers import handle_decide_approval
+from services.node_registry import get_node_class
+
+pytestmark = pytest.mark.asyncio
+
+SOCKET = SimpleNamespace(scope={"path": "/ws/status"}, state=SimpleNamespace(user_id="owner"))
+
+
+def call(node_type="whatsappSend", tool_args=None, node_data=None, **extra):
+    args = tool_args if tool_args is not None else {"recipient_type": "phone", "phone": "447700900123", "message": "Running late, there at 10."}
+    return {
+        "node_id": f"wf:{node_type}:1",
+        "node_type": node_type,
+        "workflow_id": "wf",
+        "execution_id": "wf:execution:1",
+        "user_id": "owner",
+        "parent_node_id": "wf:aiAgent:1",
+        "tool_call_id": "call_1",
+        "node_data": {**(node_data or {"message_type": "text"}), **args},
+        "tool_args": args,
+        **extra,
+    }
+
+
+@pytest.fixture
+def nodes_loaded():
+    import nodes  # noqa: F401 - the plugin registry
+
+    return get_node_class
+
+
+async def test_a_workflow_without_a_rule_runs_its_calls(harness, nodes_loaded):
+    checked = await tool_calls.check(call(), get_node_class("whatsappSend"))
+    assert checked is tool_calls.RUN
+    assert await store.list_approvals(harness.database, status="pending") == []
+
+
+async def test_asking_first_holds_the_call_once(harness, nodes_loaded):
+    await rules.set_ask_first(harness.database, "wf", True)
+    node_cls = get_node_class("whatsappSend")
+    first = await tool_calls.check(call(), node_cls)
+    again = await tool_calls.check(call(), node_cls)
+    assert first.result["result"]["status"] == "waiting_for_owner"
+    assert first.result["approval_id"] == again.result["approval_id"]
+    (row,) = await store.list_approvals(harness.database, status="pending")
+    assert (row.kind, row.channel, row.recipient, row.draft_text, row.body_field) == (
+        "tool_call",
+        "WhatsApp",
+        "447700900123",
+        "Running late, there at 10.",
+        "message",
+    )
+    assert row.tool_call_id == "call_1" and row.agent_node_id == "wf:aiAgent:1" and row.node_type == "whatsappSend"
+    # Only calls that send are held, and only an agent's.
+    assert await tool_calls.check({**call(), "tool_call_id": None}, node_cls) is tool_calls.RUN
+    assert await tool_calls.check(call("googleGmail", {"operation": "search", "query": "x"}), get_node_class("googleGmail")) is tool_calls.RUN
+
+
+async def test_the_model_never_chooses_who_sends(harness, nodes_loaded):
+    await rules.set_ask_first(harness.database, "wf", True)
+    args = {"operation": "send", "to": "ana@example.com", "subject": "Hi", "body": "Hello", "mailbox": "boss@example.com"}
+    await tool_calls.check(call("msMail", args, node_data={"mailbox": "me@example.com"}), get_node_class("msMail"))
+    (row,) = await store.list_approvals(harness.database, status="pending")
+    assert "mailbox" not in row.args and "mailbox" not in row.node_data
+    assert row.original_args["mailbox"] == "boss@example.com"
+    assert (row.subject, row.subject_field) == ("Hi", "subject")
+
+
+async def test_a_call_in_the_chat_shows_its_card_there(harness, nodes_loaded, monkeypatch):
+    from services.chat import parts
+
+    shown = []
+
+    async def show_approval(database, stream, *, approval_id, tool_call_id):
+        shown.append((stream["run_id"], approval_id, tool_call_id))
+
+    monkeypatch.setattr(parts, "show_approval", show_approval)
+    await rules.set_ask_first(harness.database, "wf", True)
+    stream = {"run_id": "r_1", "session_id": "wf", "workflow_id": "wf"}
+    checked = await tool_calls.check(call(chat_stream=stream, chat_run_id="r_1"), get_node_class("whatsappSend"))
+    (row,) = await store.list_approvals(harness.database, status="pending")
+    assert row.run_id == "r_1" and shown == [("r_1", checked.result["approval_id"], "call_1")]
+
+
+async def test_with_ask_first_off_a_chat_call_runs_and_is_recorded(harness, nodes_loaded, monkeypatch):
+    from services.chat import parts
+
+    async def show_approval(database, stream, **_):
+        return None
+
+    monkeypatch.setattr(parts, "show_approval", show_approval)
+    await rules.set_ask_first(harness.database, "wf", False)
+    node_cls = get_node_class("whatsappSend")
+    assert await tool_calls.check(call(), node_cls) is tool_calls.RUN
+    stream = {"run_id": "r_1", "session_id": "wf", "workflow_id": "wf"}
+    checked = await tool_calls.check(call(chat_stream=stream), node_cls)
+    assert checked.result is None and checked.record is not None
+    await checked.record({"success": True, "result": {"sent": True}})
+    (row,) = await store.list_approvals(harness.database, status="sent")
+    assert (row.approved_by, row.outcome) == ("auto", "sent")
+
+
+async def test_tools_that_cannot_wait_are_refused_or_restricted(harness, nodes_loaded):
+    await rules.set_ask_first(harness.database, "wf", True)
+    refused = await tool_calls.check(call("stripeAction", {"command": "refunds create --charge ch_1"}), get_node_class("stripeAction"))
+    assert refused.result["result"]["status"] == "not_run"
+    browsing = call("browser", {"operation": "click", "ref": "e3", "interaction": "full"}, node_data={"interaction": "full"})
+    restricted = await tool_calls.check(browsing, get_node_class("browser"))
+    assert restricted.result is None
+    assert restricted.node_data["interaction"] == "read_only" and "interaction" not in restricted.tool_args
+    assert await store.list_approvals(harness.database) == []
+
+
+async def test_send_starts_the_send_and_puts_it_back_when_nothing_can(harness, nodes_loaded, monkeypatch):
+    await rules.set_ask_first(harness.database, "wf", True)
+    await tool_calls.check(call(), get_node_class("whatsappSend"))
+    (row,) = await store.list_approvals(harness.database, status="pending")
+    started = []
+
+    async def start_send(approved):
+        started.append((approved.id, approved.revision))
+
+    monkeypatch.setattr(execution, "start_send", start_send)
+    sent = await handle_decide_approval(
+        {"approval_id": row.id, "decision": "send", "decision_key": "k1", "text": "Running late, there at 10:15."}, SOCKET
+    )
+    assert sent["success"] is True and sent["approval"]["status"] == "approved"
+    stored = await store.get(harness.database, row.id)
+    assert started == [(row.id, stored.revision)]
+    assert stored.args["message"] == "Running late, there at 10:15." == stored.node_data["message"]
+
+    async def unavailable(approved):
+        raise RuntimeError("no engine")
+
+    undone = await handle_decide_approval({"approval_id": row.id, "decision": "undo", "decision_key": "k2"}, SOCKET)
+    assert undone["approval"]["status"] == "pending"
+    monkeypatch.setattr(execution, "start_send", unavailable)
+    failed = await handle_decide_approval({"approval_id": row.id, "decision": "send", "decision_key": "k3"}, SOCKET)
+    assert failed["error"] == "send_unavailable" and failed["approval"]["status"] == "pending"
+
+
+async def test_a_send_runs_once_under_its_claim(harness, nodes_loaded, monkeypatch):
+    await rules.set_ask_first(harness.database, "wf", True)
+    stream = {"run_id": "r_1", "session_id": "wf", "workflow_id": "wf"}
+    from services.chat import parts
+
+    async def show_approval(database, stream, **_):
+        return None
+
+    monkeypatch.setattr(parts, "show_approval", show_approval)
+    await tool_calls.check(call(chat_stream=stream), get_node_class("whatsappSend"))
+    (row,) = await store.list_approvals(harness.database, status="pending")
+
+    async def start_send(approved):
+        return None
+
+    monkeypatch.setattr(execution, "start_send", start_send)
+    await handle_decide_approval({"approval_id": row.id, "decision": "send", "decision_key": "k1"}, SOCKET)
+    approved = await store.get(harness.database, row.id)
+
+    # A claim for an older revision (an Undo and a new Send came after it) is refused.
+    assert (await execution.claim_send(harness.database, row.id, approved.revision - 1, "t-old"))["claimed"] is False
+    claim = await execution.claim_send(harness.database, row.id, approved.revision, "t-1")
+    assert claim["claimed"] is True and claim["activity"] == f"node.whatsappSend.v{get_node_class('whatsappSend').version}"
+    assert claim["context"]["approval_execution"] == {"approval_id": row.id, "claim_token": "t-1"}
+    assert claim["context"]["tool_args"]["phone"] == "447700900123"
+    # The same claim again (an activity retry) finds itself; another does not.
+    assert (await execution.claim_send(harness.database, row.id, approved.revision, "t-1"))["claimed"] is True
+    assert (await execution.claim_send(harness.database, row.id, approved.revision, "t-2"))["claimed"] is False
+
+    # The node runs only under that claim.
+    node_cls = get_node_class("whatsappSend")
+    assert await tool_calls.check(claim["context"], node_cls) is tool_calls.RUN
+    other = {**claim["context"], "approval_execution": {"approval_id": row.id, "claim_token": "t-2"}}
+    assert (await tool_calls.check(other, node_cls)).result["error_type"] == "ApprovalNotClaimed"
+
+    settled = await execution.record_outcome(harness.database, row.id, "t-1", "sent", None)
+    assert settled.status == "sent" and settled.outcome == "sent"
+    assert await execution.record_outcome(harness.database, row.id, "t-1", "sent", None) is None
+    from services.chat import notes
+
+    (note,) = await notes.claim_notes(harness.database, session_id="wf", run_id="r_next")
+    assert note.kind == "update" and '"result": "sent"' in note.text
+
+
+async def test_a_send_that_broke_off_asks_before_trying_again(harness, nodes_loaded, monkeypatch):
+    await rules.set_ask_first(harness.database, "wf", True)
+    await tool_calls.check(call(), get_node_class("whatsappSend"))
+    (row,) = await store.list_approvals(harness.database, status="pending")
+
+    async def start_send(approved):
+        return None
+
+    monkeypatch.setattr(execution, "start_send", start_send)
+    await handle_decide_approval({"approval_id": row.id, "decision": "send", "decision_key": "k1"}, SOCKET)
+    approved = await store.get(harness.database, row.id)
+    await execution.claim_send(harness.database, row.id, approved.revision, "t-1")
+    failed = await execution.record_outcome(harness.database, row.id, "t-1", "unknown", "TimeoutError: no answer")
+    assert failed.status == "failed" and failed.outcome == "unknown"
+    ask = await handle_decide_approval({"approval_id": row.id, "decision": "retry", "decision_key": "k2"}, SOCKET)
+    assert ask["error"] == "confirm_required"
+    again = await handle_decide_approval({"approval_id": row.id, "decision": "retry", "decision_key": "k3", "confirm": True}, SOCKET)
+    assert again["success"] is True and again["approval"]["status"] == "approved" and "outcome" not in again["approval"]
+
+
+async def test_clearing_the_chat_cancels_its_drafts(harness, nodes_loaded, monkeypatch):
+    from services.chat import ledger, parts
+    from services.chat_thread import clear_chat_thread
+
+    async def show_approval(database, stream, **_):
+        return None
+
+    monkeypatch.setattr(parts, "show_approval", show_approval)
+    monkeypatch.setattr(ledger, "session_run_ids", lambda database, session_id: _async(["r_1"]))
+    await rules.set_ask_first(harness.database, "wf", True)
+    await tool_calls.check(call(chat_stream={"run_id": "r_1", "session_id": "wf"}, chat_run_id="r_1"), get_node_class("whatsappSend"))
+    await tool_calls.check({**call(), "tool_call_id": "call_2"}, get_node_class("whatsappSend"))
+    await clear_chat_thread(harness.database, "wf")
+    statuses = sorted((row.tool_call_id, row.status) for row in await store.list_approvals(harness.database))
+    assert statuses == [("call_1", "cancelled"), ("call_2", "pending")]
+
+
+async def _async(value):
+    return value

@@ -171,6 +171,11 @@ async def lifespan(app: FastAPI):
     # disconnect listener that drops a closed socket's run subscriptions.
     import services.chat  # noqa: F401
 
+    # services/approvals/__init__.py self-registers the approval commands
+    # (list_approvals / decide_approval / set_ask_first / ...), the
+    # approval_lifecycle broadcast and the cleanup on workflow delete.
+    import services.approvals  # noqa: F401
+
     # Wave 13.8: services/pricing_handlers.py self-registers the 3
     # pricing handlers (get_pricing_config / save_pricing_config /
     # get_api_usage_summary). Flat module (sibling to services/pricing.py)

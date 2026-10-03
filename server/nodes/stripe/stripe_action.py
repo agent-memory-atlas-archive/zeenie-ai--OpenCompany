@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from services.events import run_cli_command
 from services.plugin import ActionNode, NodeContext, Operation, TaskQueue
+from services.plugin.approval import ApprovalSpec
 
 from ._credentials import StripeCredential
 
@@ -53,6 +54,13 @@ class StripeActionNode(ActionNode):
     credentials = (StripeCredential,)
     task_queue = TaskQueue.REST_API
     usable_as_tool = True
+    # Money cannot wait for a card: refused while the owner asks first.
+    approval = ApprovalSpec(
+        channel="Stripe",
+        action="Run a Stripe command",
+        refuse_while_asking=True,
+        details=(("Command", "command"),),
+    )
 
     Params = StripeActionParams
     Output = StripeActionOutput

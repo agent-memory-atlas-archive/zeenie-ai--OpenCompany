@@ -55,8 +55,10 @@ def _framework_workflows() -> list:
 
     from services.temporal.node_invocation import NodeInvocationWorkflow
     from services.temporal.workspace_tasks_workflow import WorkspaceTaskControllerWorkflow
+    from services.temporal.approved_tool_call_workflow import ApprovedToolCallWorkflow
 
     return [
+        ApprovedToolCallWorkflow,
         NodeInvocationWorkflow,
         WorkspaceTaskControllerWorkflow,
         MachinaWorkflow,
@@ -227,6 +229,7 @@ class TemporalWorkerManager:
         from services.temporal.agent_activities import collect_agent_activities
         from services.temporal.workspace_task_activities import reset_workspace_task_runtime
         from services.chat.activities import CHAT_RUN_ACTIVITIES
+        from services.approvals.activities import APPROVAL_ACTIVITIES
         from services.temporal.activities import (
             broadcast_trigger_status_activity,
             evaluate_trigger_filter_activity,
@@ -284,6 +287,7 @@ class TemporalWorkerManager:
                 record_run_completion_activity,
                 reset_workspace_task_runtime,
                 *CHAT_RUN_ACTIVITIES,
+                *APPROVAL_ACTIVITIES,
                 store_node_output_activity,
                 *per_type,
                 *agent_activities,
@@ -744,6 +748,7 @@ async def run_standalone_worker(
     from services.temporal.agent_activities import collect_agent_activities
     from services.temporal.workspace_task_activities import reset_workspace_task_runtime
     from services.chat.activities import CHAT_RUN_ACTIVITIES
+    from services.approvals.activities import APPROVAL_ACTIVITIES
     from services.temporal.agent_workflow import (
         AgentWorkflow,
         DelegatedTaskWorkflow,
@@ -771,6 +776,7 @@ async def run_standalone_worker(
                 record_run_completion_activity,
                 reset_workspace_task_runtime,
                 *CHAT_RUN_ACTIVITIES,
+                *APPROVAL_ACTIVITIES,
                 store_node_output_activity,
                 *registered_plugin_activities,
                 *registered_agent_activities,
@@ -829,6 +835,7 @@ async def create_worker(
     from services.temporal.agent_activities import collect_agent_activities
     from services.temporal.workspace_task_activities import reset_workspace_task_runtime
     from services.chat.activities import CHAT_RUN_ACTIVITIES
+    from services.approvals.activities import APPROVAL_ACTIVITIES
     from services.temporal.agent_workflow import (
         AgentWorkflow,
         DelegatedTaskWorkflow,
@@ -855,6 +862,7 @@ async def create_worker(
             record_run_completion_activity,
             reset_workspace_task_runtime,
             *CHAT_RUN_ACTIVITIES,
+            *APPROVAL_ACTIVITIES,
             store_node_output_activity,
             *registered_plugin_activities,
             *registered_agent_activities,

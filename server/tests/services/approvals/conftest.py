@@ -56,7 +56,7 @@ class FakeBroadcaster:
 def harness(monkeypatch, real_database):
     import core.container as container_module
     import services.status_broadcaster as status_broadcaster
-    from services.approvals import reconcile, waiter
+    from services.approvals import decisions, reconcile, waiter
 
     import nodes.workflow.approval_gate as gate
 
@@ -64,6 +64,9 @@ def harness(monkeypatch, real_database):
     monkeypatch.setattr(container_module, "container", SimpleNamespace(database=lambda: real_database))
     monkeypatch.setattr(status_broadcaster, "get_status_broadcaster", lambda: broadcaster)
     monkeypatch.setattr(gate, "POLL_SECONDS", 0.02)
+    # Undo and Restore windows short enough for a test to wait them out.
+    monkeypatch.setattr(decisions, "UNDO_SECONDS", 0.2)
+    monkeypatch.setattr(decisions, "RESTORE_SECONDS", 0.2)
     waiter.reset_for_tests()
     reconcile.reset_for_tests()
     yield SimpleNamespace(database=real_database, broadcaster=broadcaster, gate=gate)

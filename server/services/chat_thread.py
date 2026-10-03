@@ -20,7 +20,8 @@ Talk, and the editor shows it in its chat pane.
   which announces them the same way.
 - ``clear_chat_thread``: delete the session's rows, every generation, and
   its chat runs, then announce it when there were any. Subscribers watching
-  a run that was still live are told it ended (``reset``).
+  a run that was still live are told it ended (``reset``), and drafts the
+  runs made that still wait for the owner are cancelled.
 - ``clear_chat_session``: the owner's Clear. The thread goes (live runs end
   with ``cleared``), and the listeners registered with
   ``register_chat_cleared_listener`` forget what it held: the Context plugin
@@ -155,11 +156,31 @@ async def clear_chat_thread(database: Any, session_id: str, *, reason: str = "re
     except Exception:
         logger.warning("Could not read live chat runs before a clear", session_id=session_id, exc_info=True)
         live = []
+    await _cancel_drafts(database, session_id)
     count = await database.clear_chat_messages(session_id)
     ledger.publish_cleared(live, code=reason)
     if count:
         await announce_chat_updated(session_id, None)
     return count
+
+
+async def _cancel_drafts(database: Any, session_id: str) -> None:
+    """Drafts the conversation's runs made that still wait go with it: a
+    send nobody can see any more must not go out later."""
+    from services.chat import ledger
+
+    try:
+        from services.approvals import store, waiter
+        from services.approvals.listeners import change_of, notify_approval_changed
+
+        run_ids = await ledger.session_run_ids(database, session_id)
+        if not run_ids:
+            return
+        for row in await store.cancel_open(database, workflow_id=session_id, run_ids=run_ids):
+            waiter.notify(row.id)
+            await notify_approval_changed(change_of(row, "cancelled"))
+    except Exception:
+        logger.warning("Could not cancel a cleared conversation's drafts", session_id=session_id, exc_info=True)
 
 
 def register_chat_cleared_listener(listener: ChatClearedListener) -> None:

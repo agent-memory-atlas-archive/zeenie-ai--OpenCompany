@@ -10,6 +10,7 @@ from typing import List, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 from services.plugin import ActionNode, NodeContext, Operation, TaskQueue
+from services.plugin.approval import ApprovalSpec
 
 from .._credentials import GoogleCredential
 
@@ -113,6 +114,15 @@ class GmailNode(ActionNode):
     annotations = {"destructive": False, "readonly": False, "open_world": True}
     task_queue = TaskQueue.REST_API
     usable_as_tool = True
+    approval = ApprovalSpec(
+        channel="Gmail",
+        action="Send an email",
+        operations=frozenset({"send"}),
+        recipient=("to",),
+        body=("body",),
+        subject="subject",
+        details=(("Cc", "cc"), ("Bcc", "bcc")),
+    )
 
     Params = GmailParams
     Output = GmailOutput

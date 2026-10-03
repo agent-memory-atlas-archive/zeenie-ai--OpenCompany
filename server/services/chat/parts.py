@@ -8,13 +8,15 @@ first kind: ``show_ui`` saves the checked spec and publishes it as an empty
 ``activity.snapshot`` followed by one ``activity.delta`` per patch
 (``services/genui/patches.py``); the client paces what arrives.
 
-Sources are the other kind (``services/chat/sources.py``): the numbered
-results of a search the answering agent ran.
+Sources (``services/chat/sources.py``) are the numbered results of a search
+the answering agent ran. Approvals name the drafts it made that wait for the
+owner (``services/approvals/tool_calls.py``): the card reads them live from
+the approvals store, so the part only names them.
 
 When the run ends, ``seal_parts`` copies its parts into the reply message's
-``parts`` (``{"ui": [...], "sources": [...]}``), creating an empty reply when
-the run showed something but wrote nothing, so a reload draws what the run
-showed. Every write here is best effort for the run: a part that cannot be
+``parts`` (``{"ui": [...], "sources": [...], "approvals": [...]}``), creating
+an empty reply when the run showed an interface or made a draft but wrote
+nothing, so a reload draws what the run showed. Every write here is best effort for the run: a part that cannot be
 saved is logged, and the run goes on.
 """
 
@@ -36,7 +38,7 @@ logger = get_logger(__name__)
 #: The ``activity_type`` of a generated UI's events.
 JSON_RENDER = "json_render"
 #: The kinds of part a run collects for its reply.
-PART_KINDS = ("ui", "sources")
+PART_KINDS = ("ui", "sources", "approvals")
 
 
 def ui_part_id(run_id: str, tool_call_id: str) -> str:
@@ -123,13 +125,26 @@ async def show_ui(database: Any, stream: Mapping[str, Any], *, tool_call_id: str
     return part_id
 
 
+async def show_approval(database: Any, stream: Mapping[str, Any], *, approval_id: str, tool_call_id: Optional[str]) -> None:
+    """Name a draft the run made on its reply, and show its card live."""
+    payload = {"approval_id": approval_id, "tool_call_id": tool_call_id}
+    await record_part(database, stream["run_id"], kind="approvals", key=f"approval:{approval_id}", payload=payload)
+    _publish(
+        stream,
+        "activity.snapshot",
+        {"message_id": approval_id, "activity_type": "approval", "content": payload, "replace": True},
+        f"{approval_id}:approval",
+    )
+
+
 #: What names one item of each kind, for merging a run's parts into a reply.
-_ITEM_KEYS = {"ui": "part_id", "sources": "n"}
+_ITEM_KEYS = {"ui": "part_id", "sources": "n", "approvals": "approval_id"}
 
 
 def grouped_parts(parts: List[ChatRunPart]) -> Dict[str, List[Dict[str, Any]]]:
     """A run's parts as a reply's ``parts`` holds them: ``{"ui": [payload],
-    "sources": [item]}`` (a sources part holds one tool call's items)."""
+    "sources": [item], "approvals": [{approval_id, tool_call_id}]}`` (a
+    sources part holds one tool call's items)."""
     grouped: "OrderedDict[str, List[Dict[str, Any]]]" = OrderedDict()
     for part in parts:
         if part.kind not in PART_KINDS:
@@ -176,7 +191,7 @@ async def seal_parts(database: Any, run: ChatRun) -> bool:
             else:
                 # Sources show only where a reply cites them: alone they
                 # are no reason to make one.
-                if not grouped.get("ui"):
+                if not (grouped.get("ui") or grouped.get("approvals")):
                     return False
                 current = await session.get(ChatRun, run.run_id)
                 stopped = current is not None and current.state in ("stopping", "stopped")
@@ -379,6 +394,7 @@ __all__ = [
     "record_part",
     "run_parts",
     "seal_parts",
+    "show_approval",
     "show_ui",
     "ui_event_message",
     "ui_part_id",

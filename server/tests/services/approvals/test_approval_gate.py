@@ -67,7 +67,7 @@ async def until_waiting(approval_id):
 
 
 async def decide(harness, approval_id, decision, key="d1", **extra):
-    from nodes.workflow.approval_gate._handlers import handle_decide_approval
+    from services.approvals.handlers import handle_decide_approval
 
     return await handle_decide_approval({"approval_id": approval_id, "decision": decision, "decision_key": key, **extra}, SOCKET)
 
@@ -183,7 +183,7 @@ async def test_reset_cancels_waiting_drafts(harness):
 
 
 async def test_the_list_shows_only_the_owner_drafts(harness):
-    from nodes.workflow.approval_gate._handlers import handle_list_approvals
+    from services.approvals.handlers import handle_list_approvals
 
     task = asyncio.ensure_future(run_gate(harness))
     (row,) = await pending(harness)

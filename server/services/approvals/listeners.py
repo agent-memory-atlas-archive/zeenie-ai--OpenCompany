@@ -1,15 +1,16 @@
 """Who hears about approval changes, without this package knowing them.
 
-The approval-gate plugin registers the ``approval_lifecycle`` broadcast;
-the employees package registers the summary refresh (its pending count).
-A failing listener is logged and never fails the change.
+This package registers the ``approval_lifecycle`` broadcast
+(``services/approvals/__init__.py``); the employees package registers the
+summary refresh (its pending count). A failing listener is logged and never
+fails the change.
 """
 
 from __future__ import annotations
 
 import inspect
 from dataclasses import dataclass
-from typing import Any, Callable, List
+from typing import Any, Callable, List, Optional
 
 from core.logging import get_logger
 
@@ -18,12 +19,15 @@ logger = get_logger(__name__)
 
 @dataclass(frozen=True)
 class ApprovalChange:
-    #: requested | decided | expired | cancelled
+    #: requested | decided | undone | restored | sending | sent | failed |
+    #: expired | cancelled
     stage: str
     approval_id: str
     workflow_id: str
     status: str
     revision: int
+    #: The chat run a held tool call was made in.
+    run_id: Optional[str] = None
 
 
 ApprovalListener = Callable[[ApprovalChange], Any]
@@ -46,7 +50,14 @@ async def notify_approval_changed(change: ApprovalChange) -> None:
 
 
 def change_of(row: Any, stage: str) -> ApprovalChange:
-    return ApprovalChange(stage=stage, approval_id=row.id, workflow_id=row.workflow_id, status=row.status, revision=row.revision)
+    return ApprovalChange(
+        stage=stage,
+        approval_id=row.id,
+        workflow_id=row.workflow_id,
+        status=row.status,
+        revision=row.revision,
+        run_id=getattr(row, "run_id", None) or None,
+    )
 
 
 __all__ = ["ApprovalChange", "change_of", "notify_approval_changed", "register_approval_listener"]

@@ -11,6 +11,7 @@ from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
 from pydantic import BaseModel, ConfigDict, Field
 
 from services.plugin import ActionNode, NodeContext, Operation, TaskQueue
+from services.plugin.approval import ApprovalSpec
 
 from .._credentials import GoogleCredential
 
@@ -110,6 +111,14 @@ class DriveNode(ActionNode):
     credentials = (GoogleCredential,)
     task_queue = TaskQueue.REST_API
     usable_as_tool = True
+    approval = ApprovalSpec(
+        channel="Google Drive",
+        action="Share a file",
+        operations=frozenset({"share"}),
+        recipient=("email",),
+        body=("message",),
+        details=(("File", "file_id"), ("Access", "role")),
+    )
 
     Params = DriveParams
     Output = DriveOutput

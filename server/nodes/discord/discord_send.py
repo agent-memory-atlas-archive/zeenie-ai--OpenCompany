@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 from services.plugin import NodeContext, NodeUserError, Operation, TaskQueue
+from services.plugin.approval import ApprovalSpec
 
 from . import _base
 from ._accounts import DEFAULT_ACCOUNT
@@ -140,6 +141,13 @@ class DiscordSendNode(AccountScopedNode):
     # Which bot sends is operator configuration, not a model decision.
     # AccountScopedNode is what enforces this on the tool path.
     server_controlled_fields = frozenset({"account_id"})
+    approval = ApprovalSpec(
+        channel="Discord",
+        action="Send a Discord message",
+        recipient=("channel_id", "user_id"),
+        body=("message",),
+        max_length=2000,
+    )
     # Canvas handles are auto-hidden for usable_as_tool nodes; this one is
     # meant to be wired into a workflow as well.
     hide_input_handle = False

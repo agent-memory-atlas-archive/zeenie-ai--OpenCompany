@@ -14,6 +14,7 @@ from typing import Any, List, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from services.plugin import ActionNode, NodeContext, Operation, TaskQueue
+from services.plugin.approval import ApprovalSpec
 
 from ._credentials import TelegramCredential
 
@@ -187,6 +188,24 @@ class TelegramSendNode(ActionNode):
     annotations = {"destructive": False, "readonly": False, "open_world": True}
     credentials = (TelegramCredential,)
     task_queue = TaskQueue.MESSAGING
+    # Employees may send from Talk too: a tool, held for the owner's OK
+    # while they ask first (services/approvals/tool_calls.py).
+    usable_as_tool = True
+    tool_name = "telegram_send"
+    tool_description = "Send a Telegram message (text, photo, document, location or contact) through the connected bot."
+    # Canvas handles are auto-hidden for usable_as_tool nodes; this one is
+    # wired into workflows as well.
+    hide_input_handle = False
+    hide_output_handle = False
+    approval = ApprovalSpec(
+        channel="Telegram",
+        action="Send a Telegram message",
+        recipient=("chat_id",),
+        to_owner=lambda data: (data.get("recipient_type") or "self") == "self",
+        body=("text", "caption"),
+        details=(("Link", "media_url"),),
+        max_length=4096,
+    )
 
     Params = TelegramSendParams
     Output = TelegramSendOutput

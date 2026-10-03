@@ -7,6 +7,7 @@ from typing import Any, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 from services.plugin import ActionNode, NodeContext, Operation, TaskQueue
+from services.plugin.approval import ApprovalSpec
 
 
 class EmailSendParams(BaseModel):
@@ -52,6 +53,16 @@ class EmailSendNode(ActionNode):
     annotations = {"destructive": False, "readonly": False, "open_world": True}
     task_queue = TaskQueue.MESSAGING
     usable_as_tool = True
+    # Which account sends is the node's setting, never the model's choice.
+    server_controlled_fields = frozenset({"provider"})
+    approval = ApprovalSpec(
+        channel="Email",
+        action="Send an email",
+        recipient=("to",),
+        body=("body",),
+        subject="subject",
+        details=(("Cc", "cc"), ("Bcc", "bcc")),
+    )
 
     Params = EmailSendParams
     Output = EmailSendOutput
