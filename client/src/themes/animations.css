@@ -204,7 +204,67 @@
   animation: cyber-roll 8s linear infinite;
 }
 
+/* ============================================================================
+ * Chat (design handoff chat/, 2026-10-03). Durations are --dur-* tokens in
+ * base.css. Spinners and the live ring reuse the global `spin` keyframes;
+ * blinking pips reuse opencompany-pip-blink above.
+ * ========================================================================== */
+
+/* A gradient sweeping across: skeleton lines, slots and the "Working…" label. */
+@keyframes opencompany-shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+/* The dot that follows text while a reply streams. */
+@keyframes opencompany-caret-pulse { 0%, 100% { transform: scale(0.7); opacity: 0.55; } 50% { transform: scale(1); opacity: 1; } }
+/* The three dots of the status line. */
+@keyframes opencompany-dots { 0%, 80%, 100% { opacity: 0.25; transform: translateY(0); } 40% { opacity: 1; transform: translateY(-2px); } }
+/* BarChart bars growing from their start. */
+@keyframes opencompany-grow-x { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+/* A stroke drawing itself (paths with stroke-dasharray 24). */
+@keyframes opencompany-draw { from { stroke-dashoffset: 24; } to { stroke-dashoffset: 0; } }
+
+.opencompany-spinner { animation: spin var(--dur-spinner, 800ms) linear infinite; }
+/* A 2px ring around a working employee's avatar; place it at inset -3px. */
+.opencompany-live-ring {
+  background: conic-gradient(from 0deg, var(--action-tools-ink), transparent 35%, var(--action-save-ink) 65%, var(--action-tools-ink));
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2px), black calc(100% - 2px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 2px), black calc(100% - 2px));
+  animation: spin var(--dur-live-ring, 1200ms) linear infinite;
+}
+.opencompany-shimmer {
+  background: linear-gradient(90deg, var(--bg-active) 0%, var(--bg-hover) 40%, var(--action-tools-soft) 50%, var(--bg-hover) 60%, var(--bg-active) 100%);
+  background-size: 200% 100%;
+  animation: opencompany-shimmer var(--dur-shimmer, 1600ms) linear infinite;
+}
+/* The dashed placeholder where the next generated-UI element will land. */
+.opencompany-shimmer-slot {
+  background: linear-gradient(90deg, transparent 0%, var(--bg-hover) 45%, var(--node-agent-soft) 50%, var(--bg-hover) 55%, transparent 100%);
+  background-size: 200% 100%;
+  animation: opencompany-shimmer var(--dur-shimmer, 1600ms) linear infinite;
+}
+.opencompany-shimmer-text {
+  background: linear-gradient(90deg, var(--fg-faint) 0%, var(--fg-default) 50%, var(--fg-faint) 100%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: opencompany-shimmer var(--dur-shimmer-text, 1800ms) linear infinite;
+}
+.opencompany-caret { animation: opencompany-caret-pulse var(--dur-caret, 1000ms) ease-in-out infinite; }
+.opencompany-dots > * { animation: opencompany-dots var(--dur-dots, 1200ms) ease infinite; }
+.opencompany-dots > :nth-child(2) { animation-delay: 150ms; }
+.opencompany-dots > :nth-child(3) { animation-delay: 300ms; }
+.opencompany-grow {
+  transform-origin: left center;
+  animation: opencompany-grow-x var(--dur-bar-grow, 900ms) var(--ease-spring) both;
+}
+.opencompany-draw {
+  stroke-dasharray: 24;
+  animation: opencompany-draw var(--dur-check-draw, 420ms) var(--ease-spring) both;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .opencompany-pulse, .opencompany-crt, .opencompany-scanline::after,
-  .opencompany-trigger-armed, .opencompany-trigger-fire, .opencompany-bolt, .opencompany-pip-pulse { animation: none !important; }
+  .opencompany-trigger-armed, .opencompany-trigger-fire, .opencompany-bolt, .opencompany-pip-pulse,
+  .opencompany-spinner, .opencompany-live-ring, .opencompany-shimmer, .opencompany-shimmer-slot,
+  .opencompany-shimmer-text, .opencompany-caret, .opencompany-dots > *, .opencompany-grow,
+  .opencompany-draw { animation: none !important; }
 }

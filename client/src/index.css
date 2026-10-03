@@ -187,6 +187,7 @@
   --color-bg-hover:    var(--bg-hover);
   --color-bg-active:   var(--bg-active);
   --color-bg-overlay:  var(--bg-overlay);
+  --color-bg-scrim-soft: var(--bg-scrim-soft);
 
   --color-fg-default:    var(--fg-default);
   --color-fg-muted:      var(--fg-muted);
@@ -256,6 +257,10 @@
   --shadow-popover: var(--shadow-popover);
   --shadow-dialog:  var(--shadow-dialog);
   --shadow-dock:    var(--shadow-dock);
+  /* Design-system elevation steps (base.css, dark.css), used by the chat. */
+  --shadow-card:       var(--shadow-card);
+  --shadow-card-hover: var(--shadow-card-hover);
+  --shadow-modal:      var(--shadow-modal);
 
   --blur-scrim: var(--blur-scrim);
 
@@ -284,6 +289,8 @@
   --ease-spring:    var(--ease-spring);
   --ease-overshoot: var(--ease-overshoot);
   --ease-reveal:    var(--ease-reveal);
+  --ease-default:   var(--ease-default);
+  --ease-emphasis:  var(--ease-emphasis);
 
   --tracking-label:    var(--tracking-label);
   --tracking-hero:     var(--tracking-hero);
@@ -553,6 +560,9 @@ html.oc-theme-fade *::after {
   --w-rjv-type-date-color: var(--code-string);
 }
 
+/* Markdown in chat replies (Home and Dev) and console rows. Every surface
+ * reads a theme token, so a reply's code and tables stay visible on the
+ * light family's white bubble too, and every theme paints them its own way. */
 .chat-markdown p { margin: 0 0 8px 0; }
 .chat-markdown p:last-child { margin-bottom: 0; }
 .chat-markdown h1,
@@ -560,7 +570,7 @@ html.oc-theme-fade *::after {
 .chat-markdown h3 {
   margin: 12px 0 8px 0;
   font-weight: 600;
-  color: var(--foreground);
+  color: var(--fg-default);
 }
 .chat-markdown h1:first-child,
 .chat-markdown h2:first-child,
@@ -568,32 +578,42 @@ html.oc-theme-fade *::after {
 .chat-markdown h1 { font-size: 1.25em; }
 .chat-markdown h2 { font-size: 1.1em; }
 .chat-markdown h3 { font-size: 1em; }
-.chat-markdown strong { font-weight: 600; color: var(--foreground); }
+.chat-markdown strong { font-weight: 600; color: var(--fg-default); }
 .chat-markdown em { font-style: italic; }
+/* Tailwind's preflight removes list markers; replies need them back. */
 .chat-markdown ul,
-.chat-markdown ol { margin: 8px 0; padding-left: 20px; }
+.chat-markdown ol { margin: 8px 0; padding-left: 22px; }
+.chat-markdown ul { list-style: disc; }
+.chat-markdown ol { list-style: decimal; }
+.chat-markdown ul ul { list-style: circle; }
 .chat-markdown li { margin: 4px 0; }
+.chat-markdown li::marker {
+  color: var(--fg-faint);
+  font-family: var(--font-mono);
+}
 .chat-markdown code {
-  background-color: color-mix(in srgb, var(--border) 30%, transparent);
-  padding: 2px 6px;
-  border-radius: 4px;
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, monospace;
+  background-color: var(--bg-active);
+  border: 1px solid var(--border-default);
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
   font-size: 0.9em;
 }
-.dark .chat-markdown code {
-  background-color: var(--code-bg);
-}
 .chat-markdown pre {
-  background-color: var(--card);
+  background-color: var(--code-bg);
+  color: var(--code-text);
+  border: 1px solid var(--code-border, var(--border-default));
   padding: 12px;
-  border-radius: 6px;
+  border-radius: var(--radius-lg);
   overflow-x: auto;
   margin: 8px 0;
 }
-.dark .chat-markdown pre {
-  background-color: var(--code-bg);
+.chat-markdown pre code {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: inherit;
 }
-.chat-markdown pre code { background: none; padding: 0; }
 .chat-markdown table {
   border-collapse: collapse;
   margin: 8px 0;
@@ -602,45 +622,35 @@ html.oc-theme-fade *::after {
 }
 .chat-markdown th,
 .chat-markdown td {
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-default);
   padding: 6px 10px;
   text-align: left;
 }
-.dark .chat-markdown th,
-.dark .chat-markdown td {
-  border-color: var(--code-border);
-}
 .chat-markdown th {
-  background-color: var(--card);
+  background-color: var(--bg-panel);
+  color: var(--fg-muted);
   font-weight: 600;
 }
-.dark .chat-markdown th {
-  background-color: var(--code-gutter-bg);
-}
 .chat-markdown blockquote {
-  border-left: 3px solid var(--primary);
+  border-left: 3px solid var(--border-strong);
   margin: 8px 0;
-  padding: 4px 12px;
-  color: var(--muted-foreground);
-}
-.dark .chat-markdown blockquote {
-  border-left-color: var(--code-keyword);
+  padding: 2px 0 2px 14px;
+  color: var(--fg-muted);
 }
 .chat-markdown a {
-  color: var(--primary);
+  color: var(--action-save-ink);
   text-decoration: none;
 }
-.dark .chat-markdown a {
-  color: var(--code-property);
-}
 .chat-markdown a:hover { text-decoration: underline; }
+.chat-markdown img {
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--radius-lg);
+}
 .chat-markdown hr {
   border: none;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--border-default);
   margin: 12px 0;
-}
-.dark .chat-markdown hr {
-  border-top-color: var(--code-border);
 }
 
 /* ============================================================================
@@ -651,15 +661,17 @@ html.oc-theme-fade *::after {
  * ============================================================================ */
 
 .code-editor-container { background: var(--code-bg); }
-.code-editor-container .token.comment     { color: var(--code-comment); }
-.code-editor-container .token.string      { color: var(--code-string); }
-.code-editor-container .token.keyword     { color: var(--code-keyword); }
-.code-editor-container .token.function    { color: var(--code-function); }
-.code-editor-container .token.number      { color: var(--code-number); }
-.code-editor-container .token.operator    { color: var(--code-operator); }
-.code-editor-container .token.class-name  { color: var(--code-property); }
-.code-editor-container .token.builtin     { color: var(--code-property); }
-.code-editor-container .token.boolean     { color: var(--code-boolean); }
-.code-editor-container .token.punctuation { color: var(--code-punctuation); }
+/* Chat code blocks share the editor's per-theme palette. */
+.code-editor-container .token.comment,     .chat-markdown .token.comment     { color: var(--code-comment); }
+.code-editor-container .token.string,      .chat-markdown .token.string      { color: var(--code-string); }
+.code-editor-container .token.keyword,     .chat-markdown .token.keyword     { color: var(--code-keyword); }
+.code-editor-container .token.function,    .chat-markdown .token.function    { color: var(--code-function); }
+.code-editor-container .token.number,      .chat-markdown .token.number      { color: var(--code-number); }
+.code-editor-container .token.operator,    .chat-markdown .token.operator    { color: var(--code-operator); }
+.code-editor-container .token.class-name,  .chat-markdown .token.class-name  { color: var(--code-property); }
+.code-editor-container .token.builtin,     .chat-markdown .token.builtin     { color: var(--code-property); }
+.code-editor-container .token.boolean,     .chat-markdown .token.boolean     { color: var(--code-boolean); }
+.code-editor-container .token.punctuation, .chat-markdown .token.punctuation { color: var(--code-punctuation); }
+.chat-markdown .token.property { color: var(--code-property); }
 .code-editor-container textarea           { outline: none !important; caret-color: var(--code-caret); }
 .code-editor-container textarea::placeholder { color: var(--muted-foreground); }
