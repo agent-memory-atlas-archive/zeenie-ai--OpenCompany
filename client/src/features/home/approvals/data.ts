@@ -5,7 +5,10 @@
  * - `useApprovalsQuery(workflowId)`: one employee's pending drafts.
  * - `useDecideApproval()`: Send or Discard. The draft leaves the list at
  *   once and comes back if the server refuses; every click carries a fresh
- *   `decision_key`, so a replayed request settles the draft only once.
+ *   `decision_key`, so a replayed request settles the draft only once. The
+ *   confirmation toast belongs to the hook, not to the click: the card has
+ *   already left the page when the answer arrives, and TanStack drops a
+ *   per-call callback whose component unmounted.
  * - `useApprovalLifecycle()`: `approval_lifecycle` broadcasts (identity
  *   only) refetch the affected list, and a new draft says so in a toast.
  */
@@ -73,6 +76,8 @@ export interface DecideInput {
   approval: Approval;
   decision: Decision;
   text?: string;
+  /** Names the employee in "Sends when you resume {name}". */
+  employeeName?: string;
 }
 
 const DECIDE_ERRORS: Record<string, string> = {
@@ -122,6 +127,15 @@ export function useDecideApproval() {
       const previous = queryClient.getQueryData<Approval[]>(key);
       queryClient.setQueryData<Approval[]>(key, (list) => list?.filter((item) => item.approval_id !== approval.approval_id));
       return { previous, key };
+    },
+    onSuccess: (result, { approval, decision, employeeName }) => {
+      if (decision === 'discard') {
+        pillToast('Draft discarded', { tone: 'info' });
+      } else if (result.will_send_on_resume) {
+        pillToast(`Sends when you resume ${employeeName || 'the employee'}`);
+      } else {
+        pillToast(`Sent to ${approval.recipient_label || approval.recipient}`);
+      }
     },
     onError: (error, _input, context) => {
       if (context) queryClient.setQueryData(context.key, context.previous);
