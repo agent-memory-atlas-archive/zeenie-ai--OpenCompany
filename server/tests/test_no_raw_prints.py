@@ -15,30 +15,27 @@ Three sanctioned exemptions, each documented in its own module:
    ``print`` builtin we hand to user code (the user's print, not ours).
 
 Anything else must go through ``logger = get_logger(__name__)``. This
-test parses every ``.py`` file under ``server/`` (excluding ``.venv``,
-``tests/``, ``scripts/``, and the docs-only ``skills/`` markdown trees)
-and walks each ``ast.Call`` node looking for bare ``print(...)``.
+test parses every backend ``.py`` file under ``server/`` (excluding the
+virtualenv, runtime data, ``tests/``, ``scripts/``, and the docs-only
+``skills/`` markdown trees) and walks each ``ast.Call`` node looking for
+bare ``print(...)``.
 """
 
 from __future__ import annotations
 
 import ast
-import os
-from pathlib import Path
 from typing import List, Tuple
 
-SERVER_ROOT = Path(__file__).resolve().parents[1]
+from tests._source_tree import SERVER_ROOT, server_python_files
 
-# Directories whose ``print()`` calls are out of scope.
-_EXCLUDED_DIRS = {
-    ".opencompany",  # installed runtimes belong to isolated subprocesses
-    ".machina",  # legacy runtime data directory
-    ".venv",
+# Top-level directories whose ``print()`` calls are out of scope. The walker
+# also skips the virtualenv and runtime data: installed runtimes such as the
+# Mobile phone runtime belong to isolated subprocesses.
+_EXCLUDED_TOP_DIRS = (
     "tests",  # tests themselves can print freely
     "scripts",  # CLI smoke tests are intentional stdout tools
     "skills",  # SKILL.md markdown — not Python source
-    "__pycache__",
-}
+)
 
 # Each entry: (relative module path, name of the enclosing function/method
 # whose body is allowed to contain ``print(``). The function name is
@@ -59,15 +56,6 @@ _SANCTIONED: List[Tuple[str, str]] = [
     # JSON wire replies to the parent process, not application log messages.
     ("nodes/mobile/runtime/device_server.py", "main"),
 ]
-
-
-def _iter_python_files() -> List[Path]:
-    """Yield every .py file under ``server/`` outside the exclusion set."""
-    files: List[Path] = []
-    for root, dirs, names in os.walk(SERVER_ROOT):
-        dirs[:] = [name for name in dirs if name not in _EXCLUDED_DIRS]
-        files.extend(Path(root) / name for name in names if name.endswith(".py"))
-    return files
 
 
 def _enclosing_function_name(tree: ast.AST, target: ast.AST) -> str:
@@ -96,7 +84,7 @@ def test_no_raw_prints_in_server_code() -> None:
         sanctioned_map.setdefault(rel.replace("\\", "/"), set()).add(fn)
     violations: List[str] = []
 
-    for py in _iter_python_files():
+    for py in server_python_files(*_EXCLUDED_TOP_DIRS):
         rel = py.relative_to(SERVER_ROOT).as_posix()
         try:
             source = py.read_text(encoding="utf-8")

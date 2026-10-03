@@ -23,6 +23,8 @@ from typing import Iterable, NamedTuple
 
 import pytest
 
+from tests._source_tree import server_python_files
+
 pytestmark = pytest.mark.unit
 
 SERVER_ROOT = Path(__file__).resolve().parents[2]
@@ -107,13 +109,8 @@ def _imports(path: Path) -> Iterable[_ImportUse]:
 
 def _production_sources() -> list[Path]:
     # Installed mobile engines are isolated subprocess dependencies, not server
-    # source. Prune runtime trees before walking their SDKs and virtualenvs.
-    excluded = {"tests", ".venv", ".opencompany", ".machina", "__pycache__"}
-    sources = []
-    for root, dirs, files in os.walk(SERVER_ROOT):
-        dirs[:] = [name for name in dirs if name not in excluded]
-        sources.extend(Path(root) / name for name in files if name.endswith(".py"))
-    return sources
+    # source; the walker prunes runtime trees and the virtualenv.
+    return server_python_files("tests")
 
 
 def test_no_module_imports_langchain():

@@ -27,9 +27,11 @@ import ast
 from pathlib import Path
 from typing import List
 
-SERVER_ROOT = Path(__file__).resolve().parents[1]
+from tests._source_tree import SERVER_ROOT, server_python_files
 
-_EXCLUDED_DIRS = {".venv", "tests", "scripts", "skills", "__pycache__", "nodejs", "static"}
+# Top-level trees that are not backend modules. The walker also skips the
+# virtualenv and runtime data such as the Mobile phone runtime.
+_EXCLUDED_TOP_DIRS = ("tests", "scripts", "skills", "nodejs", "static")
 
 _SANCTIONED = {
     "core/approot.py",
@@ -40,16 +42,6 @@ _SANCTIONED = {
 
 # Literal path joins that encode the sibling layout; only approot may spell them.
 _LAYOUT_LITERALS = {("client", "dist"), (".env.template",), ("package.json",)}
-
-
-def _iter_python_files() -> List[Path]:
-    files: List[Path] = []
-    for path in SERVER_ROOT.rglob("*.py"):
-        rel_parts = path.relative_to(SERVER_ROOT).parts
-        if any(part in _EXCLUDED_DIRS for part in rel_parts):
-            continue
-        files.append(path)
-    return files
 
 
 def _is_file_anchor(node: ast.AST) -> bool:
@@ -117,7 +109,7 @@ def _violations_in(path: Path, tree: ast.AST) -> List[str]:
 
 def test_only_approot_locates_the_app_root() -> None:
     violations: List[str] = []
-    for py in _iter_python_files():
+    for py in server_python_files(*_EXCLUDED_TOP_DIRS):
         rel = py.relative_to(SERVER_ROOT).as_posix()
         if rel in _SANCTIONED:
             continue

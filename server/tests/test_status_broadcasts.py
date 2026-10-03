@@ -434,16 +434,13 @@ class TestSendCustomEventPayload:
 
     @pytest.fixture
     def callsite_files(self) -> list[str]:
-        """All files under ``server/`` containing ``send_custom_event``."""
-        from pathlib import Path
+        """Backend files outside ``tests/`` containing ``send_custom_event``."""
+        from tests._source_tree import SERVER_ROOT, server_python_files
 
-        root = Path(__file__).resolve().parent.parent  # server/
         return [
-            str(p.relative_to(root)).replace("\\", "/")
-            for p in root.rglob("*.py")
+            p.relative_to(SERVER_ROOT).as_posix()
+            for p in server_python_files("tests")
             if "send_custom_event" in p.read_text(encoding="utf-8")
-            and "tests/" not in str(p).replace("\\", "/")
-            and p.name != "test_status_broadcasts.py"
         ]
 
     def test_definition_lives_on_status_broadcaster(self):

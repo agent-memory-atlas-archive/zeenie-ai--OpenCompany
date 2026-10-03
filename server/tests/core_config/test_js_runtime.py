@@ -5,13 +5,13 @@ the only JavaScript runtime the backend ever spawns."""
 
 from __future__ import annotations
 
-import inspect
 import json
 from pathlib import Path
 
 import pytest
 
 from core import js_runtime
+from tests._source_tree import SERVER_ROOT, server_python_files
 
 
 def test_override_wins_over_path(monkeypatch, tmp_path):
@@ -96,12 +96,9 @@ def test_backend_never_spawns_node_or_npm():
     A regression that reintroduces ``shutil.which("node")`` /
     ``which("npm")`` / an ``npx`` spawn anywhere under the backend tree
     would silently reintroduce a Node dependency."""
-    server = Path(inspect.getsourcefile(js_runtime)).resolve().parents[1]
     offenders: list[str] = []
-    for path in server.rglob("*.py"):
-        rel = path.relative_to(server).as_posix()
-        if rel.startswith(("tests/", ".venv/", "experiments/", "scripts/")) or "/node_modules/" in rel:
-            continue
+    for path in server_python_files("tests", "experiments", "scripts"):
+        rel = path.relative_to(SERVER_ROOT).as_posix()
         text = path.read_text(encoding="utf-8", errors="ignore")
         for needle in ('which("node")', "which('node')", 'which("npm")', "which('npm')", 'which("npx")', "which('npx')"):
             if needle in text:
