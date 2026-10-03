@@ -329,18 +329,20 @@ Skipping this step is fine: the app is fully reachable at `http://<STATIC_IP>` (
 `https://<STATIC_IP>` with a browser cert warning). If you skip it, set
 `JWT_COOKIE_SECURE=false` in step 2 (pitfall 11) or browser login will bounce.
 
-The `cf` CLI needs an account + zone context once, and `records create` takes a raw
-JSON `--body` (individual flags like `--type/--name` are NOT supported):
+The `cf` CLI (1.0 and later) takes the account and zone from the environment — the
+old `cf context set` commands are gone — and `records create` takes a raw JSON
+`--body` (individual flags like `--type/--name` are NOT supported):
 
 ```bash
-cf zones list                          # find the zone; grab account id from the output
-cf context set account-id <ACCOUNT_ID>
-cf context set zone <ZONE_DOMAIN>      # e.g. opencompany.sh
-cf dns records list                    # check the name is free
+cf zones list --name <ZONE_DOMAIN>     # e.g. opencompany.sh; note the zone "id" and "account" id
+export CLOUDFLARE_ACCOUNT_ID=<ACCOUNT_ID>   # needed when the login can see more than one account
+export CLOUDFLARE_ZONE_ID=<ZONE_ID>
+cf dns records list --name <SUBDOMAIN>.<ZONE_DOMAIN>   # check the name is free
 cf dns records create --body '{"type":"A","name":"<SUBDOMAIN>","content":"<STATIC_IP>","proxied":true,"ttl":1,"comment":"OpenCompany VM <ZONE> (gcloud, opencompany@latest)"}'
 ```
 
-Delete a record by id: `cf dns records delete <RECORD_ID>`.
+Delete a record by id: `cf dns records delete <RECORD_ID>` (cf asks to confirm; in a
+script add `--force`, or cf prints "Aborted." and exits 0 without deleting).
 
 `proxied: true` matches the zone's other app records; Cloudflare terminates public TLS
 and (in Full SSL mode) connects to the origin's self-signed :443.
@@ -425,8 +427,8 @@ Origin CA cert.
 gcloud compute instances delete <VM_NAME> --zone=<ZONE> --project=<PROJECT> --quiet
 gcloud compute addresses delete <IP_NAME> --region=<REGION> --project=<PROJECT> --quiet
 gcloud compute firewall-rules delete opencompany-allow-http --project=<PROJECT> --quiet
-cf dns records list   # find the record id
-cf dns records delete <RECORD_ID>
+cf dns records list --zone <ZONE_ID>   # find the record id
+cf dns records delete <RECORD_ID> --zone <ZONE_ID>
 ```
 
 ## Operations cheat sheet

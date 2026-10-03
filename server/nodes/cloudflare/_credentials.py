@@ -1,21 +1,23 @@
 """Cloudflare credential — thin marker (stripe idiom, vercel shape).
 
-Two independent auth paths, either is sufficient:
+Two independent auth paths, either is sufficient for the CLI:
 
-* **CLI login** — ``cf auth login`` (browser OAuth, loopback callback)
-  driven by the ``cloudflare_login`` WS handler; cf stores its own auth
-  state in its user-level config, and a synthetic marker OAuth token
-  flips the catalogue's ``stored`` flag. The OAuth grant carries a
-  FIXED 86-scope set (only ``dns_analytics:read`` for analytics — no
-  Web Analytics/RUM or zone-analytics scopes, and no way to request
-  more).
+* **CLI login** — ``cf auth login`` (OAuth device authorization: a URL
+  + one-time code relayed to the modal) driven by the
+  ``cloudflare_login`` WS handler; cf stores its own auth state in its
+  profile store, and a synthetic marker OAuth token flips the
+  catalogue's ``stored`` flag. The token never leaves the CLI, so the
+  login cannot serve the node's direct API calls (GraphQL Analytics).
 * **API token** — the optional canonical ``apiKey`` field (stored under
   the provider id ``cloudflare``; exposed to the node as
   ``cloudflare_api_token``), pasted in the credentials modal and injected as the
   ``CLOUDFLARE_API_TOKEN`` env var on every CLI invocation (token takes
   precedence over CLI login, per cf's documented resolution order).
-  This is the only path to endpoints outside the OAuth scope set
-  (Web Analytics/RUM, GraphQL Analytics, zone analytics).
+  It is also what ``graphql_query`` authenticates with.
+
+The field also accepts a ``cfk_`` Global API Key (with the
+``cloudflare_email`` companion), but only for the direct API calls —
+the cf CLI does not accept Global API Keys.
 """
 
 from __future__ import annotations

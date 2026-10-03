@@ -78,6 +78,25 @@ def ensure_shared_tree(root: Path | None = None) -> Path:
     return tree
 
 
+def installed_version(name: str, root: Path | None = None) -> str | None:
+    """Version of ``name`` in the shared tree, from its
+    ``node_modules/<name>/package.json``; ``None`` when the package is not
+    installed or its manifest is unreadable.
+
+    An existing bin shim says nothing about which version it runs, so a
+    plugin that pins a version compares against this to notice that its
+    pin moved on (``bun add`` of the new pin replaces the old copy).
+    """
+    tree = root or packages_dir()
+    manifest = tree / "node_modules" / name / "package.json"
+    try:
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    version = data.get("version") if isinstance(data, dict) else None
+    return version if isinstance(version, str) and version else None
+
+
 def add_package(spec: str, *, trust: bool = False, root: Path | None = None) -> subprocess.CompletedProcess[str]:
     """Blocking ``bun add`` of ``spec`` into the shared tree.
 
@@ -102,6 +121,7 @@ __all__ = [
     "bin_shim_name",
     "bun_binary",
     "ensure_shared_tree",
+    "installed_version",
     "require_bun",
     "shared_tree_bin",
 ]

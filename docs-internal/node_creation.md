@@ -202,29 +202,30 @@ packages tree, the bin shim then running on bun — instead of a
 GitHub-release download. Reference: [`server/nodes/vercel/`](../server/nodes/vercel/)
 + [vercel_service.md](./vercel_service.md).
 
-**CLI-opens-the-browser variant (Cloudflare).** Some CLIs run the
-whole browser interaction themselves: `cf auth login` starts a loopback
-PKCE callback server on a **fixed port** (8877) and opens the default
-browser directly. The login handler then proxies NOTHING to the modal
-(no URL, no verification code — just `{success, message}`); the badge
-flips when the background completion broadcasts. Two hazards force the
-handler's shape: concurrent logins collide on the fixed port
-(single-flight guard: repeat clicks return "already in progress"), and
-on Windows killing bun's `.exe` launcher shim orphans the child bun
-process still holding the port (the completion watcher never kills — the CLI's own
-login timeout ends it). Success gate = a CLI status probe that parses
-JSON, never exit codes (`cf auth whoami` exits 0 in both auth states).
-When the CLI's OAuth grant is a fixed scope set (cf: 86 scopes, no
-`--scopes`), pair it with an optional API-token field (vercel dual-path)
-as the documented full-scope escape. Reference:
+**CLI-opens-the-browser variant (gcloud).** Some CLIs run the whole
+browser interaction themselves: `gcloud auth login --quiet` starts a
+loopback callback server and opens the default browser directly. The
+login handler then proxies NOTHING to the modal (no URL, no
+verification code — just `{success, message}`); the badge flips when the
+background completion broadcasts. A single-flight guard (repeat clicks
+return "already in progress") prevents duplicate browser tabs — and,
+for a CLI whose callback port is fixed, port collisions — and the
+completion watcher never kills the process: on Windows killing a
+launcher shim orphans the child still serving the callback, and the
+CLI's own login timeout ends it. Success gate = a CLI status probe that
+parses JSON, never exit codes. gcloud also pins `CLOUDSDK_CONFIG` so
+node auth state never touches the operator's own gcloud config.
+Reference: [`server/nodes/gcloud/`](../server/nodes/gcloud/) +
+[gcloud_service.md](./gcloud_service.md). Cloudflare used this variant
+until cf 1.0 made device authorization its default login; it now
+follows the gh device-flow shape (URL + code relayed to the modal,
+`--no-browser` so the server never opens a second tab), keeps the
+single-flight guard (a repeat click returns the same code) and the
+never-kill rule, installs the CLI before spawning any login so no code
+is issued after its request was answered, and pairs the login with an
+optional API-token field (vercel dual-path) for unattended use:
 [`server/nodes/cloudflare/`](../server/nodes/cloudflare/) +
-[cloudflare_service.md](./cloudflare_service.md). gcloud is the second
-reference for this variant (`gcloud auth login --quiet`; random
-loopback port, so no fixed-port collision — the single-flight guard is
-kept anyway to prevent duplicate browser tabs, and it adds a pinned
-`CLOUDSDK_CONFIG` dir so node auth state never touches the operator's
-own gcloud config): [`server/nodes/gcloud/`](../server/nodes/gcloud/) +
-[gcloud_service.md](./gcloud_service.md).
+[cloudflare_service.md](./cloudflare_service.md).
 
 ## What auto-wires (don't write it yourself)
 

@@ -9,13 +9,15 @@ Storage) plus a `custom` passthrough covering the entire gcloud surface
 (IAM, Cloud SQL, Functions, GKE, logging, `services enable`, ...).
 
 **Auth model: the gcloud CLI owns its own auth** — the Stripe/gh
-pattern, with the cloudflare login variant (the CLI opens the browser
-itself). OpenCompany never stores, reads, or injects a credential:
+pattern, with the CLI-opens-the-browser login variant (the one the
+Cloudflare plugin used before cf 1.0 moved to device authorization).
+OpenCompany never stores, reads, or injects a credential:
 
 - `gcloud auth login --quiet` runs Google's OAuth flow with a loopback
   callback on a **random port** and opens the default browser itself —
   the handler never parses or proxies the authorize URL (no custom
-  login UI; cf precedent, minus cf's fixed-port collision hazard).
+  login UI; the pre-1.0 cf precedent, minus its fixed-port collision
+  hazard).
 - Credentials land in **gcloud's own store under the pinned config
   dir** (see isolation below), not the operator's global gcloud state.
 - The credentials modal's connected badge is a synthetic `cli-managed`
@@ -91,7 +93,7 @@ calls.
 and returns `{success, message}` — no url/verification_code (the CLI
 opens the browser itself). Fast path: if `active_account()` is already
 truthy the handler marks + returns without spawning. Hazards handled
-(cf precedent): single-flight guard (repeat clicks return "already in
+(inherited from the pre-1.0 cf plugin): single-flight guard (repeat clicks return "already in
 progress" instead of a second browser tab), pipes drained for the
 process lifetime, and the completion watcher **never kills the
 process** — on Windows `gcloud.cmd` is a cmd.exe shim around the

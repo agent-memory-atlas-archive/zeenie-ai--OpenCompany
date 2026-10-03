@@ -61,6 +61,24 @@ def test_ensure_shared_tree_writes_a_private_manifest(tmp_path):
     assert "cf" in json.loads((root / "package.json").read_text(encoding="utf-8"))["dependencies"]
 
 
+def test_installed_version_reads_the_package_manifest(tmp_path):
+    assert js_runtime.installed_version("cf", root=tmp_path) is None
+    pkg = tmp_path / "node_modules" / "cf"
+    pkg.mkdir(parents=True)
+    (pkg / "package.json").write_text('{"name":"cf","version":"1.0.0-beta.12"}', encoding="utf-8")
+    assert js_runtime.installed_version("cf", root=tmp_path) == "1.0.0-beta.12"
+    # scoped names resolve through their scope folder
+    scoped = tmp_path / "node_modules" / "@anthropic-ai" / "claude-code"
+    scoped.mkdir(parents=True)
+    (scoped / "package.json").write_text('{"version":"2.1.0"}', encoding="utf-8")
+    assert js_runtime.installed_version("@anthropic-ai/claude-code", root=tmp_path) == "2.1.0"
+    # an unreadable or version-less manifest counts as "not installed"
+    (pkg / "package.json").write_text("{oops", encoding="utf-8")
+    assert js_runtime.installed_version("cf", root=tmp_path) is None
+    (pkg / "package.json").write_text('{"name":"cf"}', encoding="utf-8")
+    assert js_runtime.installed_version("cf", root=tmp_path) is None
+
+
 def test_add_package_builds_a_bun_add_argv(monkeypatch, tmp_path):
     seen: dict[str, object] = {}
 

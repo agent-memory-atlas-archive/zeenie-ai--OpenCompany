@@ -2,13 +2,14 @@
 official cf CLI.
 
 Self-contained CLI-managed-auth plugin (Stripe/gh pattern): the cf CLI
-owns its auth end-to-end — ``cf auth login`` (PKCE OAuth with a
-loopback callback on localhost:8877) driven from the credentials modal
-(or the user's own terminal), token in cf's user-level config, a
+owns its auth end-to-end — ``cf auth login`` (OAuth device
+authorization; the URL + one-time code are shown in the credentials
+modal) or the user's own terminal, token in cf's own profile store, a
 synthetic ``cli-managed`` marker OAuth row for the catalogue badge.
-OpenCompany never stores or injects a token. Headless alternative: an
-ambient ``CLOUDFLARE_API_TOKEN`` env var (cf's documented first-priority
-credential source) works for ops without any login.
+OpenCompany never reads that token. Headless alternative: an API token
+pasted in the modal, or an ambient ``CLOUDFLARE_API_TOKEN`` env var
+(cf's documented first-priority credential source), works for ops
+without any login.
 """
 
 from __future__ import annotations
