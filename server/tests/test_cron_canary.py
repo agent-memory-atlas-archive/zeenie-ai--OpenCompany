@@ -534,6 +534,37 @@ class TestCronExpression:
 
         assert _as_temporal_reads(expression) == _fires(minute="*/5")
 
+    def test_the_panel_shows_the_fields_the_schedule_reads(self):
+        """For each frequency, the panel shows exactly the fields its Schedule
+        is built from. The timezone, shown for all of them, is read beside
+        the cron string rather than by the builder."""
+        from typing import get_args
+
+        from nodes.scheduler.cron_scheduler import CronSchedulerParams
+        from services.deployment.triggers import TriggerManager
+
+        class Recording(dict):
+            def __init__(self, **params):
+                super().__init__(**params)
+                self.read = set()
+
+            def get(self, key, default=None):
+                self.read.add(key)
+                return super().get(key, default)
+
+        fields = CronSchedulerParams.model_json_schema()["properties"]
+        for frequency in get_args(CronSchedulerParams.model_fields["frequency"].annotation):
+            params = Recording(frequency=frequency)
+            TriggerManager.build_cron_expression(params)
+            shown = {
+                name
+                for name, field in fields.items()
+                if not field.get("hidden")
+                and frequency in field.get("displayOptions", {}).get("show", {}).get("frequency", [frequency])
+            }
+
+            assert shown - {"frequency", "timezone"} == params.read - {"frequency"}, frequency
+
     @pytest.mark.parametrize(
         ("trigger", "fires"),
         [

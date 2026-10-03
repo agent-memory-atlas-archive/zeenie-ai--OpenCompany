@@ -36,9 +36,9 @@ call `event_waiter.register()`.
 | `weekday` | options | `'1'` (Mon) | no | frequency == `weeks` | Display-only. |
 | `weekly_time` | options | `09:00` | no | frequency == `weeks` | Display-only. |
 | `month_day` | options | `'1'` | no | frequency == `months` | `1`..`28` or `L`. Display-only in this op. |
+| `monthly_time` | string | `09:00` | no | frequency == `months` | `HH:MM`, the time a monthly schedule runs. Free text, unlike the daily and weekly times. Display-only in this op. |
 | `timezone` | options | `UTC` | no | - | Used in the description string only. |
-| `cron_expression` | string | `0 * * * *` | no | - | Vestigial; kept for backward compatibility, unused by the op. |
-| `monthly_time` | string | `09:00` | no | - | Vestigial; kept for backward compatibility, no displayOptions. |
+| `cron_expression` | string | `0 * * * *` | no | hidden | Never read, by this op or the deployed Schedule. Kept for older workflows and hidden from the panel. |
 
 Note: for `days` / `weeks` / `months` the op hard-codes the wait to 24h
 / 7d / ~30d respectively; the `daily_time` / `weekday` / `weekly_time` /
@@ -147,6 +147,11 @@ flowchart TD
 
   Checked against a real Temporal dev server on 2026-10-01 for every
   frequency.
+- **The panel shows only fields that change the Schedule.** For each
+  frequency it shows exactly the fields `build_cron_expression` reads,
+  plus `frequency` and `timezone`; a new field or frequency has to keep
+  that true (`test_the_panel_shows_the_fields_the_schedule_reads` in
+  `server/tests/test_cron_canary.py`).
 - **A deployed run's `schedule` output** comes from the deploy path's own
   copy of the description, `DeploymentManager._get_schedule_description`
   (services never import a plugin folder). `TestScheduleDescription` in

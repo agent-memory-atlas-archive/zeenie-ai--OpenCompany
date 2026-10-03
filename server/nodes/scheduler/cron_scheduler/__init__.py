@@ -208,6 +208,11 @@ class CronSchedulerParams(BaseModel):
         description="Day of month (1-28, or 'L' for last day)",
         json_schema_extra={"displayOptions": {"show": {"frequency": ["months"]}}},
     )
+    monthly_time: str = Field(
+        default="09:00",
+        description="Time of day (HH:MM) for monthly schedule",
+        json_schema_extra={"displayOptions": {"show": {"frequency": ["months"]}}},
+    )
     timezone: Literal[
         "UTC",
         "America/New_York",
@@ -220,9 +225,9 @@ class CronSchedulerParams(BaseModel):
         default="UTC",
         description="IANA timezone identifier",
     )
-    # Vestigial fields kept for backward compatibility with older workflows.
-    cron_expression: str = Field(default="0 * * * *")
-    monthly_time: str = Field(default="09:00")
+    # Never read: the deployed Schedule is built from the fields above. Kept
+    # for older workflows, and hidden so nobody types a schedule into it.
+    cron_expression: str = Field(default="0 * * * *", json_schema_extra={"hidden": True})
 
     model_config = ConfigDict(extra="allow")
 
