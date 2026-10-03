@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any
 from sqlmodel import SQLModel, Field, Column, DateTime, JSON
-from sqlalchemy import UniqueConstraint, func
+from sqlalchemy import Index, UniqueConstraint, func
 
 
 class NodeParameter(SQLModel, table=True):
@@ -215,15 +215,33 @@ class ChatMessage(SQLModel, table=True):
 
     Stores user and assistant messages from the chat panel (Console Panel chat section).
     These are separate from ConversationMessage which stores AI agent memory.
+
+    ``uid`` is the message's stable id on the wire (``m_…`` for the owner's,
+    ``a_<run id>`` for a run's reply). ``parent_uid`` links a message to the
+    one it follows, so edits can branch (models/chat.py holds the runs and
+    each session's active leaf). ``parts`` is the structured content a reply
+    gathered (steps, generated UI, sources, ...); ``message`` stays the text.
     """
 
     __tablename__ = "chat_messages"
+    # Named like core/database.py's migration creates it on older databases.
+    __table_args__ = (Index("ux_chat_messages_uid", "uid", unique=True),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
     session_id: str = Field(default="default", index=True, max_length=255)
     execution_id: Optional[str] = Field(default=None, index=True, max_length=255)
     role: str = Field(max_length=20)  # 'user' or 'assistant'
     message: str = Field(max_length=50000)  # Large content support
+    uid: Optional[str] = Field(default=None, max_length=64)
+    parent_uid: Optional[str] = Field(default=None, max_length=64)
+    run_id: Optional[str] = Field(default=None, index=True, max_length=64)
+    #: ``text``; ``report`` (Post to Talk); ``action`` (a button press).
+    kind: str = Field(default="text", max_length=20)
+    #: ``complete``, ``stopped`` (the owner pressed Stop), ``error``.
+    status: str = Field(default="complete", max_length=20)
+    parts: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
+    attachments: list = Field(default_factory=list, sa_column=Column(JSON))
+    meta: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc), sa_column=Column(DateTime(timezone=True), server_default=func.now())
     )

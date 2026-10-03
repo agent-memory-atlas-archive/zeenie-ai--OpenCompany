@@ -226,6 +226,7 @@ class TemporalWorkerManager:
         )
         from services.temporal.agent_activities import collect_agent_activities
         from services.temporal.workspace_task_activities import reset_workspace_task_runtime
+        from services.chat.activities import CHAT_RUN_ACTIVITIES
         from services.temporal.activities import (
             broadcast_trigger_status_activity,
             evaluate_trigger_filter_activity,
@@ -282,6 +283,7 @@ class TemporalWorkerManager:
                 pause_workflow_on_failure_activity,
                 record_run_completion_activity,
                 reset_workspace_task_runtime,
+                *CHAT_RUN_ACTIVITIES,
                 store_node_output_activity,
                 *per_type,
                 *agent_activities,
@@ -741,6 +743,7 @@ async def run_standalone_worker(
     )
     from services.temporal.agent_activities import collect_agent_activities
     from services.temporal.workspace_task_activities import reset_workspace_task_runtime
+    from services.chat.activities import CHAT_RUN_ACTIVITIES
     from services.temporal.agent_workflow import (
         AgentWorkflow,
         DelegatedTaskWorkflow,
@@ -767,6 +770,7 @@ async def run_standalone_worker(
                 pause_workflow_on_failure_activity,
                 record_run_completion_activity,
                 reset_workspace_task_runtime,
+                *CHAT_RUN_ACTIVITIES,
                 store_node_output_activity,
                 *registered_plugin_activities,
                 *registered_agent_activities,
@@ -824,6 +828,7 @@ async def create_worker(
     )
     from services.temporal.agent_activities import collect_agent_activities
     from services.temporal.workspace_task_activities import reset_workspace_task_runtime
+    from services.chat.activities import CHAT_RUN_ACTIVITIES
     from services.temporal.agent_workflow import (
         AgentWorkflow,
         DelegatedTaskWorkflow,
@@ -849,6 +854,7 @@ async def create_worker(
             pause_workflow_on_failure_activity,
             record_run_completion_activity,
             reset_workspace_task_runtime,
+            *CHAT_RUN_ACTIVITIES,
             store_node_output_activity,
             *registered_plugin_activities,
             *registered_agent_activities,

@@ -58,6 +58,11 @@ from models.employees import (  # noqa: F401 - registers SQLModel tables
 from models.approvals import (  # noqa: F401 - registers SQLModel tables
     ApprovalRequest,
 )
+from models.chat import (  # noqa: F401 - registers SQLModel tables
+    ChatRun,
+    ChatRunPart,
+    ChatThread,
+)
 from models.cache import CacheEntry  # SQLite-backed cache for Redis alternative
 from core.logging import get_logger
 
@@ -132,6 +137,7 @@ class Database:
             await self._migrate_agent_teams()
             await self._migrate_workflow_controls()
             await self._migrate_generation_scoped_runtime_data()
+            await self._migrate_chat_messages()
 
             logger.info("Database initialized successfully")
 
@@ -436,6 +442,21 @@ class Database:
         else:
             await asyncio.shield(_teardown_session(session, rollback=False))
 
+    @asynccontextmanager
+    async def reserved_session(self):
+        """A session whose write transaction is reserved before its first read.
+
+        SQLite's deferred transactions let two writers read the same rows
+        before either writes; ``BEGIN IMMEDIATE`` takes the write reservation
+        first, so a whole read/modify/write runs alone (as in
+        :meth:`run_runtime_mutation`). The caller commits; leaving the block
+        without committing rolls back.
+        """
+        async with self.get_session() as session:
+            if self.engine is not None and self.engine.dialect.name == "sqlite":
+                await session.execute(text("BEGIN IMMEDIATE"))
+            yield session
+
     async def _migrate_workflow_controls(self):
         """Backfill control-plane columns when upgrading an early preview DB."""
         try:
@@ -502,6 +523,50 @@ class Database:
                     ))
         except Exception as exc:
             logger.warning(f"Generation runtime-data migration check failed: {exc}")
+
+    async def _migrate_chat_messages(self):
+        """Give older chat rows the columns chat runs need.
+
+        Rows written before this migration get a ``uid`` (``m<id>``) and a
+        ``parent_uid`` chaining each session's rows in order, the shape every
+        new row is written in. The backfill runs once: only in the startup
+        that adds the ``uid`` column, so a session's first message or a
+        report (both legitimately parentless) never gains a parent later.
+        """
+        try:
+            async with self.engine.begin() as conn:
+                result = await conn.execute(text("PRAGMA table_info(chat_messages)"))
+                columns = {row[1] for row in result.fetchall()}
+                if not columns:
+                    return
+                additions = {
+                    "uid": "VARCHAR(64)",
+                    "parent_uid": "VARCHAR(64)",
+                    "run_id": "VARCHAR(64)",
+                    "kind": "VARCHAR(20) DEFAULT 'text'",
+                    "status": "VARCHAR(20) DEFAULT 'complete'",
+                    "parts": "JSON DEFAULT '{}'",
+                    "attachments": "JSON DEFAULT '[]'",
+                    "meta": "JSON DEFAULT '{}'",
+                }
+                backfill = "uid" not in columns
+                for column, definition in additions.items():
+                    if column not in columns:
+                        await conn.execute(text(f"ALTER TABLE chat_messages ADD COLUMN {column} {definition}"))
+                if backfill:
+                    await conn.execute(text("UPDATE chat_messages SET uid = 'm' || id WHERE uid IS NULL"))
+                    await conn.execute(text(
+                        "UPDATE chat_messages SET parent_uid = ("
+                        " SELECT prev.uid FROM chat_messages AS prev"
+                        " WHERE prev.session_id = chat_messages.session_id"
+                        " AND (prev.created_at < chat_messages.created_at"
+                        "  OR (prev.created_at = chat_messages.created_at AND prev.id < chat_messages.id))"
+                        " ORDER BY prev.created_at DESC, prev.id DESC LIMIT 1)"
+                    ))
+                await conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ux_chat_messages_uid ON chat_messages(uid)"))
+                await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_chat_messages_run_id ON chat_messages(run_id)"))
+        except Exception as exc:
+            logger.warning(f"Chat message migration check failed: {exc}")
 
     async def run_runtime_mutation(
         self,
@@ -1356,62 +1421,164 @@ class Database:
     # Chat Messages (Console Panel persistence)
     # ============================================================================
 
+    async def append_chat_row(
+        self,
+        session: AsyncSession,
+        *,
+        session_id: str,
+        role: str,
+        message: str,
+        execution_id: Optional[str] = None,
+        uid: Optional[str] = None,
+        run_id: Optional[str] = None,
+        kind: str = "text",
+        status: str = "complete",
+        parts: Optional[Dict[str, Any]] = None,
+        attachments: Optional[List[Dict[str, Any]]] = None,
+        meta: Optional[Dict[str, Any]] = None,
+    ) -> ChatMessage:
+        """Append a message to the end of a session's shown path, inside the
+        caller's :meth:`reserved_session` (the caller commits).
+
+        The new row follows the thread's active leaf and becomes the leaf, so
+        every message joins one chain: two writers at once would otherwise
+        both follow the same leaf and fork it, and a fork hides one branch. A
+        session written before threads existed follows its newest message.
+        """
+        from uuid import uuid4
+
+        thread = await session.get(ChatThread, session_id)
+        if thread is None:
+            newest = await session.execute(
+                select(ChatMessage.uid)
+                .where(ChatMessage.session_id == session_id)
+                .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
+                .limit(1)
+            )
+            parent_uid = newest.scalar_one_or_none()
+            thread = ChatThread(session_id=session_id)
+            session.add(thread)
+        else:
+            parent_uid = thread.active_leaf_uid
+        row = ChatMessage(
+            session_id=session_id, role=role, message=message,
+            execution_id=execution_id,
+            uid=uid or f"m_{uuid4().hex}",
+            parent_uid=parent_uid,
+            run_id=run_id,
+            kind=kind,
+            status=status,
+            parts=parts or {},
+            attachments=attachments or [],
+            meta=meta or {},
+        )
+        session.add(row)
+        thread.active_leaf_uid = row.uid
+        thread.revision = (thread.revision or 0) + 1
+        thread.updated_at = datetime.now(timezone.utc)
+        await session.flush()
+        return row
+
     async def add_chat_message(
         self, session_id: str, role: str, message: str,
         execution_id: Optional[str] = None,
-    ) -> bool:
-        """Add a chat message to the console panel history."""
+        *,
+        uid: Optional[str] = None,
+        run_id: Optional[str] = None,
+        kind: str = "text",
+        status: str = "complete",
+        parts: Optional[Dict[str, Any]] = None,
+        attachments: Optional[List[Dict[str, Any]]] = None,
+        meta: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Append a chat message (:meth:`append_chat_row`) and return it as
+        :meth:`chat_row` shapes it, or None when it could not be saved.
+
+        A ``uid`` already in the session returns the stored row unchanged, so
+        a retried write (an activity attempt, a resent message) saves once.
+        """
         try:
-            async with self.get_session() as session:
-                chat_msg = ChatMessage(
-                    session_id=session_id, role=role, message=message,
-                    execution_id=execution_id,
+            async with self.reserved_session() as session:
+                if uid is not None:
+                    found = await session.execute(select(ChatMessage).where(ChatMessage.uid == uid))
+                    existing = found.scalar_one_or_none()
+                    if existing is not None:
+                        if existing.session_id != session_id:
+                            raise ValueError("message id belongs to another chat")
+                        return self.chat_row(existing)
+                row = await self.append_chat_row(
+                    session,
+                    session_id=session_id, role=role, message=message, execution_id=execution_id,
+                    uid=uid, run_id=run_id, kind=kind, status=status,
+                    parts=parts, attachments=attachments, meta=meta,
                 )
-                session.add(chat_msg)
                 await session.commit()
                 logger.debug(f"[Chat] Added {role} message to session '{session_id}'")
-                return True
+                return self.chat_row(row)
 
         except Exception as e:
             logger.error("Failed to add chat message", session_id=session_id, error=str(e))
-            return False
+            return None
+
+    @staticmethod
+    def chat_row(message: ChatMessage) -> Dict[str, Any]:
+        """A chat row as the handlers read it. The timestamp carries its UTC
+        offset (SQLite returns the stored UTC time naive)."""
+        moment = message.created_at
+        if moment is not None and moment.tzinfo is None:
+            moment = moment.replace(tzinfo=timezone.utc)
+        return {
+            "id": message.id,
+            "uid": message.uid,
+            "parent_uid": message.parent_uid,
+            "run_id": message.run_id,
+            "role": message.role,
+            "message": message.message,
+            "kind": message.kind or "text",
+            "status": message.status or "complete",
+            "parts": message.parts or {},
+            "attachments": message.attachments or [],
+            "meta": message.meta or {},
+            "timestamp": moment.isoformat() if moment is not None else None,
+            "execution_id": message.execution_id,
+        }
 
     async def get_chat_messages(
         self, session_id: str, limit: Optional[int] = None,
         execution_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Chat messages for a session, oldest first: the newest ``limit``
-        when given, of one generation when ``execution_id`` is. Each is
-        ``{id, role, message, timestamp, execution_id}``; the timestamp
-        carries its UTC offset (SQLite returns the stored UTC time naive)."""
+        when given, of one generation when ``execution_id`` is. Rows are
+        shaped by :meth:`chat_row`. A read that fails returns ``[]``; use
+        :meth:`read_chat_messages` where a failure must be told apart from an
+        empty thread."""
         try:
-            async with self.get_session() as session:
-                stmt = select(ChatMessage).where(ChatMessage.session_id == session_id)
-                if execution_id is not None:
-                    stmt = stmt.where(ChatMessage.execution_id == execution_id)
-                stmt = stmt.order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
-                if limit and limit > 0:
-                    stmt = stmt.limit(limit)
-
-                result = await session.execute(stmt)
-                messages = list(reversed(result.scalars().all()))
-
-                def utc(moment: Optional[datetime]) -> Optional[str]:
-                    if moment is None:
-                        return None
-                    return (moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)).isoformat()
-
-                return [
-                    {"id": m.id, "role": m.role, "message": m.message, "timestamp": utc(m.created_at), "execution_id": m.execution_id}
-                    for m in messages
-                ]
-
+            return await self.read_chat_messages(session_id, limit, execution_id=execution_id)
         except Exception as e:
             logger.error("Failed to get chat messages", session_id=session_id, error=str(e))
             return []
 
+    async def read_chat_messages(
+        self, session_id: str, limit: Optional[int] = None,
+        execution_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """:meth:`get_chat_messages`, raising when the read fails."""
+        async with self.get_session() as session:
+            stmt = select(ChatMessage).where(ChatMessage.session_id == session_id)
+            if execution_id is not None:
+                stmt = stmt.where(ChatMessage.execution_id == execution_id)
+            stmt = stmt.order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
+            if limit and limit > 0:
+                stmt = stmt.limit(limit)
+
+            result = await session.execute(stmt)
+            return [self.chat_row(m) for m in reversed(result.scalars().all())]
+
     async def clear_chat_messages(self, session_id: str) -> int:
-        """Clear all chat messages for a session. Returns count deleted."""
+        """Clear a session's chat: its messages, and the runs, run parts and
+        thread state that belong to them. Returns the messages deleted."""
+        from sqlalchemy import delete as sa_delete
+
         try:
             async with self.get_session() as session:
                 stmt = select(ChatMessage).where(ChatMessage.session_id == session_id)
@@ -1421,6 +1588,11 @@ class Database:
                 count = len(messages)
                 for message in messages:
                     await session.delete(message)
+
+                run_ids = select(ChatRun.run_id).where(ChatRun.session_id == session_id)
+                await session.execute(sa_delete(ChatRunPart).where(ChatRunPart.run_id.in_(run_ids)))
+                await session.execute(sa_delete(ChatRun).where(ChatRun.session_id == session_id))
+                await session.execute(sa_delete(ChatThread).where(ChatThread.session_id == session_id))
 
                 await session.commit()
                 logger.info(f"[Chat] Cleared {count} messages from session '{session_id}'")

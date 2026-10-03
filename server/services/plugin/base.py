@@ -1150,6 +1150,9 @@ class BaseNode:
                     "context_execution_id",
                     "context_session_id",
                     "data_scope_id",
+                    # The chat run this run answers (MachinaWorkflow sets it
+                    # for a run the owner's chat message started).
+                    "run_scope",
                 ):
                     if key in context:
                         extras[key] = context[key]

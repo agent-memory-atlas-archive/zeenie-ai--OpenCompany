@@ -1,0 +1,10 @@
+{
+  "runs": {
+    "pickup_timeout_s": 120,
+    "max_running_s": 86400,
+    "watchdog_interval_s": 30
+  },
+  "hub": {
+    "subscriber_queue_size": 512
+  }
+}

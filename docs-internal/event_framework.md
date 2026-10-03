@@ -98,9 +98,16 @@ broadcast semantics) are unchanged. First producer: chat — the panel is
 bound to one workflow (`session_id` IS its workflow id), and without the
 scope one workflow's chat message fired every deployed workflow's
 chatTrigger. The scoping DECISION lives in the core call site
-(`routers/websocket.py:handle_send_chat_message`; the legacy `"default"`
-session stays unscoped) and the narrowing in core dispatch — plugin
-`_events.py` factories only plumb the field of their own wire shape.
+(`services/chat/handlers.py:handle_send_chat_message`; the legacy
+`"default"` session stays unscoped) and the narrowing in core dispatch —
+event factories (the chat one is `services/chat/events.py`, source
+`opencompany://services/chat`) only plumb the field of their own wire
+shape. The chat message is emitted with `broadcast=False` (it carries the
+owner's text), and its CloudEvent id is the chat run it started, so the
+listener's child run id is predictable; chat run events (`chat_run_event`)
+never ride `emit` or the broadcast at all: `services/chat/hub.py` delivers
+them only to sockets subscribed to the session
+([chat_protocol.md](./chat_protocol.md)).
 
 Worker is embedded in the FastAPI process (the `main.py` lifespan schedules
 `run_temporal_lifecycle` from `services/temporal/lifecycle.py` as one

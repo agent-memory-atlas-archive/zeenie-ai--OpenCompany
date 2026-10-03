@@ -10,7 +10,12 @@ AG-UI JSON.
 
 Status: being built on `feature/chat-genui`; the design and the owner's decisions are in the plan recorded at
 `~/.claude/plans/analyze-the-new-generative-zazzy-cosmos.md`. Change this document in the same commit as any change
-to the shapes below, and bump `protocol_version` when an existing field changes meaning.
+to the shapes below, and bump `protocol_version` (returned by `get_chat_messages`) when an existing field changes
+meaning.
+
+Built so far: runs and their storage, the lifecycle events (`started`, `finished`, `failed`), subscriptions,
+`get_chat_messages` v2, `get_chat_run`, the watchdog and the MachinaWorkflow patch (see [Runs](#runs)). Every other
+event, handler and part below is the contract the later phases build to.
 
 ## Concepts
 
@@ -42,8 +47,15 @@ internal socket, load the workflow, and compare its owner with the socket's exec
   attributes.
 - `seq` increases by one per run. The client drops duplicates `(run_id, seq)` and asks for a snapshot on a gap.
 - `hub_epoch` changes when the server process restarts. A changed epoch means the client must resync.
-- Each subscriber has a bounded queue. Under pressure the hub merges consecutive text deltas of one segment, never
-  drops lifecycle events, and finally sends `custom` `opencompany.resync`.
+- `chat_subscribe` answers with the session's live runs as snapshots, each with the `seq` it reflects. The hub is
+  read before the database, so an event published meanwhile carries a higher `seq` than its snapshot: drop events
+  with `seq` at or below the snapshot's, and buffer events that arrive before the response.
+- Each subscriber has a bounded queue (`hub.subscriber_queue_size` in `server/config/chat_defaults.json`). A socket
+  that falls that far behind has its queue replaced by one `custom` `opencompany.resync` per session it follows
+  (`data: {session_id, hub_epoch, name, value}`, no `run_id`); the client then takes fresh snapshots. Merging
+  consecutive text deltas of one segment comes with streaming.
+- Delivery is in-process: events published by an activity on a worker in another process do not reach sockets here
+  yet (a relay is planned).
 - `chat.updated` remains an identity-only broadcast (`{workflow_id, session_id, role}`) that tells every open thread
   to refetch `get_chat_messages`.
 
@@ -89,7 +101,10 @@ streamed.
 | `interrupt` | Drafts wait for the owner. `outcome.interrupts: [{id, reason: "tool_call", message, tool_call_id, response_schema, expires_at}]`; `id` is the approval id. |
 | `stopped` | The owner pressed Stop. OpenCompany extension; AG-UI defines only `success` and `interrupt`. |
 
-Never-picked-up runs end with `run.failed` code `not_delivered`; a Reset ends live runs with code `reset`.
+Runs nothing will finish end with `run.failed`: code `not_delivered` (never picked up, or the employee stopped
+first), `timed_out` (running longer than `runs.max_running_s`), `interrupted` (its workflow closed without finishing
+it and no reply was saved; with a saved reply it finishes instead). A Reset ends live runs with code `reset`, the
+owner's Clear with `cleared`, and both delete them.
 
 ## Handlers
 
@@ -100,10 +115,11 @@ All are WebSocket request/response handlers with snake_case payloads. Failures a
 
 | Handler | Request | Response |
 |---|---|---|
-| `send_chat_message` | `{session_id, message, role: "user", timestamp?, client_message_id?, attachments?: FileRef[], options?: {web?}, ui_event?: {part_id, element_id, action, params}}` | `{success, message_id, run_id, delivery: "now" \| "queued", timestamp}` |
-| `get_chat_messages` | `{session_id, limit?, all_generations?}` | `{success, messages, thread: {active_leaf_id, revision}, active_runs}` |
-| `chat_subscribe` / `chat_unsubscribe` | `{session_id}` | `{success, hub_epoch, active_runs: [RunSnapshot]}` |
-| `get_chat_run` | `{run_id}` | `{success, run: RunSnapshot}` |
+| `send_chat_message` | `{session_id, message, role: "user", timestamp?, client_message_id?, attachments?: FileRef[], options?: {web?}, ui_event?: {part_id, element_id, action, params}}` | `{success, message_id, run_id, delivery: "now" \| "queued", timestamp}`; `run_id` is null when the message starts no run |
+| `get_chat_messages` | `{session_id, limit?, all_generations?}` | `{success, protocol_version, session_id, messages, thread: {active_leaf_id, revision}, active_runs: [RunSnapshot]}` |
+| `chat_subscribe` | `{session_id}` | `{success, session_id, hub_epoch, active_runs: [RunSnapshot]}` |
+| `chat_unsubscribe` | `{session_id}` | `{success, session_id, hub_epoch}` |
+| `get_chat_run` | `{run_id}` | `{success, run: RunSnapshot}`, or `not_found` |
 | `stop_chat_run` | `{run_id}` or `{session_id}` | `{success, run_id, state}` |
 | `edit_chat_message` | `{message_id, text, attachments?, expected_revision}` | `{success, message_id, run_id}` |
 | `regenerate_chat_reply` | `{message_id, expected_revision}` | `{success, run_id}` |
@@ -112,10 +128,15 @@ All are WebSocket request/response handlers with snake_case payloads. Failures a
 | `get_chat_context` | `{session_id}` | `{success, commands, suggestions, capabilities, genui_catalog, limits, ask_first: {value, editable, replies_gated}}` |
 | `clear_chat_messages` | `{session_id}` | `{success}`; also clears runs, parts, snapshots, notes and feedback, and makes the employee forget the conversation |
 
-`send_chat_message` with the same `client_message_id` returns the run the first call created.
+`send_chat_message` with the same `client_message_id` (1 to 100 letters, digits or `_.:-`) returns the message
+and run the first call created, and dispatches nothing again.
 
-**RunSnapshot** is the state the client reducer would hold after replaying the run's events:
-`{run_id, kind, state, seq, steps, segments: [{message_id, text, final}], activities, interrupts, started_at}`.
+**RunSnapshot** is the state the client reducer would hold after replaying the run's events
+(`server/services/chat/reducer.py` folds them the same way):
+`{run_id, session_id, workflow_id, kind, state, seq, hub_epoch, user_message_id, reply_message_id, parent_run_id,
+created_at, started_at, finished_at, steps, segments: [{message_id, text, final}], activities, interrupts, outcome,
+result, error, error_code}`. `state` is `queued`, `pending`, `running`, `stopping`, `finished`, `error` or `stopped`.
+A snapshot read after a server restart has its steps but no text segments (text is stored with the reply).
 
 ### Approvals (`server/services/approvals/handlers.py`)
 
@@ -147,10 +168,15 @@ summary adds `kind` (`gate` or `tool_call`), `node_type`, `tool_name`, `tool_cal
 
 ```
 {id, legacy_id, role, kind, text, message, timestamp, run_key, run_id, parent_id, status, attachments,
- parts, feedback, siblings: {index, count, ids}, editable}
+ parts, feedback, siblings: {index, count, ids}, editable, client_message_id?}
 ```
 
+- `id` is the message's stable id (`m_…` for the owner's, `a_<run id>` for a run's reply; rows saved before chat
+  runs are `m<number>`). `legacy_id` is the database row number.
 - `message` equals `text`; it is kept for older readers.
+- `client_message_id` is echoed on the owner's messages that carried one, so an optimistic row and its saved row
+  keep one key.
+- Until branches land, `siblings` always holds the message alone and `editable` is false.
 - `kind`: `text`, `report` (Post to Talk: no parent, not editable), `action` (a button press), `notice`.
 - `status`: `complete`, `stopped`, `error`.
 - `siblings` are branches for owner messages and versions for replies.
@@ -197,6 +223,33 @@ Approvals are joined live from the approvals store; the part only names them.
   json-render renders each element inside its own error boundary, so one failing element renders nothing instead of
   breaking the reply.
 
+## Runs
+
+`server/services/chat/` (never imports `nodes/`):
+
+- **Admission** (`ledger.admit_message`). `send_chat_message` writes the owner's message and its run in one write
+  transaction reserved before its first read (`Database.reserved_session`, SQLite `BEGIN IMMEDIATE`), after checking
+  the lane; a partial unique index on `chat_runs` enforces it too. A message starts a run only when a chat trigger in
+  the deployed graph (the control generation's `graph_snapshot`) accepts its session, judged by that trigger's own
+  filter (`event_waiter.build_filter`). Otherwise it is saved and dispatched without a run, like the editor's
+  `"default"` session, which keeps its unscoped delivery.
+- **Dispatch.** The `chat_message_received` event (`services/chat/events.py`, source `opencompany://services/chat`)
+  has the run id as its CloudEvent id and carries `message_id` and `run_id` in `data`, so the listener's child run
+  id is `<slug>-<trigger label>-<run id>`. It is never broadcast.
+- **Start and finish.** MachinaWorkflow, behind the `machina-chat-run-v1` patch, reads the run id only from an event
+  with that source and type, claims the run (`chat_run.start`: `pending` or `queued` to `running`, recording the
+  Temporal workflow and run ids) once the firing trigger's output is stored, passes `run_scope {run_id, session_id}`
+  to every node context, and finishes it at its single exit (`chat_run.finish`). With several chat triggers in one
+  graph, the first to claim tracks the run and the others run untracked. Only the claimant may finish.
+- **The reply.** `chatReply` with a `run_scope` saves the answer through `ledger.post_reply`: the first reply takes
+  the run's reply id `a_<run id>`, another reply node in the same run `a_<run id>.<n>`, and a retry from the same node
+  saves nothing new. A run whose conversation was reset or cleared posts nothing.
+- **One chain.** Every message is appended after the session's active leaf (`chat_threads`) inside the same reserved
+  transaction, so concurrent writes never fork the thread.
+- **The watchdog** (`services/chat/watchdog.py`, started by `main.py`) sweeps every `runs.watchdog_interval_s` and
+  ends the runs nothing will finish (codes above). A pending run's wait (`runs.pickup_timeout_s`) counts from the
+  later of its creation and the server's start.
+
 ## Notes to the employee
 
 Things the employee should learn on its next turn are queued in `chat_notes` and prepended to that turn's user
@@ -223,9 +276,12 @@ and server tests alike:
 | `run_in_progress` | send, edit, regenerate, switch | A run is live in this session; `run_id` names it. |
 | `save_failed` | send | The message could not be saved; nothing was dispatched. |
 | `not_running` | send | The employee is not running and cannot queue messages. |
+| `invalid_request` | send, save | A malformed field (`detail` says which): an empty message, a role other than the owner's, or a bad `client_message_id`. |
+| `read_failed` | get_chat_messages, chat_subscribe | The thread could not be read. Never answered as an empty thread. |
+| `not_found` | get_chat_run | No such run. |
 | `conflict` | edit, regenerate, switch, set_ask_first | `expected_revision` is stale. |
 | `not_editable` | edit, regenerate, decide | The message belongs to an older generation, its prefix was compacted, or an edited argument is not editable. |
 | `ui_event_rejected` | send | The element or action does not match the saved spec. |
-| `access_denied` | all | The socket's principal does not own the workflow. |
+| `access_denied` | all | The socket's principal does not own the workflow, or it is the internal worker socket. |
 | `too_late` | decide | The Undo or Restore window has passed. |
 | `speech_unavailable` | transcribe_audio | No dictation provider has a stored key. |

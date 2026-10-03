@@ -1,6 +1,8 @@
 """Reply in Chat (``chatReply``): posts an answer to the thread of the
 workflow it runs in, as the assistant, in the live generation, and says so
-on ``chat.updated``; posts nothing for an empty answer or NO_REPLY."""
+on ``chat.updated``; posts nothing for an empty answer or NO_REPLY. In a run
+the owner's chat message started (``run_scope``), the answer is that chat
+run's reply (tests/services/chat/ cover the ledger itself)."""
 
 from __future__ import annotations
 
@@ -22,20 +24,26 @@ def thread(harness):
             frames.append(message)
 
     harness.database.get_latest_workflow_control = AsyncMock(return_value=SimpleNamespace(status="running", root_execution_id="gen-2"))
-    harness.database.add_chat_message = AsyncMock(return_value=True)
+    harness.database.add_chat_message = AsyncMock(return_value={"uid": "m_1", "message": "saved"})
     with patch("services.status_broadcaster.get_status_broadcaster", return_value=Broadcaster()):
         yield SimpleNamespace(database=harness.database, frames=frames)
 
 
-async def _reply(harness, message, *, workflow_id="wf-1"):
-    return await harness.execute("chatReply", {"message": message}, context=harness.build_context(workflow_id=workflow_id))
+async def _reply(harness, message, *, workflow_id="wf-1", run_scope=None):
+    context = harness.build_context(workflow_id=workflow_id)
+    if run_scope is not None:
+        context["run_scope"] = run_scope
+    return await harness.execute("chatReply", {"message": message}, context=context)
 
 
 async def test_the_answer_lands_in_the_workflows_thread(harness, thread):
     result = await _reply(harness, "  Booked you for 3pm.  ")
     harness.assert_envelope(result, success=True)
-    assert result["result"] == {"posted": True, "message": "Booked you for 3pm."}
-    thread.database.add_chat_message.assert_awaited_once_with("wf-1", "assistant", "Booked you for 3pm.", execution_id="gen-2")
+    assert result["result"] == {"posted": True, "message": "Booked you for 3pm.", "message_id": "m_1", "run_id": None}
+    thread.database.add_chat_message.assert_awaited_once_with(
+        "wf-1", "assistant", "Booked you for 3pm.", execution_id="gen-2",
+        uid=None, run_id=None, kind="text", status="complete", parts=None,
+    )
     [frame] = thread.frames
     assert frame["type"] == "chat.updated"
     assert frame["data"]["type"] == "com.opencompany.chat.updated"
@@ -66,9 +74,39 @@ async def test_it_needs_a_saved_workflow(harness, thread):
 
 
 async def test_a_failed_save_is_an_error_and_announces_nothing(harness, thread):
-    thread.database.add_chat_message = AsyncMock(return_value=False)
+    thread.database.add_chat_message = AsyncMock(return_value=None)
     result = await _reply(harness, "hello")
     harness.assert_envelope(result, success=False)
+    assert thread.frames == []
+
+
+async def test_in_a_chat_run_the_answer_is_the_runs_reply(harness, thread):
+    run = SimpleNamespace(run_id="r_1", session_id="wf-1", reply_message_uid="a_r_1")
+    with (
+        patch("services.chat.ledger.get_run", AsyncMock(return_value=run)) as get_run,
+        patch("services.chat.ledger.post_reply", AsyncMock(return_value={"uid": "a_r_1"})) as post_reply,
+    ):
+        result = await _reply(harness, "Booked.", run_scope={"run_id": "r_1", "session_id": "wf-1"})
+    harness.assert_envelope(result, success=True)
+    assert result["result"] == {"posted": True, "message": "Booked.", "message_id": "a_r_1", "run_id": "r_1"}
+    assert get_run.await_args.args[1] == "r_1"
+    kwargs = post_reply.await_args.kwargs
+    assert (kwargs["run"], kwargs["text"], kwargs["execution_id"]) == (run, "Booked.", "gen-2")
+    assert kwargs["node_id"]
+    thread.database.add_chat_message.assert_not_awaited()
+    assert [frame["data"]["data"]["role"] for frame in thread.frames] == ["assistant"]
+
+
+async def test_a_run_whose_conversation_was_cleared_posts_nothing(harness, thread):
+    with (
+        patch("services.chat.ledger.get_run", AsyncMock(return_value=None)),
+        patch("services.chat.ledger.post_reply", AsyncMock()) as post_reply,
+    ):
+        result = await _reply(harness, "Too late.", run_scope={"run_id": "r_gone", "session_id": "wf-1"})
+    harness.assert_envelope(result, success=True)
+    assert result["result"] == {"posted": False, "message": None, "message_id": None, "run_id": "r_gone"}
+    post_reply.assert_not_awaited()
+    thread.database.add_chat_message.assert_not_awaited()
     assert thread.frames == []
 
 

@@ -81,8 +81,13 @@ Message loop:
 Frontend unmounts or logs out
         |
         v
-StatusBroadcaster.disconnect(ws) -> remove from _connections
+StatusBroadcaster.disconnect(ws) -> remove from _connections, then call each
+                                    register_disconnect_listener(fn) listener
 ```
+
+`register_disconnect_listener(fn)` (module-level, idempotent) is for services that keep per-socket state:
+`fn(websocket)` runs after the socket leaves `_connections`, synchronously, and must not block. Chat registers one so a
+closed socket's run subscriptions are dropped (`services/chat/__init__.py`).
 
 Auto-reconnect is handled by `WebSocketContext.tsx` through PartySocket's `ReconnectingWebSocket` (`partysocket/ws`), with jittered exponential backoff (`MIN_DELAY_MS` / `MAX_DELAY_MS` / `GROW_FACTOR` in `client/src/lib/connectionConfig.ts`). Requests queued while disconnected are sent after the next open; requests already in flight are rejected on close and never replayed. A remote close, even with code 1000, keeps the loop retrying; only the client's own `disposeConnection` (logout or unmount) closes with 1000 and stops it. The full client-side rules are in [frontend_architecture.md → Real-time](./frontend_architecture.md#real-time). A 100ms mount delay avoids React Strict Mode double-connect in dev.
 
@@ -120,7 +125,7 @@ Live total = `len(MESSAGE_HANDLERS) + len(get_ws_handlers())` -- the `MESSAGE_HA
 | WhatsApp | `whatsapp_status`, `whatsapp_qr`, `whatsapp_send`, `whatsapp_chat_history`, `whatsapp_newsletters`, `whatsapp_diagnostics`, ... |
 | Telegram | `telegram_connect`, `telegram_disconnect`, `telegram_status`, `telegram_send`, `telegram_get_me`, `telegram_get_chat` |
 | Workflow storage | `save_workflow`, `get_workflow`, `get_all_workflows`, `delete_workflow` |
-| Chat messages | `send_chat_message`, `get_chat_messages`, `clear_chat_messages`, `get_chat_sessions` |
+| Chat messages | `send_chat_message`, `get_chat_messages`, `chat_subscribe`, `chat_unsubscribe`, `get_chat_run`, `clear_chat_messages`, `save_chat_message` (`services/chat/handlers.py`; run events reach only subscribed sockets, see [chat_protocol.md](./chat_protocol.md)) |
 | Console / terminal | `get_console_logs`, `clear_console_logs`, `get_terminal_logs`, `clear_terminal_logs` |
 | Skills | `get_skill_content`, `save_skill_content`, `get_user_skills`, `create_user_skill`, `scan_skill_folder` |
 | Memory | `clear_memory`, `reset_skill`, `configure_compaction`, `get_compaction_stats` |

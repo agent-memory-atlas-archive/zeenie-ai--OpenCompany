@@ -19,7 +19,7 @@ up in Home too, with details derived from their graph.
 | Setup-screen pipeline (parse, normalise, render) | [client/src/features/home/genui/](../client/src/features/home/genui/) |
 | Employees service (list, setup, hire, start, run records) | [server/services/employees/](../server/services/employees/) |
 | Approvals (the "ask me first" step) | [server/services/approvals/](../server/services/approvals/), node [approvalGate](./node-logic-flows/workflow_triggers/approvalGate.md) |
-| Talk (the chat thread and the talk line) | [server/services/chat_thread.py](../server/services/chat_thread.py), [services/employees/talk.py](../server/services/employees/talk.py), node [chatReply](./node-logic-flows/chat_utility/chatReply.md) |
+| Talk (the chat thread and the talk line) | [server/services/chat_thread.py](../server/services/chat_thread.py), chat runs in [server/services/chat/](../server/services/chat/) ([chat_protocol.md](./chat_protocol.md)), [services/employees/talk.py](../server/services/employees/talk.py), node [chatReply](./node-logic-flows/chat_utility/chatReply.md) |
 | Growing a saved employee (Turn on Talk, the Agent Builder, Apply) | [server/services/graph_build.py](../server/services/graph_build.py), [services/employees/policy.py](../server/services/employees/policy.py), [services/workflow_storage/mutate.py](../server/services/workflow_storage/mutate.py), [services/deployment/restart.py](../server/services/deployment/restart.py), node [agentBuilder](./node-logic-flows/ai_tools/agentBuilder.md) |
 | Built-in skills offered to new hires (Settings > Skills > Discover) | [server/skills/employee/](../server/skills/employee/) |
 
@@ -390,16 +390,23 @@ Connect an AI model action.
 
 The owner talks to an employee on its page. The conversation is the chat
 session whose id is the employee's workflow id, the thread the editor's chat
-pane also shows for that workflow (there, only the live generation). Every
-row goes through
-[services/chat_thread.py](../server/services/chat_thread.py): the owner's
-messages from `send_chat_message`, answers and reports from the
-[chatReply](./node-logic-flows/chat_utility/chatReply.md) ("Reply in Chat")
-node. Each row is stamped with the live generation, and each insert or clear
-is announced as `chat.updated`. Clearing the chat in the editor's chat pane
+pane also shows for that workflow (there, only the live generation). The
+owner's messages come in through `send_chat_message`
+([services/chat/handlers.py](../server/services/chat/handlers.py)), answers
+and reports from the [chatReply](./node-logic-flows/chat_utility/chatReply.md)
+("Reply in Chat") node. Each row is stamped with the live generation and
+appended to one chain, and each insert or clear is announced as
+`chat.updated`. Clearing the chat in the editor's chat pane
 (`clear_chat_messages`, `chat_thread.clear_chat_session`) deletes the thread
 and, through the Context plugin's chat-cleared listener, every conversation
 of the workflow, so the employee starts over with the chat.
+
+A message the talk line will answer starts a **chat run**, saved with it: one
+run at a time per conversation (a second send while one is live answers
+`run_in_progress`), claimed and finished by the workflow run that answers it,
+with the reply saved as the run's (`a_<run id>`). Sockets that subscribe
+(`chat_subscribe`) receive the run's events; a watchdog ends runs nothing
+will finish. The wire contract is [chat_protocol.md](./chat_protocol.md).
 
 ### On the employee's page
 
@@ -710,8 +717,8 @@ WebSocket requests (snake_case; failures come back as `success: false` with an
 | `start_employee` | `{workflow_id, expected_revision, idempotency_key}` | as `start_workflow` |
 | `enable_employee_talk` | `{workflow_id, idempotency_key}` | `{employee}`. Errors: `invalid_request`, `not_found`, `unsupported`, `conflict` (a start, pause, resume or reset is under way, or the graph changed meanwhile), `restart_failed`; the last three carry `employee` too |
 | `apply_employee_changes` | `{workflow_id, idempotency_key}` | `{employee}`: running ends running, paused or failed ends ready, ready is left alone. Errors: `invalid_request`, `not_found`, `conflict`, `restart_failed` (the last two with `employee`) |
-| `send_chat_message` | `{message, role: "user", session_id: <workflow_id>, timestamp}` | `{timestamp, delivery}`: `"now"` while running, starting or resuming; `"queued"` while paused or pausing (it runs on Resume). In any other state `not_running`, and nothing is saved or sent. Session `"default"` works as before, with no `delivery` |
-| `get_chat_messages` | `{session_id, limit?, all_generations?}` | `{messages}`, oldest first, each `{id, role, message, timestamp, run_key}`. Timestamps carry their UTC offset; `run_key` is the generation the row was written in. Without `all_generations`, only the latest generation's rows (none after a Reset; every row when the workflow was never started) |
+| `send_chat_message` | `{message, role: "user", session_id: <workflow_id>, timestamp, client_message_id?}` | `{timestamp, delivery, message_id, run_id}`: `"now"` while running, starting or resuming; `"queued"` while paused or pausing (it runs on Resume). In any other state `not_running`, and nothing is saved or sent; `run_in_progress` (with the live `run_id`) while a run is live. `run_id` is null when no deployed chat trigger answers the session. Session `"default"` works as before, with no `delivery` |
+| `get_chat_messages` | `{session_id, limit?, all_generations?}` | `{messages, thread, active_runs}`, messages oldest first, each `{id, role, message, timestamp, run_key, ...}` (the full shape is in [chat_protocol.md](./chat_protocol.md#messages)). Timestamps carry their UTC offset; `run_key` is the generation the row was written in. Without `all_generations`, only the latest generation's rows (none after a Reset; every row when the workflow was never started). A failed read answers `read_failed`, never an empty thread |
 | `list_approvals` | `{workflow_id?, status?, limit <= 100}` | `{approvals, counts, server_time}` |
 | `decide_approval` | `{approval_id, decision, text?, subject?, decision_key}` | `{approval, will_send_on_resume}` |
 | `delete_workflow` | `{workflow_id}` | `{workflow_id, contexts_archived, context_archives_pending}`; `DELETE /api/database/workflows/{id}` is the same handler. Error `workflow_shutdown_failed` (with `detail`) when stopping the employee failed: nothing was deleted |
@@ -743,7 +750,8 @@ history). Talk and growing a saved employee: `tests/services/employees/`
 (`test_talk.py`, `test_enable_talk.py`, `test_apply_changes.py`,
 `test_policy.py`, and `test_builder_snapshot.py` against
 `tests/fixtures/employee_builder_snapshot.json`),
-`tests/services/test_chat_thread.py`, `tests/nodes/test_chat_reply.py`,
+`tests/services/test_chat_thread.py`, `tests/services/chat/`,
+`tests/temporal/test_machina_chat_run.py`, `tests/nodes/test_chat_reply.py`,
 `tests/services/test_graph_build.py`, `tests/services/test_graph_additions.py`,
 `tests/services/test_graph_listeners.py`,
 `tests/services/test_deployment_restart.py`,

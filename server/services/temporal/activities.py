@@ -233,6 +233,7 @@ class NodeExecutionActivities:
             "agent_iteration",
             "tool_call_index",
             "tool_call_id",
+            "run_scope",
         ):
             if key in context:
                 message[key] = context[key]
