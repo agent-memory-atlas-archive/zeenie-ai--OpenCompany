@@ -68,6 +68,48 @@ async def test_the_sequential_path_counts_a_clean_run():
 
 
 @pytest.mark.asyncio
+async def test_the_sequential_path_reports_node_status_in_the_editors_words():
+    """The editor's node statuses are idle / executing / success / error /
+    waiting. The sequential path used to finish a node with `completed`,
+    which the canvas does not know, so a node that succeeded lost its
+    success state instead of showing it."""
+    service = _sequential_service({"b": {"success": False, "error": "b broke"}})
+    sent: list[tuple[str, str]] = []
+
+    async def status_callback(node_id, status, _data=None):
+        sent.append((node_id, status))
+
+    await service._execute_sequential(*_chain(), "session", status_callback, time.time())
+
+    assert ("a", "success") in sent
+    assert ("b", "error") in sent
+    assert all(status != "completed" for _node, status in sent)
+
+
+@pytest.mark.asyncio
+async def test_the_temporal_path_sends_no_status_after_the_run():
+    """Each node reports its own final status while the Temporal run
+    executes. The service used to send every executed node again as
+    `completed` with its raw output afterwards, overwriting the `success`
+    and the result the node had just reported."""
+    service = WorkflowService.__new__(WorkflowService)
+    service._temporal_executor = SimpleNamespace(execute_workflow=AsyncMock(return_value={
+        "success": True,
+        "nodes_executed": ["start-1", "a", "b"],
+        "outputs": {"a": {"text": "hi"}},
+        "total_nodes": 3,
+        "completed_nodes": 3,
+    }))
+    service._resolve_workflow_slug = AsyncMock(return_value="Flow_1")
+    status_callback = AsyncMock()
+
+    result = await service._execute_temporal(*_chain(), "session", status_callback, time.time(), workflow_id="wf")
+
+    assert result["success"] is True
+    status_callback.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_the_parallel_path_passes_a_failed_node_on():
     failure = {"node_id": "a", "error": "a broke", "timestamp": 1.0}
     service = _parallel_service({"success": False, "nodes_executed": ["start-1"], "errors": [failure], "total_nodes": 3})

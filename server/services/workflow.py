@@ -451,18 +451,13 @@ class WorkflowService:
             user_id=user_id,
         )
 
-        # Notify status callback for completed nodes if provided
-        if status_callback and result.get("success"):
-            for node_id in result.get("nodes_executed", []):
-                try:
-                    await status_callback(
-                        node_id,
-                        "completed",
-                        result.get("outputs", {}).get(node_id, {}),
-                    )
-                except Exception:
-                    pass
-
+        # No status is sent here: every node already reported its own final
+        # `success` or `error`, with its result, while the run executed (the
+        # per-type activity, the legacy activity through handle_execute_node,
+        # and the agent workflow each broadcast it). Sending another status
+        # per node after the run would overwrite those with a word the editor
+        # does not know and a different payload. `status_callback` stays in
+        # the signature for the paths that need it.
         return {
             "success": result.get("success", False),
             "execution_id": result.get("execution_id"),
@@ -604,9 +599,10 @@ class WorkflowService:
             if result.get("success"):
                 envelopes[node_id] = result
 
-            # Notify completed
+            # Notify the final status, in the editor's vocabulary: `success`
+            # or `error`, the same words handle_execute_node sends.
             if status_callback:
-                status = "completed" if result.get("success") else "error"
+                status = "success" if result.get("success") else "error"
                 try:
                     await status_callback(node_id, status, result)
                 except Exception:
