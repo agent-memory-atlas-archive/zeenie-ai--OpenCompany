@@ -373,10 +373,12 @@ async def handle_stop_chat_run(data: Dict[str, Any], websocket: WebSocket) -> Di
 async def handle_chat_ui_state(data: Dict[str, Any], websocket: WebSocket) -> Dict[str, Any]:
     """What the owner set in an interface the employee showed
     (``changes: [{path, value}]``, the last value per path winning). Kept on
-    the reply (``parts.ui[].state``), so a reload shows it. Answers the
-    state's new ``state_revision``; ``not_found`` when the session has no
-    such interface, ``invalid_request`` for a change that does not fit."""
-    from services.chat import parts
+    the reply (``parts.ui[].state``), so a reload shows it, and told to the
+    employee at the start of its next turn (a ``[ui-state]`` note,
+    ``services/chat/notes.py``). Answers the state's new ``state_revision``;
+    ``not_found`` when the session has no such interface,
+    ``invalid_request`` for a change that does not fit."""
+    from services.chat import notes, parts
 
     session_id = session_id_of(data)
     database = container.database()
@@ -391,6 +393,16 @@ async def handle_chat_ui_state(data: Dict[str, Any], websocket: WebSocket) -> Di
         return {"success": False, "error": "invalid_request", "detail": str(exc)}
     if updated is None:
         return {"success": False, "error": "not_found"}
+    try:
+        await notes.upsert_note(
+            database,
+            session_id=session_id,
+            key=f"ui-state:{part_id}",
+            kind="ui-state",
+            text=parts.ui_state_message(part_id=part_id, state=updated["state"]),
+        )
+    except Exception:  # noqa: BLE001 - the state is saved and shows; only the note is lost
+        logger.warning("The employee could not be told what the owner set", part_id=part_id, exc_info=True)
     return {"success": True, "part_id": part_id, "state_revision": updated["state_revision"]}
 
 

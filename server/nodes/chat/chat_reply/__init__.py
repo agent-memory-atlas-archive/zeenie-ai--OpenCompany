@@ -7,7 +7,9 @@ in the editor's chat pane. The write goes through services/chat_thread.py,
 which stamps the live generation and announces ``chat.updated``.
 
 A message that is empty, or exactly NO_REPLY (the agent had nothing to
-say), posts nothing.
+say), posts nothing. A ``<followups>`` block the answer ends with is never
+shown as text: in a chat run it becomes the reply's follow-up buttons
+(``services/chat/guide.py``), elsewhere it is dropped.
 
 In a run the owner's chat message started, the reply is that chat run's
 answer (``run_scope``, set by MachinaWorkflow): it is saved under the run's
@@ -86,11 +88,15 @@ class ChatReplyNode(ActionNode):
 
     @Operation("reply")
     async def reply(self, ctx: NodeContext, params: ChatReplyParams) -> ChatReplyOutput:
+        from services.chat.guide import split_followups
         from services.chat_thread import record_chat_message
         from services.plugin.deps import get_database
 
         text = params.message.strip()
-        if not text or text == NO_REPLY:
+        # The <followups> block an answer may end with shows as buttons, never
+        # as text: a message that is only the block says nothing.
+        visible = split_followups(text)[0].strip()
+        if not visible or visible == NO_REPLY:
             return ChatReplyOutput(posted=False)
         if not ctx.workflow_id:
             raise NodeUserError("Reply in Chat posts to the workflow's chat: save the workflow first.")
@@ -99,10 +105,10 @@ class ChatReplyNode(ActionNode):
         run_id = scope.get("run_id") if isinstance(scope, dict) else None
         if isinstance(run_id, str) and run_id:
             return await self._reply_to_run(database, ctx, run_id, text)
-        saved = await record_chat_message(database, ctx.workflow_id, "assistant", text)
+        saved = await record_chat_message(database, ctx.workflow_id, "assistant", visible)
         if not saved:
             raise RuntimeError("The reply could not be saved to the chat")
-        return ChatReplyOutput(posted=True, message=text, message_id=_message_id(saved))
+        return ChatReplyOutput(posted=True, message=visible, message_id=_message_id(saved))
 
     async def _reply_to_run(self, database, ctx: NodeContext, run_id: str, text: str) -> ChatReplyOutput:
         from services.chat import ledger
@@ -117,7 +123,7 @@ class ChatReplyNode(ActionNode):
             database, run=run, node_id=ctx.node_id, text=text, execution_id=chat_execution_id(control)
         )
         await announce_chat_updated(run.session_id, "assistant")
-        return ChatReplyOutput(posted=True, message=text, message_id=saved.get("uid"), run_id=run_id)
+        return ChatReplyOutput(posted=True, message=saved.get("message", text), message_id=saved.get("uid"), run_id=run_id)
 
     @classmethod
     async def reset_execution_state(

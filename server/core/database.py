@@ -59,6 +59,7 @@ from models.approvals import (  # noqa: F401 - registers SQLModel tables
     ApprovalRequest,
 )
 from models.chat import (  # noqa: F401 - registers SQLModel tables
+    ChatNote,
     ChatRun,
     ChatRunPart,
     ChatThread,
@@ -526,17 +527,22 @@ class Database:
             logger.warning(f"Generation runtime-data migration check failed: {exc}")
 
     async def _migrate_chat_runs(self):
-        """Give an older ``chat_runs`` table the columns added since."""
+        """Give older ``chat_runs`` and ``chat_threads`` tables the columns
+        added since."""
+        additions = {
+            "chat_runs": {"stop_requested_at": "DATETIME"},
+            "chat_threads": {"next_source": "INTEGER NOT NULL DEFAULT 1"},
+        }
         try:
             async with self.engine.begin() as conn:
-                result = await conn.execute(text("PRAGMA table_info(chat_runs)"))
-                columns = {row[1] for row in result.fetchall()}
-                if not columns:
-                    return
-                additions = {"stop_requested_at": "DATETIME"}
-                for column, definition in additions.items():
-                    if column not in columns:
-                        await conn.execute(text(f"ALTER TABLE chat_runs ADD COLUMN {column} {definition}"))
+                for table, columns_added in additions.items():
+                    result = await conn.execute(text(f"PRAGMA table_info({table})"))
+                    columns = {row[1] for row in result.fetchall()}
+                    if not columns:
+                        continue
+                    for column, definition in columns_added.items():
+                        if column not in columns:
+                            await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {definition}"))
         except Exception as exc:
             logger.warning(f"Chat run migration check failed: {exc}")
 
@@ -1591,8 +1597,9 @@ class Database:
             return [self.chat_row(m) for m in reversed(result.scalars().all())]
 
     async def clear_chat_messages(self, session_id: str) -> int:
-        """Clear a session's chat: its messages, and the runs, run parts and
-        thread state that belong to them. Returns the messages deleted."""
+        """Clear a session's chat: its messages, and the runs, run parts,
+        notes and thread state that belong to them. Returns the messages
+        deleted."""
         from sqlalchemy import delete as sa_delete
 
         try:
@@ -1608,6 +1615,7 @@ class Database:
                 run_ids = select(ChatRun.run_id).where(ChatRun.session_id == session_id)
                 await session.execute(sa_delete(ChatRunPart).where(ChatRunPart.run_id.in_(run_ids)))
                 await session.execute(sa_delete(ChatRun).where(ChatRun.session_id == session_id))
+                await session.execute(sa_delete(ChatNote).where(ChatNote.session_id == session_id))
                 await session.execute(sa_delete(ChatThread).where(ChatThread.session_id == session_id))
 
                 await session.commit()

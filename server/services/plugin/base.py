@@ -280,10 +280,13 @@ class BaseNode:
     # ``chat_step``: how a call of this tool reads as a working step while
     # the employee answers ("Checked Google Calendar"); empty falls back to
     # "Used <display name>". ``chat_step_hidden``: housekeeping (the clock,
-    # a checklist) that shows no step.
+    # a checklist) that shows no step. ``chat_sources``: the tool returns
+    # web results (``results: [{title, snippet, url}]``) the answer may cite,
+    # numbered for the conversation (services/chat/sources.py).
     answers_chat_run: ClassVar[bool] = False
     chat_step: ClassVar[str] = ""
     chat_step_hidden: ClassVar[bool] = False
+    chat_sources: ClassVar[bool] = False
 
     # Set by __init_subclass__: {op_name: OperationSpec}
     _operations: ClassVar[Dict[str, OperationSpec]] = {}
@@ -1220,6 +1223,8 @@ class BaseNode:
                 # payload, error_message).
                 step_detail = chat_steps.take_detail(result)
                 success, payload, error = cls.interpret_result(result)
+                if success:
+                    await chat_steps.number_sources(context, cls, result)
                 if chat_step is not None and not (
                     not success and result.get("error_type") == NODE_WAIT_INTERRUPTED
                 ):

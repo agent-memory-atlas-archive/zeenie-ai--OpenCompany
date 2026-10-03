@@ -17,7 +17,8 @@ agent_context_flow.md). A second message while one is live is refused with
 ``ChatRunPart`` collects what a run's tools produce for its reply (generated
 UI, sources, artifacts, approvals), keyed so an activity retry writes the
 same row again. ``ChatThread`` holds a session's active leaf: the message the
-shown path ends at, which branches will move.
+shown path ends at, which branches will move, and its source counter.
+``ChatNote`` holds what the employee should learn on its next turn.
 """
 
 from __future__ import annotations
@@ -47,6 +48,9 @@ class ChatThread(SQLModel, table=True):
     session_id: str = Field(primary_key=True, max_length=255)
     active_leaf_uid: Optional[str] = Field(default=None, max_length=64)
     revision: int = Field(default=0)
+    #: The number the conversation's next cited source gets
+    #: (services/chat/sources.py), so a number never repeats in it.
+    next_source: int = Field(default=1)
     updated_at: datetime = Field(default_factory=_utcnow, sa_column=Column(DateTime(timezone=True), nullable=False))
 
 
@@ -99,4 +103,27 @@ class ChatRunPart(SQLModel, table=True):
     created_at: datetime = Field(default_factory=_utcnow, sa_column=Column(DateTime(timezone=True), nullable=False))
 
 
-__all__ = ["ChatRun", "ChatRunPart", "ChatThread", "LIVE_STATES", "TERMINAL_STATES"]
+class ChatNote(SQLModel, table=True):
+    """Something the employee should learn at the start of its next turn in a
+    chat (services/chat/notes.py): one bracketed line, keyed per session so a
+    newer note of the same kind replaces an older one not yet told."""
+
+    __tablename__ = "chat_notes"
+    __table_args__ = (UniqueConstraint("session_id", "key", name="uq_chat_notes_key"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    session_id: str = Field(index=True, max_length=255)
+    key: str = Field(max_length=255)
+    #: ``ui-state`` (what the owner set in an interface).
+    kind: str = Field(max_length=20)
+    text: str = Field(max_length=20000)
+    created_at: datetime = Field(default_factory=_utcnow, sa_column=Column(DateTime(timezone=True), nullable=False))
+    updated_at: datetime = Field(default_factory=_utcnow, sa_column=Column(DateTime(timezone=True), nullable=False))
+    #: The run whose turn carries it, once claimed.
+    claimed_run_id: Optional[str] = Field(default=None, index=True, max_length=64)
+    claimed_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
+    #: When that run ended having told it; None while still to tell.
+    delivered_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
+
+
+__all__ = ["ChatNote", "ChatRun", "ChatRunPart", "ChatThread", "LIVE_STATES", "TERMINAL_STATES"]

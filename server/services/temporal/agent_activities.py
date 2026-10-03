@@ -1487,11 +1487,23 @@ async def prepare_agent_payload(context: Dict[str, Any]) -> Dict[str, Any]:
     )
     from services.chat.stream import chat_run_id_of, chat_stream_for
 
+    chat_stream = chat_stream_for(context)
+    if chat_stream:
+        # The agent answering the owner's chat reads the chat's guide after
+        # its own system prompt (the same bytes every turn), and what the
+        # owner did in the chat since its last turn ahead of their message
+        # (services/chat/guide.py, services/chat/notes.py).
+        from services.chat.guide import chat_turn
+
+        system_message, prompt = await chat_turn(
+            database, chat_stream, system_message=system_message, prompt=prompt
+        )
+
     return {
         # The chat run this agent works for (stops when the owner presses
         # Stop), and, for the agent that answers it, where its text streams.
         "chat_run_id": chat_run_id_of(context),
-        "chat_stream": chat_stream_for(context),
+        "chat_stream": chat_stream,
         "node_id": node_id,
         "node_type": node_type,
         "workflow_id": workflow_id,

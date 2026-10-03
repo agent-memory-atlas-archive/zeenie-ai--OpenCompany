@@ -8,11 +8,14 @@ first kind: ``show_ui`` saves the checked spec and publishes it as an empty
 ``activity.snapshot`` followed by one ``activity.delta`` per patch
 (``services/genui/patches.py``); the client paces what arrives.
 
+Sources are the other kind (``services/chat/sources.py``): the numbered
+results of a search the answering agent ran.
+
 When the run ends, ``seal_parts`` copies its parts into the reply message's
-``parts`` (``{"ui": [...]}``), creating an empty reply when the run showed
-something but wrote nothing, so a reload draws what the run showed. Every
-write here is best effort for the run: a part that cannot be saved is
-logged, and the run goes on.
+``parts`` (``{"ui": [...], "sources": [...]}``), creating an empty reply when
+the run showed something but wrote nothing, so a reload draws what the run
+showed. Every write here is best effort for the run: a part that cannot be
+saved is logged, and the run goes on.
 """
 
 from __future__ import annotations
@@ -32,8 +35,8 @@ logger = get_logger(__name__)
 
 #: The ``activity_type`` of a generated UI's events.
 JSON_RENDER = "json_render"
-#: The kinds of part a reply's ``parts`` holds, in the order they render.
-PART_KINDS = ("ui",)
+#: The kinds of part a run collects for its reply.
+PART_KINDS = ("ui", "sources")
 
 
 def ui_part_id(run_id: str, tool_call_id: str) -> str:
@@ -121,15 +124,21 @@ async def show_ui(database: Any, stream: Mapping[str, Any], *, tool_call_id: str
 
 
 #: What names one item of each kind, for merging a run's parts into a reply.
-_ITEM_KEYS = {"ui": "part_id"}
+_ITEM_KEYS = {"ui": "part_id", "sources": "n"}
 
 
 def grouped_parts(parts: List[ChatRunPart]) -> Dict[str, List[Dict[str, Any]]]:
-    """A run's parts as a reply's ``parts`` holds them: ``{kind: [payload]}``."""
+    """A run's parts as a reply's ``parts`` holds them: ``{"ui": [payload],
+    "sources": [item]}`` (a sources part holds one tool call's items)."""
     grouped: "OrderedDict[str, List[Dict[str, Any]]]" = OrderedDict()
     for part in parts:
-        if part.kind in PART_KINDS:
-            grouped.setdefault(part.kind, []).append(dict(part.payload or {}))
+        if part.kind not in PART_KINDS:
+            continue
+        payload = dict(part.payload or {})
+        if part.kind == "sources":
+            grouped.setdefault("sources", []).extend(dict(item) for item in payload.get("items") or [] if isinstance(item, dict))
+        else:
+            grouped.setdefault(part.kind, []).append(payload)
     return dict(grouped)
 
 
@@ -165,6 +174,10 @@ async def seal_parts(database: Any, run: ChatRun) -> bool:
                 reply.parts = {**current, **merged}
                 session.add(reply)
             else:
+                # Sources show only where a reply cites them: alone they
+                # are no reason to make one.
+                if not grouped.get("ui"):
+                    return False
                 current = await session.get(ChatRun, run.run_id)
                 stopped = current is not None and current.state in ("stopping", "stopped")
                 await database.append_chat_row(
@@ -292,6 +305,15 @@ def ui_event_message(*, part_id: str, element_id: str, label: str, action: str, 
     return f"[ui-event]{json.dumps(payload, ensure_ascii=False, separators=(', ', ': '))}[/ui-event]"
 
 
+def ui_state_message(*, part_id: str, state: Mapping[str, Any]) -> str:
+    """What the employee reads for what the owner set in an interface
+    without pressing anything: its whole state, one bracketed line."""
+    import json
+
+    payload = {"ui_id": part_id, "state": dict(state)}
+    return f"[ui-state]{json.dumps(payload, ensure_ascii=False, separators=(', ', ': '), default=str)}[/ui-state]"
+
+
 async def update_ui_state(database: Any, session_id: str, part_id: str, changes: Any) -> Optional[Dict[str, Any]]:
     """Apply what the owner set (``[{path, value}]``, the last value per path
     winning) to the interface's saved state. Returns ``{state,
@@ -360,5 +382,6 @@ __all__ = [
     "show_ui",
     "ui_event_message",
     "ui_part_id",
+    "ui_state_message",
     "update_ui_state",
 ]

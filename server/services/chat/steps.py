@@ -17,6 +17,9 @@ call carries a ``tool_call_id``, which is the step id.
 - **Stopped runs.** A tool call of a run the owner stopped is not run: it
   gets a result saying so, which keeps the conversation whole (every call
   answered) while the agent's next model step ends the run.
+- **Sources.** The web results of a ``chat_sources`` tool (the searches) are
+  numbered for the conversation in the result the model reads
+  (``number_sources``, ``services/chat/sources.py``).
 
 Nothing here fails a tool call: publishing and saving are best effort.
 """
@@ -144,6 +147,25 @@ async def run_stopped(context: Mapping[str, Any]) -> bool:
         return False
 
 
+async def number_sources(context: Mapping[str, Any], node_class: Any, result: Any) -> None:
+    """Number the web results of a ``chat_sources`` tool the answering agent
+    called, in the result the model reads (``services/chat/sources.py``)."""
+    if not getattr(node_class, "chat_sources", False):
+        return
+    stream = _stream_of(context)
+    tool_call_id = context.get("tool_call_id")
+    if stream is None or not isinstance(tool_call_id, str) or not tool_call_id or not isinstance(result, dict):
+        return
+    payload = result.get("result") if isinstance(result.get("result"), dict) else result
+    try:
+        from core.container import container
+        from services.chat.sources import number_tool_sources
+
+        await number_tool_sources(container.database(), stream, tool_call_id=tool_call_id, payload=payload)
+    except Exception:  # noqa: BLE001 - the answer goes on without numbers
+        logger.warning("Chat sources could not be numbered", run_id=stream.get("run_id"), exc_info=True)
+
+
 def take_detail(result: Any) -> Optional[str]:
     """Remove a tool's ``_step_detail`` from its result, wherever the
     plugin's result shape puts it, and return it."""
@@ -156,4 +178,14 @@ def take_detail(result: Any) -> Optional[str]:
     return detail if isinstance(detail, str) and detail.strip() else None
 
 
-__all__ = ["STEP_DETAIL_KEY", "STOPPED_RESULT", "Step", "begin", "end", "run_stopped", "step_label", "take_detail"]
+__all__ = [
+    "STEP_DETAIL_KEY",
+    "STOPPED_RESULT",
+    "Step",
+    "begin",
+    "end",
+    "number_sources",
+    "run_stopped",
+    "step_label",
+    "take_detail",
+]

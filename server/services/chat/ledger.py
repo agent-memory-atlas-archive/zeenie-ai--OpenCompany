@@ -38,7 +38,9 @@ ended by the watchdog, which also cancels its workflow.
 **Steps** (``record_step``) are saved on the run as they finish, so a reload
 can say how long it worked and what it did. **Parts** (what its tools
 showed, such as generated UI) are sealed into its reply as it ends
-(``services/chat/parts.py``), before the end is published.
+(``services/chat/parts.py``), before the end is published, and a run that
+answered marks the notes its turn carried as told (``services/chat/
+notes.py``).
 
 Every transition commits before its event is published, so a client that
 reads the run after an event never sees an older state than the event.
@@ -278,7 +280,12 @@ async def post_reply(
     saved. Another reply node in the same run gets ``a_<run id>.<n>``. A
     retry from the same node returns the row it saved. Serialized by the
     write reservation, so two reply nodes at once cannot take the same id.
+    A ``<followups>`` block the agent ended with is taken off the text and
+    saved as the reply's ``parts.followups`` (``services/chat/guide.py``).
     """
+    from services.chat.guide import split_followups
+
+    text, followups = split_followups(text)
     async with database.reserved_session() as session:
         result = await session.execute(
             select(ChatMessage)
@@ -303,6 +310,8 @@ async def post_reply(
 
             found = await session.execute(select(ChatRunPart).where(ChatRunPart.run_id == run.run_id).order_by(ChatRunPart.id))
             parts = grouped_parts(list(found.scalars().all())) or None
+        if followups:
+            parts = {**(parts or {}), "followups": followups}
         row = await database.append_chat_row(
             session,
             session_id=run.session_id,
@@ -432,8 +441,25 @@ async def _settle(database: Any, run: ChatRun, values: Dict[str, Any]) -> Option
             return None
     settled = await get_run(database, run.run_id)
     if settled is not None and settled.state in TERMINAL_STATES:
+        await _tell_notes(database, settled)
         publish_terminal(settled)
     return settled
+
+
+async def _tell_notes(database: Any, run: ChatRun) -> None:
+    """Mark the notes the run's turn carried as told (``services/chat/
+    notes.py``) when it answered: it finished, or it stopped having written
+    something. A run that failed, or stopped before writing, leaves them for
+    the next turn."""
+    answered = run.state == "finished" or (run.state == "stopped" and bool((run.result or {}).get("reply_message_id")))
+    if not answered:
+        return
+    from services.chat.notes import deliver_notes
+
+    try:
+        await deliver_notes(database, run.run_id)
+    except Exception:  # noqa: BLE001 - untold notes are told again next turn
+        logger.warning("Chat notes could not be marked told", run_id=run.run_id, exc_info=True)
 
 
 async def _seal(database: Any, run: ChatRun) -> None:

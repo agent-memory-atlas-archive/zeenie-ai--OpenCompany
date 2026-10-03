@@ -1,7 +1,8 @@
 """A tool call run as a node activity (``BaseNode.as_activity``) for the
 agent answering a chat run: it shows as a working step with the detail the
-tool gave, the detail never reaches the model, and a call of a run the owner
-stopped is answered without running."""
+tool gave, the detail never reaches the model, a call of a run the owner
+stopped is answered without running, and a search numbers the results the
+answer may cite."""
 
 from __future__ import annotations
 
@@ -105,3 +106,46 @@ async def test_a_node_outside_a_chat_run_is_untouched(surroundings):
     result = await ActivityEnvironment().run(activity_fn, {"node_id": "wf:braveSearch:1", "workflow_id": "wf", "node_data": {}})
     surroundings.service.execute_node.assert_awaited_once()
     assert result["success"] is True and surroundings.published == []
+
+
+async def test_a_search_numbers_the_results_the_answer_may_cite(surroundings, monkeypatch):
+    from services.chat import parts, sources
+
+    surroundings.service.execute_node.return_value = {
+        "success": True,
+        "result": {"results": [{"title": "Bloom", "url": "https://bloom.test/"}, {"title": "No link"}]},
+    }
+    recorded = []
+
+    async def next_numbers(database, session_id, count):
+        assert (database, session_id, count) == ("db", "wf", 1)
+        return 5
+
+    async def record_part(database, run_id, *, kind, key, payload):
+        recorded.append((run_id, kind, key, payload))
+
+    monkeypatch.setattr(sources, "next_numbers", next_numbers)
+    monkeypatch.setattr(parts, "record_part", record_part)
+    activity_fn = get_node_class("braveSearch").as_activity()
+    result = await ActivityEnvironment().run(activity_fn, dict(CONTEXT))
+    # The model reads the number on the result it may cite.
+    assert result["result"]["results"][0]["n"] == 5 and "n" not in result["result"]["results"][1]
+    assert recorded == [("r_1", "sources", "sources:call_1", {"items": [{"n": 5, "title": "Bloom", "url": "https://bloom.test/"}]})]
+
+
+async def test_results_are_numbered_only_for_a_search_of_the_answering_agent(monkeypatch):
+    from services.chat import sources
+
+    calls = []
+
+    async def number_tool_sources(*args, **kwargs):
+        calls.append(kwargs)
+
+    monkeypatch.setattr(sources, "number_tool_sources", number_tool_sources)
+    result = {"success": True, "result": {"results": [{"url": "https://ok.test"}]}}
+    await steps.number_sources(CONTEXT, get_node_class("calculatorTool"), result)
+    await steps.number_sources({**CONTEXT, "chat_stream": None}, get_node_class("braveSearch"), result)
+    await steps.number_sources({**CONTEXT, "tool_call_id": None}, get_node_class("braveSearch"), result)
+    assert calls == []
+    for search in ("braveSearch", "serperSearch", "perplexitySearch", "duckduckgoSearch"):
+        assert get_node_class(search).chat_sources is True

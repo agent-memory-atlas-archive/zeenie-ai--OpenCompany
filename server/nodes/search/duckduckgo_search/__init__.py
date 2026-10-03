@@ -53,6 +53,7 @@ class DuckDuckGoSearchNode(ToolNode):
     annotations = {"destructive": False, "readonly": True, "open_world": True}
     task_queue = TaskQueue.REST_API
     chat_step = "Searched the web"
+    chat_sources = True
 
     Params = DuckDuckGoSearchParams
     Output = DuckDuckGoSearchOutput

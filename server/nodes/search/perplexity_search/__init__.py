@@ -94,6 +94,7 @@ class PerplexitySearchNode(ActionNode):
     annotations = {"destructive": False, "readonly": True, "open_world": True}
     task_queue = TaskQueue.REST_API
     chat_step = "Searched the web"
+    chat_sources = True
     usable_as_tool = True
 
     Params = PerplexitySearchParams
