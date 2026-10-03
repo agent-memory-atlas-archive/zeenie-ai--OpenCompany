@@ -20,6 +20,7 @@ import {
   type RunState,
   type StepState,
 } from './events';
+import { applyPatch } from './patch';
 
 export interface RunStep {
   stepId: string;
@@ -37,6 +38,16 @@ export interface RunSegment {
   /** True for the reply, false for narration beside a tool call, null while
    *  it streams. */
   final: boolean | null;
+}
+
+/** A part the run is building (generated UI, sources, ...), as its
+ *  `activity.*` events have it so far. `messageId` is the part's id. */
+export interface RunActivity {
+  messageId: string;
+  activityType: string;
+  content: unknown;
+  /** Patches applied since the snapshot ("Rendering UI · patch k"). */
+  patches: number;
 }
 
 export interface RunSnapshot {
@@ -58,6 +69,7 @@ export interface RunSnapshot {
   durationMs: number | null;
   steps: RunStep[];
   segments: RunSegment[];
+  activities: RunActivity[];
   outcome: RunOutcome | null;
   result: RunResult;
   error: RunError | null;
@@ -87,6 +99,7 @@ export function emptyRun(runId: string, sessionId: string): RunSnapshot {
     durationMs: null,
     steps: [],
     segments: [],
+    activities: [],
     outcome: null,
     result: {},
     error: null,
@@ -154,6 +167,18 @@ function wireSegments(raw: unknown): RunSegment[] {
   });
 }
 
+function wireActivities(raw: unknown): RunActivity[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((item) => {
+    if (!isRecord(item)) return [];
+    const messageId = optionalText(item.message_id);
+    const activityType = optionalText(item.activity_type);
+    if (!messageId || !activityType) return [];
+    const patches = typeof item.patches === 'number' && item.patches >= 0 ? item.patches : 0;
+    return [{ messageId, activityType, content: item.content ?? null, patches }];
+  });
+}
+
 /** A run as the server sends it (`chat_subscribe`'s `active_runs`,
  *  `get_chat_run`'s `run`); null when it names no run. */
 export function snapshotFromWire(raw: unknown): RunSnapshot | null {
@@ -179,6 +204,7 @@ export function snapshotFromWire(raw: unknown): RunSnapshot | null {
     durationMs: typeof raw.duration_ms === 'number' && raw.duration_ms >= 0 ? raw.duration_ms : null,
     steps: stepsFromWire(raw.steps),
     segments: wireSegments(raw.segments),
+    activities: wireActivities(raw.activities),
     outcome,
     result: parseResult(raw.result),
     // A failed run keeps its hint beside the error, in `result`.
@@ -198,6 +224,17 @@ function withSegment(segments: RunSegment[], messageId: string, update: (segment
   const index = segments.findIndex((segment) => segment.messageId === messageId);
   if (index === -1) return [...segments, update({ messageId, text: '', final: null })];
   return segments.map((segment, i) => (i === index ? update(segment) : segment));
+}
+
+function withActivity(
+  activities: RunActivity[],
+  messageId: string,
+  activityType: string,
+  update: (activity: RunActivity) => RunActivity,
+): RunActivity[] {
+  const index = activities.findIndex((activity) => activity.messageId === messageId);
+  if (index === -1) return [...activities, update({ messageId, activityType, content: null, patches: 0 })];
+  return activities.map((activity, i) => (i === index ? update(activity) : activity));
 }
 
 /** `run` with `event` folded in. An event at or before the run's `seq` is a
@@ -264,6 +301,24 @@ export function applyRunEvent(run: RunSnapshot, event: RunEvent): RunSnapshot {
         ...next,
         segments: withSegment(run.segments, event.messageId, (segment) => ({ ...segment, final: event.final })),
         replyMessageId: event.replyMessageId ?? run.replyMessageId,
+      };
+    case 'activity.snapshot':
+      return {
+        ...next,
+        activities: withActivity(run.activities, event.messageId, event.activityType, (activity) =>
+          event.replace || activity.content === null
+            ? { ...activity, activityType: event.activityType, content: event.content, patches: 0 }
+            : activity,
+        ),
+      };
+    case 'activity.delta':
+      return {
+        ...next,
+        activities: withActivity(run.activities, event.messageId, event.activityType, (activity) => ({
+          ...activity,
+          content: applyPatch(activity.content, event.patch),
+          patches: activity.patches + event.patch.length,
+        })),
       };
     case 'custom':
       if (event.name === 'opencompany.segment_discarded') {

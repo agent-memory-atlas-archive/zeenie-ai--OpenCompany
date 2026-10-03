@@ -124,10 +124,18 @@ export default tseslint.config(
       ],
     },
   },
-  // Tests may set up the chat's internals (its stores, its lazy markdown);
-  // they keep the setup-screen rule.
+  // Tests may set up the chat's internals (its stores, its lazy markdown,
+  // its own genui folder); they keep the setup-screen rule.
   {
     files: ['src/**/__tests__/**/*.{ts,tsx}', 'src/**/*.test.{ts,tsx}'],
+    ignores: ['src/features/home/genui/**'],
+    rules: {
+      'no-restricted-imports': ['error', { patterns: [{ group: ['**/home/genui/*'], message: GENUI_PRIVATE }] }],
+    },
+  },
+  // Home's own tests reach the setup screen relatively ("../genui/catalog").
+  {
+    files: ['src/features/home/**/__tests__/**/*.{ts,tsx}', 'src/features/home/**/*.test.{ts,tsx}'],
     ignores: ['src/features/home/genui/**'],
     rules: {
       'no-restricted-imports': [

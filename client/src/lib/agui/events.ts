@@ -10,8 +10,10 @@
  *
  * Fields beyond the scope are read one at a time: a field that cannot be read
  * is left out, never the whole event. Suffixes later phases render
- * (tool calls, activities, reasoning) come back as `unhandled`.
+ * (tool calls, reasoning) come back as `unhandled`.
  */
+
+import type { PatchOp } from './patch';
 
 export const RUN_SOURCE = 'opencompany://services/chat';
 export const RUN_TYPE_PREFIX = 'com.opencompany.chat.run.';
@@ -80,6 +82,8 @@ export type RunEventBody =
   | { type: 'text.started'; messageId: string }
   | { type: 'text.content'; messageId: string; delta: string }
   | { type: 'text.ended'; messageId: string; final: boolean; replyMessageId?: string }
+  | { type: 'activity.snapshot'; messageId: string; activityType: string; content: unknown; replace: boolean }
+  | { type: 'activity.delta'; messageId: string; activityType: string; patch: PatchOp[] }
   | { type: 'custom'; name: string; value: Record<string, unknown> }
   | { type: 'unhandled'; suffix: string };
 
@@ -103,11 +107,11 @@ const UNHANDLED_SUFFIXES = new Set([
   'tool_call.args',
   'tool_call.ended',
   'tool_call.result',
-  'activity.snapshot',
-  'activity.delta',
   'reasoning.started',
   'reasoning.ended',
 ]);
+/** Patch operations kept per `activity.delta`. */
+const MAX_PATCH_OPS = 64;
 
 type Data = Record<string, unknown>;
 
@@ -227,6 +231,20 @@ function eventFields(suffix: string, data: Data): RunEventBody | null {
         final: data.final === true,
         replyMessageId: text(data.reply_message_id),
       });
+    }
+    case 'activity.snapshot':
+    case 'activity.delta': {
+      const messageId = text(data.message_id);
+      const activityType = text(data.activity_type);
+      if (!messageId || !activityType) return null;
+      if (suffix === 'activity.snapshot') {
+        return { type: 'activity.snapshot', messageId, activityType, content: data.content ?? null, replace: data.replace !== false };
+      }
+      if (!Array.isArray(data.patch)) return null;
+      const patch = data.patch
+        .slice(0, MAX_PATCH_OPS)
+        .filter((op): op is PatchOp => isRecord(op) && typeof op.op === 'string' && typeof op.path === 'string');
+      return { type: 'activity.delta', messageId, activityType, patch };
     }
     case 'custom': {
       const name = text(data.name);

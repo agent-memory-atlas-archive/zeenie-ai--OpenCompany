@@ -25,6 +25,7 @@
  */
 
 import { emptyRun, isLiveRun, workedMs, type RunSnapshot, type RunStep } from '@/lib/agui/reduceRun';
+import { liveUiParts, savedSources, type SourceItem, type UiPart } from '../data/parts';
 import type { ChatMessage, MessageRun } from '../data/schemas';
 
 /** A run's working steps as its turn shows them. */
@@ -48,7 +49,15 @@ export type ChatTurn =
       run: RunSnapshot | null;
       /** The run's steps, on its first turn; null when it took none. */
       work: TurnWork | null;
+      /** The interfaces the run streamed, on its first turn: shown until the
+       *  saved reply carries them. */
+      liveUi: UiPart[];
+      /** The conversation's sources as of this answer, by number: its own and
+       *  every earlier answer's, since an answer may cite an older one. */
+      sources: ReadonlyMap<number, SourceItem>;
     };
+
+const NO_SOURCES: ReadonlyMap<number, SourceItem> = new Map();
 
 /** Run failures that are not news: the conversation itself went away. */
 const SILENT_FAILURES: ReadonlySet<string> = new Set(['reset', 'cleared']);
@@ -113,7 +122,7 @@ function shows(run: RunSnapshot, answered: boolean): boolean {
   if (answered || run.result.noReply) return false;
   return (
     run.segments.some((segment) => segment.final !== false && segment.text.length > 0) ||
-    (Boolean(run.result.replyMessageId) && run.steps.length > 0)
+    (Boolean(run.result.replyMessageId) && (run.steps.length > 0 || run.activities.length > 0))
   );
 }
 
@@ -141,6 +150,8 @@ export function buildTurns(messages: readonly ChatMessage[], runs: Readonly<Reco
   const keyed = new Set<string>();
   const turns: ChatTurn[] = [];
   let generation: string | null = null;
+  // The conversation's sources so far; a new map only when an answer adds some.
+  let sources = NO_SOURCES;
 
   visible.forEach((message, index) => {
     if (generation && message.runKey && message.runKey !== generation) {
@@ -152,31 +163,43 @@ export function buildTurns(messages: readonly ChatMessage[], runs: Readonly<Reco
     if (message.role === 'user') {
       turns.push({ kind: 'user', key: `user:${message.clientMessageId ?? message.id}`, message });
       if (runId && showing.has(runId) && !lastAnswer.has(runId) && lastIndex.get(runId) === index) {
-        turns.push({ kind: 'assistant', key: `run:${runId}`, message: null, run: runs[runId], work: workOf(runs[runId]) });
+        const run = runs[runId];
+        turns.push({ kind: 'assistant', key: `run:${runId}`, message: null, run, work: workOf(run), liveUi: liveUiParts(run.activities), sources });
         placed.add(runId);
         keyed.add(runId);
       }
       return;
     }
 
-    // A run's first answer takes the key its own turn had, and its work.
+    // A run's first answer takes the key its own turn had, its work and
+    // what it streamed.
     let key = `reply:${message.id}`;
     let work: TurnWork | null = null;
+    let liveUi: UiPart[] = [];
     if (runId && !keyed.has(runId)) {
       key = `run:${runId}`;
       work = workOf(runs[runId]);
+      liveUi = liveUiParts(runs[runId]?.activities);
       keyed.add(runId);
     }
     const last = Boolean(runId && lastAnswer.get(runId) === index);
     const run = runId && last && showing.has(runId) ? runs[runId] : null;
     if (run) placed.add(run.runId);
-    turns.push({ kind: 'assistant', key, message, run, work });
+    const own = savedSources(message.parts);
+    if (own.length > 0) {
+      const next = new Map(sources);
+      for (const source of own) next.set(source.n, source);
+      sources = next;
+    }
+    turns.push({ kind: 'assistant', key, message, run, work, liveUi, sources });
   });
 
   const unplaced = [...showing]
     .map((runId) => runs[runId])
     .filter((run) => !placed.has(run.runId) && isLiveRun(run))
     .sort((a, b) => runOrder(a).localeCompare(runOrder(b)));
-  for (const run of unplaced) turns.push({ kind: 'assistant', key: `run:${run.runId}`, message: null, run, work: workOf(run) });
+  for (const run of unplaced) {
+    turns.push({ kind: 'assistant', key: `run:${run.runId}`, message: null, run, work: workOf(run), liveUi: liveUiParts(run.activities), sources });
+  }
   return turns;
 }

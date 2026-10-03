@@ -17,8 +17,10 @@ import { useCallback, useLayoutEffect, useRef, useState, type ReactNode } from '
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { animate } from '@/lib/motion';
+import type { UiStateChange } from '@/lib/jsonRender/uiState';
 import { prefersReducedMotion } from '@/lib/useReducedMotion';
 import { cn } from '@/lib/utils';
+import type { ChatUiActions } from '../genui/actions';
 import type { ChatPersona } from '../host';
 import { AssistantTurn } from '../turns/AssistantTurn';
 import { UserTurn } from '../turns/UserTurn';
@@ -52,6 +54,11 @@ export interface ChatThreadProps {
   compact: boolean;
   /** Esc stops a working run here, so its status line says so. */
   canStop?: boolean;
+  /** What the buttons of an interface in a reply do. */
+  uiActions?: ChatUiActions;
+  onUiStateChange?: (partId: string, changes: UiStateChange[]) => void;
+  /** Sends a suggested next question as the owner's message. */
+  onFollowUp?: (text: string) => void;
   onScrolledChange?: (scrolled: boolean) => void;
 }
 
@@ -67,6 +74,9 @@ export function ChatThread({
   liveNote,
   compact,
   canStop = false,
+  uiActions,
+  onUiStateChange,
+  onFollowUp,
   onScrolledChange,
 }: ChatThreadProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -196,12 +206,17 @@ export function ChatThread({
                       message={turn.message}
                       run={turn.run}
                       work={turn.work}
+                      liveUi={turn.liveUi}
+                      sources={turn.sources}
                       persona={persona}
                       now={now}
                       latest={latest}
                       compact={compact}
                       liveNote={liveNote}
                       canStop={canStop}
+                      uiActions={uiActions}
+                      onUiStateChange={onUiStateChange}
+                      onFollowUp={onFollowUp}
                     />
                   )}
                 </div>

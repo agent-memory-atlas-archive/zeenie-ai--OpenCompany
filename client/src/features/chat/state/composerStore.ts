@@ -33,7 +33,8 @@ interface ComposerState {
 
 const EMPTY: ComposerDraft = { text: '', clientMessageId: null };
 
-function newClientMessageId(): string {
+/** A new `client_message_id` for a message sent from this tab. */
+export function newClientMessageId(): string {
   return typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
     ? crypto.randomUUID()
     : `c-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;

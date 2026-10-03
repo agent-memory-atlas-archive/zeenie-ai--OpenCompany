@@ -271,6 +271,25 @@ describe('ChatPane', () => {
     await waitFor(() => expect(chat.notify).toHaveBeenCalledWith('Couldn’t stop the reply. Try again.', 'error'));
   });
 
+  it('offers the next questions the employee suggested, under its latest answer only', async () => {
+    const followups = ['What about Sunday?', 'Move it to 3pm', 'What about Sunday?', '  '];
+    server.messages = [
+      row('m0', 'user', 'Old question'),
+      row('a0', 'assistant', 'Old answer', { parts: { followups: ['Never shown'] } }),
+      row('m1', 'user', 'Any bookings?', { run_id: 'r1' }),
+      row('a_r1', 'assistant', 'Two today.', { run_id: 'r1', parts: { followups } }),
+    ];
+    renderPane();
+    const group = await screen.findByRole('group', { name: 'Ask next' });
+    expect(group).toHaveTextContent('What about Sunday?Move it to 3pm');
+    expect(screen.queryByText('Never shown')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Move it to 3pm' }));
+    await waitFor(() =>
+      expect(sendRequest).toHaveBeenCalledWith('send_chat_message', expect.objectContaining({ message: 'Move it to 3pm', session_id: 'w1' })),
+    );
+  });
+
   it('says why a run failed, with what to do about it', async () => {
     server.messages = [row('m1', 'user', 'Book Priya in', { run_id: 'r1' })];
     server.activeRuns = [{ run_id: 'r1', session_id: 'w1', state: 'running', seq: 1, hub_epoch: 'e1' }];

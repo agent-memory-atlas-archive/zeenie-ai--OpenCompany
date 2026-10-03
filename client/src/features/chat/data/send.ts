@@ -55,6 +55,19 @@ type SendReply = {
   delivery?: string;
 };
 
+/** A button pressed in an interface the employee showed: sent back to it
+ *  as the owner's next turn (`send_chat_message`'s `ui_event`). */
+export interface UiEventSend {
+  partId: string;
+  elementId: string;
+  action: string;
+  params: Record<string, unknown>;
+}
+
+/** What one send carries: the text shown as the owner's message, and for a
+ *  button press, the press. */
+export type SendDraft = TakenDraft & { uiEvent?: UiEventSend };
+
 function localId(clientMessageId: string): string {
   return `local:${clientMessageId}`;
 }
@@ -67,8 +80,8 @@ export function useSendChatMessage(sessionId: string, scope: ThreadScope, onRefu
   const replace = (update: (messages: ChatMessage[]) => ChatMessage[]) =>
     queryClient.setQueryData<ChatThreadData>(key, (data) => (data ? { ...data, messages: update(data.messages) } : data));
 
-  return useMutation<SendResult, ChatSendError, TakenDraft>({
-    mutationFn: async ({ text, clientMessageId }) => {
+  return useMutation<SendResult, ChatSendError, SendDraft>({
+    mutationFn: async ({ text, clientMessageId, uiEvent }) => {
       let reply: SendReply | undefined;
       try {
         reply = await sendRequest<SendReply>('send_chat_message', {
@@ -77,6 +90,16 @@ export function useSendChatMessage(sessionId: string, scope: ThreadScope, onRefu
           role: 'user',
           timestamp: new Date().toISOString(),
           client_message_id: clientMessageId,
+          ...(uiEvent
+            ? {
+                ui_event: {
+                  part_id: uiEvent.partId,
+                  element_id: uiEvent.elementId,
+                  action: uiEvent.action,
+                  params: uiEvent.params,
+                },
+              }
+            : {}),
         });
       } catch {
         throw new ChatSendError('transport', { transport: true });
@@ -90,13 +113,13 @@ export function useSendChatMessage(sessionId: string, scope: ThreadScope, onRefu
         delivery: reply.delivery === 'queued' ? 'queued' : reply.delivery === 'now' ? 'now' : null,
       };
     },
-    onMutate: async ({ text, clientMessageId }) => {
+    onMutate: async ({ text, clientMessageId, uiEvent }) => {
       await queryClient.cancelQueries({ queryKey: key });
       const pending: ChatMessage = {
         id: localId(clientMessageId),
         legacyId: null,
         role: 'user',
-        kind: 'text',
+        kind: uiEvent ? 'action' : 'text',
         text,
         timestamp: new Date().toISOString(),
         runKey: null,
@@ -129,7 +152,8 @@ export function useSendChatMessage(sessionId: string, scope: ThreadScope, onRefu
     },
     onError: (error, draft) => {
       replace((messages) => messages.filter((message) => message.id !== localId(draft.clientMessageId)));
-      useComposerStore.getState().restore(sessionId, draft, error.transport);
+      // A button press is not the owner's writing: nothing goes back in the box.
+      if (!draft.uiEvent) useComposerStore.getState().restore(sessionId, draft, error.transport);
       onRefused?.(error);
     },
     // The refetch swaps the local copy for the saved row.

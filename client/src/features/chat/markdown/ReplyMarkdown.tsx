@@ -18,12 +18,14 @@ import 'prismjs/components/prism-markdown';
 import 'prismjs/components/prism-python';
 import 'prismjs/components/prism-typescript';
 import 'prismjs/components/prism-yaml';
-import { memo, useMemo } from 'react';
+import { memo, useContext, useMemo } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
 import { cn } from '@/lib/utils';
 import { markdownBlocks } from './blocks';
+import { CitationContext } from './citationContext';
+import { linkCitations } from './citations';
 import { CHAT_MARKDOWN_COMPONENTS } from './components';
 
 const REMARK_PLUGINS = [remarkGfm, remarkBreaks];
@@ -74,7 +76,10 @@ const Block = memo(function Block({ text }: { text: string }) {
 });
 
 export default function ReplyMarkdown({ text, streaming = false, className }: { text: string; streaming?: boolean; className?: string }) {
-  const blocks = useMemo(() => (streaming ? markdownBlocks(text) : [text]), [text, streaming]);
+  // Each [n] of a source the reply has becomes a citation chip.
+  const { sources } = useContext(CitationContext);
+  const linked = useMemo(() => linkCitations(text, new Set(sources.keys())), [text, sources]);
+  const blocks = useMemo(() => (streaming ? markdownBlocks(linked) : [linked]), [linked, streaming]);
   return (
     <div className={cn('chat-markdown min-w-0', className)} data-streaming={streaming || undefined}>
       {blocks.map((block, index) => (

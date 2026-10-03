@@ -12,14 +12,16 @@
  * answer too. A message that does not go comes back into the box.
  */
 
-import { useCallback, useImperativeHandle, useRef, type KeyboardEvent, type Ref } from 'react';
+import { useCallback, useImperativeHandle, useLayoutEffect, useMemo, useRef, type KeyboardEvent, type Ref } from 'react';
 import { cn } from '@/lib/utils';
 import { useConversation } from './data/conversation';
 import { useSendChatMessage, type ChatSendError } from './data/send';
 import { useStopChatRun } from './data/stop';
+import { useUiStateSync } from './data/uiState';
 import { Composer } from './composer/Composer';
+import { asksWhatItSays, type ChatUiActions } from './genui/actions';
 import type { ChatHost, ChatPaneHandle } from './host';
-import { useComposerStore } from './state/composerStore';
+import { newClientMessageId, useComposerStore } from './state/composerStore';
 import { ChatThread } from './thread/ChatThread';
 
 export function ChatPane({ host, ref }: { host: ChatHost; ref?: Ref<ChatPaneHandle> }) {
@@ -51,6 +53,57 @@ export function ChatPane({ host, ref }: { host: ChatHost; ref?: Ref<ChatPaneHand
     if (lane && !stopping) stop.mutate(lane);
   };
 
+  // What an interface's buttons do. Read through a ref, so the handlers an
+  // interface made once keep reaching the current pane.
+  const uiState = useUiStateSync(sessionId);
+  const live = useRef({ busy, ready: Boolean(thread.data), send: send.mutate, notify, uiState });
+  useLayoutEffect(() => {
+    live.current = { busy, ready: Boolean(thread.data), send: send.mutate, notify, uiState };
+  });
+  const uiActions = useMemo<ChatUiActions>(
+    () => ({
+      ask: (text, label) => {
+        const pane = live.current;
+        if (asksWhatItSays(text, label) && !pane.busy && pane.ready) {
+          pane.send({ text, clientMessageId: newClientMessageId() });
+          return;
+        }
+        // Not what the button says (or not now): the owner reads it first.
+        useComposerStore.getState().setText(sessionId, text);
+        boxRef.current?.focus();
+      },
+      event: (event) => {
+        const pane = live.current;
+        if (pane.busy || !pane.ready) {
+          pane.notify(`${persona.name} is still answering. Try that again once they finish.`, 'info');
+          return;
+        }
+        pane.uiState.flush(event.partId);
+        pane.send({
+          text: event.label || event.action,
+          clientMessageId: newClientMessageId(),
+          uiEvent: { partId: event.partId, elementId: event.elementId, action: event.action, params: event.params },
+        });
+      },
+    }),
+    [sessionId, persona.name],
+  );
+
+  // A suggested question goes as written; while the last answer is still
+  // coming, it waits in the box instead.
+  const followUp = useCallback(
+    (text: string) => {
+      const pane = live.current;
+      if (!pane.busy && pane.ready) {
+        pane.send({ text, clientMessageId: newClientMessageId() });
+        return;
+      }
+      useComposerStore.getState().setText(sessionId, text);
+      boxRef.current?.focus();
+    },
+    [sessionId],
+  );
+
   const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (event.key !== 'Escape' || event.defaultPrevented || !lane || stopping) return;
     event.preventDefault();
@@ -71,6 +124,9 @@ export function ChatPane({ host, ref }: { host: ChatHost; ref?: Ref<ChatPaneHand
         liveNote={host.liveNote}
         compact={compact}
         canStop={composer !== 'closed'}
+        uiActions={uiActions}
+        onUiStateChange={uiState.change}
+        onFollowUp={composer === 'send' ? followUp : undefined}
         onScrolledChange={host.onScrolledChange}
       />
       <div className={cn('relative flex-none', compact ? 'border-t border-border-default px-3 py-2' : 'px-6 pb-3')}>

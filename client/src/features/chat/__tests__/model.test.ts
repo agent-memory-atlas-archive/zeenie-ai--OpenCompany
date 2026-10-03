@@ -179,3 +179,17 @@ describe('buildTurns', () => {
     expect(answer.kind === 'assistant' && answer.work).toEqual({ steps: withSteps.steps, live: false, durationMs: 8_000 });
   });
 });
+
+describe('sources on the thread', () => {
+  it('gives each answer the conversation’s sources so far, so it may cite an older one', () => {
+    const first = message('a1', 'assistant', { parts: { sources: [{ n: 1, title: 'Bloom', url: 'https://bloom.test/' }] } });
+    const plain = message('a2', 'assistant');
+    const second = message('a3', 'assistant', { parts: { sources: [{ n: 2, title: 'Stem', url: 'https://stem.test/' }] } });
+    const turns = buildTurns([message('u1', 'user'), first, plain, second], {});
+    const known = turns.flatMap((turn) => (turn.kind === 'assistant' ? [[...turn.sources.keys()]] : []));
+    expect(known).toEqual([[1], [1], [1, 2]]);
+    // An answer that adds none shares the map before it.
+    const [a1, a2] = turns.filter((turn) => turn.kind === 'assistant');
+    expect(a1.kind === 'assistant' && a2.kind === 'assistant' && a1.sources === a2.sources).toBe(true);
+  });
+});

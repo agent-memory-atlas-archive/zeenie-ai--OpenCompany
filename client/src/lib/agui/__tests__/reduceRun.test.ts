@@ -1,11 +1,13 @@
 /**
  * A chat run folded from its events: the handoff's Saturday booking run
- * (steps, streamed text, a draft waiting for the owner, then the resume run
- * that sent it), duplicates, and the snapshots the server sends.
+ * (steps, streamed text, a generated interface patch by patch, a draft
+ * waiting for the owner, then the resume run that sent it), duplicates, and
+ * the snapshots the server sends.
  */
 
 import { describe, expect, it } from 'vitest';
 import fixture from '@/features/chat/__fixtures__/saturday-booking.events.json';
+import booking from '@/features/chat/__fixtures__/saturday-booking.spec.json';
 import { parseRunFrame, type RunEvent } from '../events';
 import { applyRunEvent, emptyRun, isLiveRun, replayRun, snapshotFromWire } from '../reduceRun';
 
@@ -63,6 +65,39 @@ describe('applyRunEvent', () => {
       { messageId: 'r_8f2a1c.1.1', text: 'Saturday is fairly full, but there’s a clean 2h 15m gap with Ana from 2:30pm.', final: true },
     ]);
     expect(isLiveRun(run)).toBe(false);
+  });
+
+  it('builds the interface the run streamed, patch by patch', () => {
+    const run = replayRun('r_8f2a1c', 'wf_salon', eventsOf('r_8f2a1c'));
+    const ui = run.activities.find((activity) => activity.activityType === 'json_render');
+    expect(ui).toMatchObject({ messageId: 'p_ui_1', patches: 13 });
+    expect(ui?.content).toEqual({
+      root: booking.root,
+      state: booking.state,
+      elements: booking.elements,
+    });
+  });
+
+  it('keeps an activity a snapshot does not replace', () => {
+    const base = applyRunEvent(
+      emptyRun('r1', 'w1'),
+      parseRunFrame(envelope('activity.snapshot', { message_id: 'p', activity_type: 'json_render', content: { root: 'a' } })) as RunEvent,
+    );
+    const kept = applyRunEvent(
+      base,
+      parseRunFrame(envelope('activity.snapshot', { message_id: 'p', activity_type: 'json_render', content: {}, replace: false }, 2)) as RunEvent,
+    );
+    expect(kept.activities).toEqual([{ messageId: 'p', activityType: 'json_render', content: { root: 'a' }, patches: 0 }]);
+  });
+
+  it('reads activity events and refuses malformed ones', () => {
+    expect(parseRunFrame(envelope('activity.delta', { message_id: 'p', activity_type: 'json_render', patch: [{ op: 'add', path: '/root', value: 'r' }] }))).toMatchObject({
+      type: 'activity.delta',
+      messageId: 'p',
+      patch: [{ op: 'add', path: '/root', value: 'r' }],
+    });
+    expect(parseRunFrame(envelope('activity.delta', { message_id: 'p', activity_type: 'json_render', patch: 'nope' }))).toBeNull();
+    expect(parseRunFrame(envelope('activity.snapshot', { activity_type: 'json_render', content: {} }))).toBeNull();
   });
 
   it('folds the resume run that sent the draft', () => {
