@@ -19,6 +19,7 @@ from constants import (
 from pydantic import ValidationError
 from services.node_registry import get_node_class
 from services.parameter_resolver import template_view
+from services.plugin.base import locked_tool_fields
 # Wave 11.D.13 sunset: every handler that was imported here is now
 # either (a) called lazily from a plugin's execute_op / execute method,
 # or (b) retired entirely. The dispatcher itself only needs the
@@ -139,8 +140,23 @@ class NodeExecutor:
         execution_id = context.get("execution_id") or str(uuid.uuid4())[:8]
 
         try:
+            # An LLM tool call carries the model's own arguments in
+            # ``tool_args``; ``parameters`` already has them merged on top of
+            # the node's settings (the agent workflow builds
+            # ``{**tool params, **call args}``).
+            tool_args = context.get("tool_args")
+            if isinstance(tool_args, dict):
+                locked = locked_tool_fields(get_node_class(node_type))
+                if locked:
+                    context = {
+                        **context,
+                        "tool_args": {k: v for k, v in tool_args.items() if k not in locked},
+                    }
+            else:
+                tool_args = None
+
             # Load, validate, enhance parameters
-            params = await self._prepare_parameters(node_id, node_type, parameters, session_id)
+            params = await self._prepare_parameters(node_id, node_type, parameters, session_id, tool_args=tool_args)
 
             # Resolve templates if resolver provided
             nodes = context.get("nodes")
@@ -221,11 +237,32 @@ class NodeExecutor:
                 False, node_id, node_type, error=str(e), execution_id=execution_id, execution_time=time.time() - start_time
             ).to_dict()
 
-    async def _prepare_parameters(self, node_id: str, node_type: str, params: Dict, session_id: str) -> Dict:
+    async def _prepare_parameters(
+        self,
+        node_id: str,
+        node_type: str,
+        params: Dict,
+        session_id: str,
+        tool_args: Optional[Dict[str, Any]] = None,
+    ) -> Dict:
         """Load from DB, validate, inject API keys."""
         # Merge with DB parameters (DB provides defaults, frontend can override)
         db_params = await self.database.get_node_parameters(node_id) or {}
         merged = {**db_params, **params} if params else db_params
+
+        # On an LLM tool call the model never chooses a node's locked fields
+        # (``server_controlled_fields``: the sending account, the browser
+        # profile, data mounts...). The saved setting wins; with none saved,
+        # the field falls back to its default rather than to the model's value.
+        if tool_args:
+            locked = locked_tool_fields(get_node_class(node_type))
+            if locked & tool_args.keys():
+                merged = dict(merged)
+                for field_name in locked & tool_args.keys():
+                    if field_name in db_params:
+                        merged[field_name] = db_params[field_name]
+                    else:
+                        merged.pop(field_name, None)
 
         # Validate via plugin Params (snake_case, plugin-only path).
         node_cls = get_node_class(node_type)

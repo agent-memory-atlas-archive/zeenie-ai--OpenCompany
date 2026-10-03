@@ -80,6 +80,20 @@ class NodeUserError(Exception):
         }
 
 
+def locked_tool_fields(node_cls: Any) -> frozenset:
+    """Fields a model may never set through tool arguments.
+
+    A plugin lists them in ``server_controlled_fields``: the sending account,
+    the browser profile, data mounts and the like. ``execute_as_tool`` strips
+    them from the model's arguments, and ``NodeExecutor`` restores the saved
+    value on the Temporal path, where the agent workflow has already merged
+    the arguments into the node's parameters.
+    """
+    if node_cls is None:
+        return frozenset()
+    return frozenset(getattr(node_cls, "server_controlled_fields", ()) or ())
+
+
 NODE_WAIT_INTERRUPTED = "NodeWaitInterrupted"
 
 
@@ -711,13 +725,17 @@ class BaseNode:
         """
         from services.plugin.tool import ToolNode
 
+        locked = locked_tool_fields(type(self))
         is_tool_node = isinstance(self, ToolNode)
         if not is_tool_node:
-            # Dual-purpose ActionNodes retain the established tool contract.
-            # ToolInput is a ToolNode extension and must not change them.
+            # Dual-purpose ActionNodes retain the established tool contract
+            # (model arguments win the merge) except for locked fields, which
+            # come from the node's settings only. ToolInput is a ToolNode
+            # extension and must not change them.
+            model_args = {k: v for k, v in (tool_args or {}).items() if k not in locked}
             envelope = await self.execute(
                 context.node_id,
-                {**node_params, **tool_args},
+                {**node_params, **model_args},
                 context,
             )
             if "success" not in envelope:
@@ -745,11 +763,13 @@ class BaseNode:
                 # malformed node configuration.
                 type(self).partial_config_model().model_validate(node_params)
                 # Preserve the legacy contract for existing plugins, while
-                # allowing a plugin to lock specific persisted settings.
-                effective = {**node_params, **input_payload}
-                for field_name in getattr(type(self), "server_controlled_fields", ()):
-                    if field_name in node_params:
-                        effective[field_name] = node_params[field_name]
+                # letting a plugin lock specific settings: a locked field
+                # comes from the node's settings, or else its default, never
+                # from the model.
+                effective = {
+                    **node_params,
+                    **{k: v for k, v in input_payload.items() if k not in locked},
+                }
                 validated_config = self.Params.model_validate(effective)
                 invocation_payload = validated_config.model_dump()
                 split_schema = False
