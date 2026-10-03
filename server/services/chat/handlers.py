@@ -43,7 +43,19 @@ PROTOCOL_VERSION = 1
 _DENIED = {"success": False, "error": "access_denied"}
 
 
-def _wire_message(row: Dict[str, Any]) -> Dict[str, Any]:
+def _wire_run(run: Any) -> Dict[str, Any]:
+    """The run a message started or answers, as a message carries it: enough
+    to show how it ended after a reload (a failed run leaves no reply)."""
+    wire: Dict[str, Any] = {"run_id": run.run_id, "state": run.state, "outcome": run.outcome}
+    if run.state == "error":
+        wire["error"] = {"message": run.error, "code": run.error_code}
+        hint = (run.result or {}).get("hint")
+        if hint:
+            wire["error"]["hint"] = hint
+    return wire
+
+
+def _wire_message(row: Dict[str, Any], runs: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """A stored message as ``get_chat_messages`` sends it."""
     message_id = row.get("uid") or f"m{row.get('id')}"
     wire: Dict[str, Any] = {
@@ -68,6 +80,9 @@ def _wire_message(row: Dict[str, Any]) -> Dict[str, Any]:
     client_message_id = (row.get("meta") or {}).get("client_message_id")
     if client_message_id:
         wire["client_message_id"] = client_message_id
+    run = (runs or {}).get(row.get("run_id") or "")
+    if run is not None:
+        wire["run"] = _wire_run(run)
     return wire
 
 
@@ -225,6 +240,7 @@ async def handle_get_chat_messages(data: Dict[str, Any], websocket: WebSocket) -
                 )
         thread = await _thread_state(database, session_id)
         active_runs = await run_snapshots(database, session_id)
+        runs = await ledger.runs_by_id(database, [row.get("run_id") for row in rows])
     except Exception:
         logger.warning("Chat messages could not be read", session_id=session_id, exc_info=True)
         return {"success": False, "error": "read_failed", "session_id": session_id}
@@ -232,7 +248,7 @@ async def handle_get_chat_messages(data: Dict[str, Any], websocket: WebSocket) -
         "success": True,
         "protocol_version": PROTOCOL_VERSION,
         "session_id": session_id,
-        "messages": [_wire_message(row) for row in rows],
+        "messages": [_wire_message(row, runs) for row in rows],
         "thread": thread,
         "active_runs": active_runs,
     }

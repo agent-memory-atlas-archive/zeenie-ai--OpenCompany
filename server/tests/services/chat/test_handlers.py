@@ -113,6 +113,33 @@ async def test_reading_the_thread_returns_the_v2_shape(chat):
     assert (run["run_id"], run["state"], run["user_message_id"], run["seq"]) == (sent["run_id"], "pending", message["id"], 0)
 
 
+async def test_each_message_says_how_its_run_ended(chat):
+    """A reload still shows a failed run's error (it leaves no reply), and a
+    finished run on both the owner's message and the reply."""
+    await talking(chat.database)
+    failed = await send(chat)
+    await ledger.start_run(chat.database, run_id=failed["run_id"], temporal_workflow_id="tw", temporal_run_id="tr")
+    await ledger.finish_run(
+        chat.database, run_id=failed["run_id"], temporal_workflow_id="tw", temporal_run_id="tr",
+        success=False, error="Calendar said no", hint="Reconnect Google",
+    )
+    answered = await send(chat, "Try again")
+    run = await ledger.start_run(chat.database, run_id=answered["run_id"], temporal_workflow_id="tw2", temporal_run_id="tr")
+    await ledger.post_reply(chat.database, run=run, node_id="n", text="Booked.", execution_id="gen-1")
+    await ledger.finish_run(chat.database, run_id=answered["run_id"], temporal_workflow_id="tw2", temporal_run_id="tr", success=True)
+
+    result = await chat.handlers.handle_get_chat_messages({"session_id": "wf", "all_generations": True}, None)
+    first, second, reply = result["messages"]
+    assert first["run"] == {
+        "run_id": failed["run_id"],
+        "state": "error",
+        "outcome": None,
+        "error": {"message": "Calendar said no", "code": "run_failed", "hint": "Reconnect Google"},
+    }
+    assert second["run"] == reply["run"] == {"run_id": answered["run_id"], "state": "finished", "outcome": "success"}
+    assert result["active_runs"] == []
+
+
 async def test_a_failed_read_is_never_an_empty_thread(chat, monkeypatch):
     async def broken(*_args, **_kwargs):
         raise RuntimeError("database is locked")

@@ -129,6 +129,16 @@ async def lane_run(database: Any, session_id: str) -> Optional[ChatRun]:
         return result.scalar_one_or_none()
 
 
+async def runs_by_id(database: Any, run_ids: List[str]) -> Dict[str, ChatRun]:
+    """The named runs that exist, by id (one query)."""
+    wanted = sorted({run_id for run_id in run_ids if run_id})
+    if not wanted:
+        return {}
+    async with database.get_session() as session:
+        result = await session.execute(select(ChatRun).where(ChatRun.run_id.in_(wanted)))
+        return {run.run_id: run for run in result.scalars().all()}
+
+
 async def live_runs(database: Any, session_id: Optional[str] = None) -> List[ChatRun]:
     """Live runs, oldest first: one session's, or every session's."""
     async with database.get_session() as session:
@@ -527,6 +537,7 @@ __all__ = [
     "publish_started",
     "publish_terminal",
     "reply_uid",
+    "runs_by_id",
     "start_run",
     "sweep",
 ]
