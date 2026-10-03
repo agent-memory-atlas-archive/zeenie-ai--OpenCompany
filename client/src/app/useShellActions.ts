@@ -6,8 +6,7 @@
  *
  * Unsaved changes: the editor keeps its working copy in the app store, so
  * leaving for Home loses nothing. Opening a different workflow would replace
- * it, so `enterDev` saves it first when the auto-save preference is on (the
- * default) and asks otherwise.
+ * it, so `enterDev` settles it first (`unsavedWork.ts`).
  */
 
 import { useMemo } from 'react';
@@ -19,9 +18,9 @@ import type { EmployeeSummary } from '../features/home/data/schemas';
 import { queryClient } from '../lib/queryClient';
 import { featureFlags } from '../lib/featureFlags';
 import { useAppStore } from '../store/useAppStore';
-import { useWorkflowSettingsStore } from '../stores/workflowSettingsStore';
 import { preloadEditor, preloadHome } from './ShellModeSwitch';
 import { transitionShell } from './shellTransition';
+import { settleUnsavedWork } from './unsavedWork';
 
 export interface EnterDevOptions {
   /** Open this workflow in the editor (an employee's "Open workflow"). */
@@ -37,28 +36,6 @@ function homeWorkflowId(): string | undefined {
   const team = queryClient.getQueryData<EmployeeSummary[]>(EMPLOYEES_QUERY_KEY);
   return team?.find((employee) => employee.workflow_id === workspaceFor)?.workflow_id
     ?? team?.[0]?.workflow_id ?? workspaceFor ?? undefined;
-}
-
-/** Keep, save, or refuse the editor's unsaved work before it is replaced.
- *  False means the switch must not happen. */
-async function settleUnsavedWork(nextWorkflowId: string): Promise<boolean> {
-  const { currentWorkflow, hasUnsavedChanges, saveWorkflow } = useAppStore.getState();
-  if (!hasUnsavedChanges || !currentWorkflow || currentWorkflow.id === nextWorkflowId) return true;
-  const autoSave = useWorkflowSettingsStore.getState().settings.autoSave;
-  if (!autoSave && !window.confirm(`Save your changes to "${currentWorkflow.name}" before opening another workflow?`)) {
-    return false;
-  }
-  try {
-    await saveWorkflow();
-  } catch (error) {
-    console.error('[Shell] Failed to save before switching workflows:', error);
-  }
-  // saveWorkflow reports failure by leaving the changes marked unsaved.
-  if (useAppStore.getState().hasUnsavedChanges) {
-    toast.error(`Could not save "${currentWorkflow.name}". Your changes are still open in the editor.`);
-    return false;
-  }
-  return true;
 }
 
 export async function enterDev(options: EnterDevOptions = {}): Promise<void> {

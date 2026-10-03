@@ -11,7 +11,7 @@ import {
   sanitizeNodes,
 } from '../utils/workflowExport';
 import type { ImportedWorkflow } from '../utils/workflowExport';
-import { workflowApi } from '../services/workflowApi';
+import { workflowApi, type SaveWorkflowFailure } from '../services/workflowApi';
 import { queryClient } from '../lib/queryClient';
 import { addSavedEdges, addSavedNodes, type WorkflowOperation } from '../lib/workflowOps';
 import { BRAND_STORAGE_KEYS, readAndMigrateStorageValue } from '../lib/brandStorage';
@@ -86,7 +86,9 @@ interface AppStore {
   setCurrentWorkflow: (workflow: WorkflowData) => void;
   updateWorkflow: (updates: Partial<Omit<WorkflowData, 'id' | 'createdAt'>>) => void;
   createNewWorkflow: () => Promise<void>;
-  saveWorkflow: () => Promise<void>;
+  /** True when the server saved the workflow. On false it has already told
+   *  the user why, and the changes stay marked unsaved. */
+  saveWorkflow: () => Promise<boolean>;
   loadWorkflow: (id: string) => Promise<void>;
   deleteWorkflow: (id: string) => Promise<boolean>;
   /** Apply a successful deletion from this tab or a lifecycle broadcast. */
@@ -98,6 +100,12 @@ interface AppStore {
    *  needs saving, and an open canvas is not reset. No-op for any other
    *  workflow. */
   adoptSavedOperations: (workflowId: string, operations: WorkflowOperation[]) => void;
+  /** Show the graph Start admitted (normalized, canonical ids) in the open
+   *  workflow. Start stores that graph on the new generation, not on the
+   *  workflow, so `hasUnsavedChanges` stays as it was: clearing it would
+   *  hide edits that exist only in the running generation. No-op for any
+   *  other workflow. */
+  adoptStartedGraph: (workflowId: string, nodes: Node[], edges: Edge[]) => void;
 
   // UI actions
   setSelectedNode: (node: Node | null) => void;
@@ -172,6 +180,15 @@ const migrateNodes = (nodes: Node[]): Node[] => {
     }
     return node;
   });
+};
+
+/** What to tell the user when a workflow was not saved. */
+const saveFailureMessage = (name: string, failure: SaveWorkflowFailure | null): string => {
+  if (failure?.error === 'workflow_not_found') return `"${name}" no longer exists, so it was not saved.`;
+  const [first, ...rest] = failure?.messages ?? [];
+  if (first) return `Could not save "${name}": ${first}${rest.length ? ` (and ${rest.length} more)` : ''}`;
+  const reason = failure?.error === 'unreachable' ? ': the server did not answer' : '';
+  return `Could not save "${name}"${reason}. Your changes are still in the editor.`;
 };
 
 // Storage keys for UI state persistence
@@ -277,6 +294,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     );
     if (!result?.id) {
       console.error('Failed to allocate workflow identity');
+      toast.error('Could not create a workflow. Check the connection and try again.');
       return;
     }
     set({
@@ -295,25 +313,28 @@ export const useAppStore = create<AppStore>((set, get) => ({
   
   saveWorkflow: async () => {
     const { currentWorkflow } = get();
-    if (!currentWorkflow) return;
+    if (!currentWorkflow) return false;
 
     // Save to database - sanitize node.data to only include UI fields (label, disabled, condition).
     // Parameters live in the DB node_parameters table, not in node.data.
     // The save handler returns the canonical slug (recomputed server-side
     // when the display name changed) so we can sync the store with it.
+    let failure: SaveWorkflowFailure | null = null;
     const result = await workflowApi.saveWorkflow(
       currentWorkflow.id,
       currentWorkflow.name,
-      { nodes: sanitizeNodes(currentWorkflow.nodes), edges: currentWorkflow.edges }
+      { nodes: sanitizeNodes(currentWorkflow.nodes), edges: currentWorkflow.edges },
+      (reason) => { failure = reason; },
     );
 
     if (!result) {
-      console.error('Failed to save workflow to database');
-      return;
+      console.error('Failed to save workflow to database', failure);
+      toast.error(saveFailureMessage(currentWorkflow.name, failure));
+      return false;
     }
     // A delete, navigation, or newer edit can finish while the save is in
     // flight. Its response must not restore the old graph or clear new edits.
-    if (get().currentWorkflow !== currentWorkflow) return;
+    if (get().currentWorkflow !== currentWorkflow) return true;
 
     const aliases = result.nodeIdAliases ?? {};
     // Server normalization is authoritative: it creates Context companions,
@@ -351,8 +372,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
       hasUnsavedChanges: false,
     });
     invalidateWorkflowsList();
+    return true;
   },
-  
+
   loadWorkflow: async (id) => {
     // Use the same server-record query as other readers. Deletion cancels it,
     // so late responses cannot restore a removed graph. No client ID registry
@@ -425,6 +447,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
     const nodes = addSavedNodes(workflow.nodes, operations);
     const edges = addSavedEdges(workflow.edges, operations);
     if (nodes === workflow.nodes && edges === workflow.edges) return;
+    set({ currentWorkflow: { ...workflow, nodes, edges } });
+  },
+
+  adoptStartedGraph: (workflowId, nodes, edges) => {
+    const workflow = get().currentWorkflow;
+    if (!workflow || workflow.id !== workflowId) return;
     set({ currentWorkflow: { ...workflow, nodes, edges } });
   },
 

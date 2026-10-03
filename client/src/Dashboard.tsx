@@ -17,6 +17,7 @@ import { featureFlags } from './lib/featureFlags';
 import { deriveCanvasLock } from './lib/canvasLock';
 import { AGENT_PHASE } from './lib/agentPhases';
 import { CanvasEditGuardContext } from './contexts/canvasEditGuard';
+import { settleUnsavedWork } from './app/unsavedWork';
 import { prefetchAllNodeSpecs, listCachedNodeSpecs, cachedNodeSpecTypesKey } from './lib/nodeSpec';
 import AIAgentNode from './components/AIAgentNode';
 import SquareNode from './components/SquareNode';
@@ -337,11 +338,7 @@ const DashboardContent: React.FC = () => {
       ? authoritativeNodes.find((node) => node.id === selectedId) ?? null
       : null;
 
-    store.setCurrentWorkflow({
-      ...workflow,
-      nodes: authoritativeNodes,
-      edges: authoritativeEdges,
-    });
+    store.adoptStartedGraph(workflowId, authoritativeNodes, authoritativeEdges);
     store.setSelectedNode(canonicalSelection);
     setNodes(authoritativeNodes);
     setEdges(authoritativeEdges);
@@ -738,6 +735,7 @@ const DashboardContent: React.FC = () => {
   // deploy it so the chat trigger is live. Shared by the wizard's finish
   // button and the Get Started checklist.
   const handleRunExample = React.useCallback(async () => {
+    if (!(await settleUnsavedWork())) return;
     const workflow = await openExampleAndChat('AI Assistant');
     if (!workflow) return;
 
@@ -848,6 +846,9 @@ const DashboardContent: React.FC = () => {
         // backend `import_workflow` orchestrator. This UI is reduced to
         // file pick + user prompts + view switch.
         const imported = await importWorkflowFromFile(file);
+        // The import opens the new workflow in place of this one, so this
+        // one's unsaved changes are settled before anything is created.
+        if (!(await settleUnsavedWork())) return;
         const proposedName = imported.name || 'Imported Workflow';
 
         let response = await sendRequest<ImportWorkflowResponse>('import_workflow', {

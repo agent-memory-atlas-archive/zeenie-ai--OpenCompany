@@ -45,8 +45,33 @@ export interface SaveWorkflowResult {
   };
 }
 
+/** Why a save did not happen. */
+export interface SaveWorkflowFailure {
+  /** The server's code (`invalid_context_topology`, `workflow_not_found`,
+   *  `save_failed`), or `unreachable` when no answer arrived. */
+  error: string;
+  /** The user-facing messages of the validation issues that refused it. */
+  messages: string[];
+}
+
+function saveFailure(body: any): SaveWorkflowFailure {
+  const issues: unknown[] = Array.isArray(body?.validation_errors) ? body.validation_errors : [];
+  return {
+    error: typeof body?.error === 'string' && body.error ? body.error : 'save_failed',
+    messages: issues
+      .map((issue) => (issue as { message?: unknown } | null)?.message)
+      .filter((message): message is string => typeof message === 'string' && message.length > 0),
+  };
+}
+
 export const workflowApi = {
-  async saveWorkflow(workflowId: string, name: string, data: { nodes: any[]; edges: any[] }): Promise<SaveWorkflowResult | null> {
+  /** Null when the workflow was not saved; `onFailure` then hears why. */
+  async saveWorkflow(
+    workflowId: string,
+    name: string,
+    data: { nodes: any[]; edges: any[] },
+    onFailure?: (failure: SaveWorkflowFailure) => void,
+  ): Promise<SaveWorkflowResult | null> {
     try {
       const response = await fetch(`${getApiBase()}/workflows`, {
         method: 'POST',
@@ -55,9 +80,15 @@ export const workflowApi = {
         body: JSON.stringify({ workflow_id: workflowId, name, data })
       });
       const result = await response.json();
-      if (!result.success) return null;
+      if (!result.success) {
+        onFailure?.(saveFailure(result));
+        return null;
+      }
       const canonicalId = result.id ?? result.workflow_id;
-      if (!canonicalId && workflowId === 'new') return null;
+      if (!canonicalId && workflowId === 'new') {
+        onFailure?.(saveFailure(null));
+        return null;
+      }
       return {
         success: true,
         id: canonicalId ?? workflowId,
@@ -68,6 +99,7 @@ export const workflowApi = {
       };
     } catch (error) {
       console.error('Failed to save workflow:', error);
+      onFailure?.({ error: 'unreachable', messages: [] });
       return null;
     }
   },

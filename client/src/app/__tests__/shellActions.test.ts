@@ -48,7 +48,11 @@ const workflow = (id: string, name = `Workflow ${id}`) => ({
   lastModified: new Date(),
 });
 
-function setEditor({ current = 'a', unsaved = false, saveFails = false } = {}) {
+type SaveOutcome = 'saved' | 'failed' | 'changedWhileSaving';
+
+function setEditor(
+  { current = 'a', unsaved = false, save = 'saved' }: { current?: string; unsaved?: boolean; save?: SaveOutcome } = {},
+) {
   useAppStore.setState({
     currentWorkflow: workflow(current),
     hasUnsavedChanges: unsaved,
@@ -59,7 +63,14 @@ function setEditor({ current = 'a', unsaved = false, saveFails = false } = {}) {
     }),
     saveWorkflow: vi.fn(async () => {
       events.push('save');
-      if (!saveFails) useAppStore.setState({ hasUnsavedChanges: false });
+      if (save === 'failed') {
+        // As the store does: a save that did not happen explains itself.
+        toastError('Could not save');
+        return false;
+      }
+      // A newer edit keeps the changes marked unsaved after a good save.
+      if (save === 'saved') useAppStore.setState({ hasUnsavedChanges: false });
+      return true;
     }),
   });
 }
@@ -160,11 +171,19 @@ describe('enterDev', () => {
     expect(events.at(-1)).toBe('transition:dev');
   });
 
-  it('keeps the editor on its workflow when the save fails', async () => {
-    setEditor({ unsaved: true, saveFails: true });
+  it('keeps the editor on its workflow when the save fails, with one message', async () => {
+    setEditor({ unsaved: true, save: 'failed' });
     await enterDev({ workflowId: 'b' });
     expect(events).toEqual(['save']);
     expect(toastError).toHaveBeenCalledTimes(1);
+    expect(useAppStore.getState().currentWorkflow?.id).toBe('a');
+  });
+
+  it('keeps the editor on its workflow when it changed while saving', async () => {
+    setEditor({ unsaved: true, save: 'changedWhileSaving' });
+    await enterDev({ workflowId: 'b' });
+    expect(events).toEqual(['save']);
+    expect(toastError).toHaveBeenCalledWith(expect.stringContaining('changed while it was saving'));
     expect(useAppStore.getState().currentWorkflow?.id).toBe('a');
   });
 
