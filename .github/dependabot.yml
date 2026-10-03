@@ -3,9 +3,7 @@
 #   JS   -> bump the range in the relevant package.json (or the top-level
 #           `overrides` block for transitive pins), `bun install`,
 #           `bun run audit:deps`, run tests
-#   pip  -> `uv lock --upgrade-package <name>` in server/, regenerate
-#           server/requirements.txt with the `uv export` command in its
-#           header, `uv sync`, tests
+#   pip  -> `uv lock --upgrade-package <name>` in server/, `uv sync`, tests
 # Alerts stay visible in the repository's Security tab, except for bun.lock,
 # which GitHub cannot read: CI's `bun run audit:deps` covers the JS trees.
 #

@@ -254,9 +254,8 @@ by hand, alongside test runs:
 - JS: bump the range in the relevant `package.json` (or the top-level
   `overrides` block in the root manifest for transitive pins), `bun install`,
   `bun run audit:deps` (at the root and in `desktop/`), run the suites.
-- pip: `uv lock --upgrade-package <name>` in `server/`, regenerate
-  `server/requirements.txt` with the `uv export` command in its header,
-  `uv sync`, run the suites (`predeploy.yml` runs `uv lock --check`).
+- pip: `uv lock --upgrade-package <name>` in `server/`, `uv sync`, run the
+  suites (`predeploy.yml` runs `uv lock --check`).
 
 The file is kept rather than deleted because of how alerts are routed:
 a directory with no entry gets whatever updater Dependabot guesses, and for
@@ -271,12 +270,18 @@ only the `pip` entry ignored updates it kept opening security PRs (#140 to
 #142, 2026-09-30 and 10-01).
 
 Alerts themselves still appear in the repository's Security tab; they are
-useful and cost nothing. One kind never closes by itself: GitHub builds
-`server/`'s dependency graph from `uv.lock` alone (its "uv in /server" graph
-job submits only that manifest), so an alert filed against
-`server/requirements.txt` stays open after the file is re-exported with the
-fixed version. Dismiss those once `uv.lock` and the export both carry the
-fix. Dependabot's own security-update attempts are a
+useful and cost nothing. Those for `server/` come from `uv.lock`, which
+Dependabot's "uv in /server" graph job resubmits whenever a push changes
+it, so they close as fixed once the lock carries the fix.
+`server/requirements.txt` is no longer committed; pip users export it on
+demand (`SETUP.md`). As a tracked copy of the lock's pins it received every
+Python alert twice, and GitHub matched it against a snapshot that only
+Dependabot's pip graph job for the repository root refreshes, so those
+copies never closed (the last 18 were dismissed on 2026-10-03). GitHub keeps
+that snapshot until the job runs again (it last ran on 2026-09-12, for the
+v0.2.0 release commit, which changed the root `pyproject.toml`); until then,
+dismiss any alert filed against `server/requirements.txt` as inaccurate.
+Dependabot's own security-update attempts are a
 repository setting (Settings > Code security > Dependabot), not something
 the config file controls; turn them off there if the "Dependabot Updates"
 job should stop running entirely.

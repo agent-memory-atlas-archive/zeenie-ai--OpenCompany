@@ -118,6 +118,10 @@ venv/
 # app version gets the same dependency tree, and CI runs ``uv lock --check``.
 uv.lock
 !server/uv.lock
+# server/requirements.txt is a pip export of server/uv.lock, made on demand
+# (docs-internal/SETUP.md). A tracked copy drifts from the lock and gets its
+# own Dependabot alerts, which never close.
+server/requirements.txt
 # .python-version at the repo root IS tracked -- it's the project-wide
 # toolchain pin (read by uv, pyenv, asdf, AND ``setup-python`` via
 # python-version-file: in our GitHub Actions workflows). Per-developer

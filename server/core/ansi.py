@@ -7,7 +7,7 @@ Terminal tab (``process_service`` broadcasts + log files) and node Output panels
 ``[36mvite v7.3.3[39m``. Strip them at the capture boundary so stored logs,
 broadcasts, and node outputs are all clean.
 
-Delegates to ``click.unstyle`` (``click==8.3.2`` in ``requirements.txt``), a
+Delegates to ``click.unstyle`` (``click`` is pinned in ``server/uv.lock``), a
 faithful strip: it removes ANSI CSI colour / cursor / erase codes while
 preserving everything else — trailing newlines, tabs, spacing — so command
 output isn't silently mangled. (``rich.text.Text.from_ansi`` was rejected: it
