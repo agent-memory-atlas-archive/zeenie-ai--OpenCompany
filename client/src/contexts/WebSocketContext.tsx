@@ -34,6 +34,7 @@ import { startWebSocketHeartbeat } from '../lib/webSocketHeartbeat';
 import { todoQueryKeyFromEvent } from '../lib/todoQuery';
 import { AGENT_PHASE } from '../lib/agentPhases';
 import { useCanvasDockStore } from '../stores/canvasDockStore';
+import { useChatRunStore } from '../stores/chatRunStore';
 // Cycle note: lib/nodeSpec imports useWebSocketActions from this module. Safe in
 // both evaluation orders because neither side calls the other's binding at
 // module top level — `executionBudgetFor` only references it inside a body.
@@ -1217,6 +1218,13 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
               setDevChatRevision((revision) => revision + 1);
             }
           }
+          break;
+        }
+
+        case 'chat_run_event': {
+          // A chat run's event (services/chat/hub.py), sent only to sockets
+          // that subscribed to its session. The store checks and orders it.
+          useChatRunStore.getState().receive(data);
           break;
         }
 

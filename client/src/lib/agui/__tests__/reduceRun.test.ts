@@ -1,0 +1,116 @@
+/**
+ * A chat run folded from its events: the handoff's Saturday booking run
+ * (steps, streamed text, a draft waiting for the owner, then the resume run
+ * that sent it), duplicates, and the snapshots the server sends.
+ */
+
+import { describe, expect, it } from 'vitest';
+import fixture from '@/features/chat/__fixtures__/saturday-booking.events.json';
+import { parseRunFrame, type RunEvent } from '../events';
+import { applyRunEvent, emptyRun, isLiveRun, replayRun, snapshotFromWire } from '../reduceRun';
+
+const frames = (fixture as { data: unknown }[]).map((item) => parseRunFrame(item.data));
+
+function eventsOf(runId: string): RunEvent[] {
+  return frames.filter((frame): frame is RunEvent => frame !== null && frame.type !== 'resync' && frame.runId === runId);
+}
+
+function envelope(suffix: string, data: Record<string, unknown>, seq = 1) {
+  return {
+    specversion: '1.0',
+    id: `r1:${seq}`,
+    source: 'opencompany://services/chat',
+    type: `com.opencompany.chat.run.${suffix}`,
+    subject: 'r1',
+    data: { workflow_id: 'w1', session_id: 'w1', run_id: 'r1', seq, hub_epoch: 'e1', ...data },
+  };
+}
+
+describe('parseRunFrame', () => {
+  it('reads every event of the handoff run', () => {
+    expect(frames.every((frame) => frame !== null)).toBe(true);
+    expect(frames[0]).toMatchObject({ type: 'started', runId: 'r_8f2a1c', sessionId: 'wf_salon', seq: 1, hubEpoch: 'e_fixture' });
+  });
+
+  it('refuses frames it cannot trust', () => {
+    expect(parseRunFrame(envelope('started', {}))).not.toBeNull();
+    expect(parseRunFrame({ ...envelope('started', {}), source: 'opencompany://elsewhere' })).toBeNull();
+    expect(parseRunFrame({ ...envelope('started', {}), type: 'com.opencompany.chat.updated' })).toBeNull();
+    expect(parseRunFrame({ ...envelope('started', {}), specversion: '0.3' })).toBeNull();
+    expect(parseRunFrame(envelope('started', { hub_epoch: undefined }))).toBeNull();
+    expect(parseRunFrame(envelope('started', { seq: 0 }, 0))).toBeNull();
+    expect(parseRunFrame(envelope('nonsense', {}))).toBeNull();
+  });
+});
+
+describe('applyRunEvent', () => {
+  it('folds the handoff run: steps, the reply text, and the draft that waits', () => {
+    const run = replayRun('r_8f2a1c', 'wf_salon', eventsOf('r_8f2a1c'));
+    expect(run).toMatchObject({
+      state: 'finished',
+      kind: 'message',
+      userMessageId: 'm_owner_1',
+      replyMessageId: 'a_r_8f2a1c',
+      seq: 29,
+      outcome: { type: 'interrupt', interrupts: [{ id: 'ap_1', reason: 'tool_call', toolCallId: 'call_8f2a1c' }] },
+    });
+    expect(run.steps.map((step) => [step.name, step.state, step.durationMs])).toEqual([
+      ['Checked Google Calendar', 'done', 640],
+      ['Read the WhatsApp thread with Priya', 'done', 640],
+      ['Compared stylist availability', 'done', 640],
+    ]);
+    expect(run.segments).toEqual([
+      { messageId: 'r_8f2a1c.1.1', text: 'Saturday is fairly full, but there’s a clean 2h 15m gap with Ana from 2:30pm.', final: true },
+    ]);
+    expect(isLiveRun(run)).toBe(false);
+  });
+
+  it('folds the resume run that sent the draft', () => {
+    const resume = eventsOf('r_8f2a1c').length;
+    const others = frames.slice(resume).filter((frame): frame is RunEvent => frame !== null && frame.type !== 'resync');
+    const run = replayRun(others[0].runId, 'wf_salon', others);
+    expect(run).toMatchObject({ kind: 'resume', parentRunId: 'r_8f2a1c', state: 'finished', outcome: { type: 'success' } });
+  });
+
+  it('changes nothing for an event it has already seen', () => {
+    const started = parseRunFrame(envelope('started', { kind: 'message' })) as RunEvent;
+    const once = applyRunEvent(emptyRun('r1', 'w1'), started);
+    expect(applyRunEvent(once, started)).toBe(once);
+  });
+
+  it('ends stopped when the run was stopped, and failed with the error', () => {
+    const base = applyRunEvent(emptyRun('r1', 'w1'), parseRunFrame(envelope('started', {})) as RunEvent);
+    const stopped = applyRunEvent(base, parseRunFrame(envelope('finished', { outcome: { type: 'stopped' } }, 2)) as RunEvent);
+    expect(stopped.state).toBe('stopped');
+    const failed = applyRunEvent(base, parseRunFrame(envelope('failed', { message: 'Calendar said no', code: 'run_failed', hint: 'Reconnect Google' }, 2)) as RunEvent);
+    expect(failed).toMatchObject({ state: 'error', error: { message: 'Calendar said no', code: 'run_failed', hint: 'Reconnect Google' } });
+  });
+});
+
+describe('snapshotFromWire', () => {
+  it('reads a run as the server sends it, the hint beside its error', () => {
+    const run = snapshotFromWire({
+      run_id: 'r1',
+      session_id: 'w1',
+      state: 'error',
+      seq: 4,
+      hub_epoch: 'e1',
+      error: 'Calendar said no',
+      error_code: 'run_failed',
+      result: { hint: 'Reconnect Google' },
+      steps: [{ step_id: 's1', name: 'Checked Google Calendar', state: 'failed' }],
+    });
+    expect(run).toMatchObject({
+      runId: 'r1',
+      state: 'error',
+      seq: 4,
+      error: { message: 'Calendar said no', code: 'run_failed', hint: 'Reconnect Google' },
+      steps: [{ stepId: 's1', name: 'Checked Google Calendar', state: 'failed' }],
+    });
+  });
+
+  it('names no run without an id and a session', () => {
+    expect(snapshotFromWire({ run_id: 'r1' })).toBeNull();
+    expect(snapshotFromWire('r1')).toBeNull();
+  });
+});
