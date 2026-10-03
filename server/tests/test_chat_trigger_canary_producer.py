@@ -99,6 +99,9 @@ class TestChatTriggerProducerCanaryEmit:
         assert event.type == "com.opencompany.chat.message.received"
         assert event.subject == "sess-1"
         assert emit_calls[0]["wire_routing_key"] == "chat_message_received"
+        # The envelope carries the owner's text; it reaches the signalled
+        # workflows only, never every connected socket.
+        assert emit_calls[0]["broadcast"] is False
         # No scope passed -> unscoped envelope (broadcast semantics).
         assert event.workflow_id is None
 

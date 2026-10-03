@@ -4,11 +4,15 @@ Per RFC plugin_authoring_rfc.md §6.4: plugin-specific factories live in
 the plugin folder.
 
 Delivery: single ``dispatch.emit`` call routes events to running
-:class:`TriggerListenerWorkflow` consumers via Temporal Visibility AND
-broadcasts the envelope to FE on the ``chat_message_received`` wire key.
+:class:`TriggerListenerWorkflow` consumers via Temporal Visibility.
 chatTrigger is canary-registered (see ``nodes/trigger/chat_trigger/__init__.py``)
 so the deployment manager skips ``setup_event_trigger`` and the legacy
 ``event_waiter.dispatch`` path has zero consumers — removed.
+
+It is never broadcast. The envelope carries the owner's message text, and
+the WebSocket broadcast reaches every connected socket; no client handled
+it anyway. Clients learn about a new message from the identity-only
+``chat.updated`` that ``services/chat_thread.py`` sends when it is saved.
 """
 
 from __future__ import annotations
@@ -59,6 +63,7 @@ async def dispatch_chat_message_received(
     await emit(
         chat_message_received(dict(event_data), workflow_id=workflow_id),
         wire_routing_key=_WIRE_ROUTING_KEY,
+        broadcast=False,
     )
 
 

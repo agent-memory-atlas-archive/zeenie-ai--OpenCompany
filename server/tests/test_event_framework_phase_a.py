@@ -281,6 +281,30 @@ class TestA6DispatchEmitFeatureFlag:
         assert len(broadcast_calls) == 1
         assert broadcast_calls[0] == (event, "custom_wire_key")
 
+    @pytest.mark.asyncio
+    async def test_emit_without_broadcast_only_signals(self, monkeypatch):
+        """An event carrying one owner's content must not reach every socket."""
+        monkeypatch.setenv("EVENT_FRAMEWORK_ENABLED", "true")
+        signal_calls = []
+        broadcast_calls = []
+
+        async def fake_signal(event):
+            signal_calls.append(event)
+
+        async def fake_broadcast(event, wire_key):
+            broadcast_calls.append((event, wire_key))
+
+        from services.events import dispatch
+
+        monkeypatch.setattr(dispatch, "_signal_running_consumers", fake_signal)
+        monkeypatch.setattr(dispatch, "_broadcast_in_process", fake_broadcast)
+
+        event = WorkflowEvent(source="opencompany://services/test", type="com.opencompany.test.private")
+        await dispatch.emit(event, wire_routing_key="custom_wire_key", broadcast=False)
+
+        assert signal_calls == [event]
+        assert broadcast_calls == []
+
 
 class TestA7MachinaWorkflowSignalHandler:
     """A7: signal handler dedups + queues; predicate matches.

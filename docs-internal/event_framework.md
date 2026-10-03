@@ -79,7 +79,14 @@ services/events/dispatch.py:emit(event: WorkflowEvent)
        ├─→ Temporal Visibility query: workflows where EventType=event.type
        ├─→ Signal each matching workflow
        └─→ status_broadcaster.broadcast() — direct in-process WS fan-out
+           (skipped with emit(..., broadcast=False))
 ```
+
+**Private payloads skip the broadcast.** The broadcast reaches every
+connected socket. An event whose payload is one owner's content passes
+`broadcast=False` and reaches only the signalled workflows: chat does, since
+its envelope carries the owner's message text (clients learn of a new
+message from the identity-only `chat.updated`).
 
 **Workflow-scoped delivery** (core dispatch rule, July 2026): an envelope
 whose `workflow_id` field is set by its producer's call site reaches ONLY
