@@ -34,7 +34,7 @@ import { startWebSocketHeartbeat } from '../lib/webSocketHeartbeat';
 import { todoQueryKeyFromEvent } from '../lib/todoQuery';
 import { AGENT_PHASE } from '../lib/agentPhases';
 import { useCanvasDockStore } from '../stores/canvasDockStore';
-// Cycle note: lib/nodeSpec imports useWebSocket from this module. Safe in
+// Cycle note: lib/nodeSpec imports useWebSocketActions from this module. Safe in
 // both evaluation orders because neither side calls the other's binding at
 // module top level — `executionBudgetFor` only references it inside a body.
 import { getCachedNodeSpec } from '../lib/nodeSpec';

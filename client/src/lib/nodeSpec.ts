@@ -12,7 +12,7 @@
  * See C:\\Users\\Tgroh\\.claude\\plans\\typed-splashing-crown.md.
  */
 
-import { useEffect, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useSyncExternalStore } from 'react';
 import { hashKey, useQuery, type UseQueryResult } from '@tanstack/react-query';
 import { nodeSpecToDescription, type NodeSpec } from '../adapters/nodeSpecToDescription';
 import type { INodeTypeDescription } from '../types/INodeProperties';
@@ -20,7 +20,9 @@ import { featureFlags } from './featureFlags';
 import { BRAND_STORAGE_KEYS, readAndMigrateStorageValue } from './brandStorage';
 import { queryClient } from './queryClient';
 import { GC_TIME, STALE_TIME } from './queryConfig';
-import { useWebSocket } from '../contexts/WebSocketContext';
+// The actions context, not useWebSocket(): the full context value changes on
+// every broadcast, and every canvas node and palette item reads a spec.
+import { useWebSocketActions } from '../contexts/WebSocketContext';
 
 type SendRequest = (type: string, data?: any) => Promise<any>;
 
@@ -122,27 +124,30 @@ export function getCachedNodeSpec(nodeType: string): NodeSpec | null {
  * than a long-lived observer.
  */
 export function useNodeSpec(nodeType: string | undefined | null): NodeSpec | null {
-  const { sendRequest, isReady } = useWebSocket();
-  const key = nodeSpecQueryKey(nodeType ?? '__none__');
+  const { sendRequest, isReady } = useWebSocketActions();
+  const specType = nodeType ?? '__none__';
+  const targetHash = hashKey(nodeSpecQueryKey(specType));
 
-  const targetHash = hashKey(key);
-  const subscribe = (onChange: () => void) => {
-    const unsub = queryClient.getQueryCache().subscribe((event) => {
+  // Stable per node type, so useSyncExternalStore does not unsubscribe and
+  // resubscribe on every render.
+  const subscribe = useCallback(
+    (onChange: () => void) => queryClient.getQueryCache().subscribe((event) => {
       if (event.query.queryHash === targetHash) onChange();
-    });
-    return unsub;
-  };
+    }),
+    [targetHash],
+  );
 
-  const getSnapshot = () =>
-    queryClient.getQueryData<NodeSpec | null>(key) ?? null;
+  const getSnapshot = useCallback(
+    () => queryClient.getQueryData<NodeSpec | null>(nodeSpecQueryKey(specType)) ?? null,
+    [specType],
+  );
 
   const data = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 
   useEffect(() => {
     if (!nodeType || !isReady) return;
-    if (queryClient.getQueryData(key) !== undefined) return;
+    if (queryClient.getQueryData(nodeSpecQueryKey(nodeType)) !== undefined) return;
     void fetchNodeSpec(nodeType, sendRequest);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- key derives from nodeType; including it is redundant.
   }, [nodeType, isReady, sendRequest]);
 
   return data;
@@ -156,7 +161,7 @@ export function useNodeSpec(nodeType: string | undefined | null): NodeSpec | nul
  * status-check pattern: check data first, error second, loading last.
  */
 export function useNodeGroups(): UseQueryResult<Record<string, NodeGroupEntry>> {
-  const { sendRequest, isReady } = useWebSocket();
+  const { sendRequest, isReady } = useWebSocketActions();
   return useQuery<Record<string, NodeGroupEntry>>({
     queryKey: nodeGroupsQueryKey,
     queryFn: async () => {
