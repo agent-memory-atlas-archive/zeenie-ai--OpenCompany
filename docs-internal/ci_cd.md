@@ -37,7 +37,7 @@ The repo currently ships **five workflows** plus one composite action. Code scan
 | Workflow | File | Triggers | Purpose |
 |----------|------|----------|---------|
 | CI | `.github/workflows/ci.yml` | push/PR → main | Delegates to predeploy.yml |
-| Predeploy | `.github/workflows/predeploy.yml` | `workflow_call` | build/lint + backend tests + CLI tests + cross-OS build/start smoke |
+| Predeploy | `.github/workflows/predeploy.yml` | `workflow_call` | build/lint + JS dependency audit + backend tests + CLI tests + cross-OS build/start smoke |
 | Release | `.github/workflows/release.yml` | `v*.*.*` tag, `workflow_dispatch` | predeploy gate → publish (npm + GitHub Packages) |
 | Desktop CI | `.github/workflows/desktop-ci.yml` | PR touching `desktop/**` or the backend host-contract files; push to main touching `desktop/**` | typecheck + unit + staged-tree invariants + `electron-vite build` + Playwright Electron smoke on ubuntu-22.04 (xvfb) and windows-latest |
 | Desktop release | `.github/workflows/desktop-release.yml` | `v*.*.*` tag, `workflow_dispatch` | `prepare` drafts the GitHub Release from the annotated tag's message (first line = title, rest = notes); a 3-runner matrix (windows-latest x64, macos-14 arm64+x64, ubuntu-22.04 x64) checks the synced version against the tag, builds installers with electron-builder and uploads into that one **draft**; `finalize` undrafts once every leg is green. Artifacts-only on dispatch unless `publish` is ticked |
@@ -88,7 +88,7 @@ After tool install the composite installs the supervisor CLI editably (`uv pip i
 
 Reusable `workflow_call` workflow with four independent jobs (no plan/change-detection gate, no aggregator — every job runs on every call):
 
-- `build-and-lint` — `bun install --frozen-lockfile` + `bun run build`, then client lint (`bun run --filter react-flow-client lint`), TypeScript check (`... typecheck`), and frontend tests (`... test`, vitest). Runs on `ubuntu-latest`.
+- `build-and-lint` — `bun install --frozen-lockfile` + `bun run build`, then client lint (`bun run --filter react-flow-client lint`), TypeScript check (`... typecheck`), frontend tests (`... test`, vitest), and the JS dependency audit (`bun run audit:deps` at the root and in `desktop/`; see "Dependency update policy" below). Runs on `ubuntu-latest`.
 - `backend-tests` — `uv lock --check` (the committed `server/uv.lock` must match `pyproject.toml`; the desktop app installs from it with `--frozen`), then `uv sync` + `uv run pytest tests/ -v` in `server/`. Whole suite, unsharded. Runs on `ubuntu-latest`.
 - `cli-tests` — `uv pip install --system pytest pytest-asyncio pyyaml` + `python -m pytest cli/tests/ -v`. Runs on `ubuntu-latest`.
 - `test-build-start` — cross-OS matrix (`ubuntu-latest`, `macos-latest`, `windows-latest`, `fail-fast: false`). Runs `bun run build`, then `bun run tsc --version` (proves the per-platform TypeScript 7 Go binary delivered via `optionalDependencies` resolves on every OS — the type-check gate itself runs on ubuntu only; `bun run`, never `bunx`, so it resolves strictly from the root `node_modules/.bin`), then a start smoke test. On Unix it backgrounds `bun run start`, reads `PYTHON_BACKEND_PORT` out of `.env.template` and polls `http://localhost:${APP_PORT}/health` (`curl -sf -m 5`, every 2 s) for up to 90 s, giving up early if the start process exits. It always runs `bun run stop` afterwards, then fails unless `/health` answered. On Windows it starts the supervisor as a background job, waits 15 s, and fails if the job already exited.
@@ -198,7 +198,7 @@ folder — both the folder and the workflow are gone.
 | File | Purpose |
 |------|---------|
 | `.github/workflows/ci.yml` | CI entry point (delegates to predeploy.yml) |
-| `.github/workflows/predeploy.yml` | Reusable validation (build/lint + backend tests + CLI tests + OS matrix build/start) |
+| `.github/workflows/predeploy.yml` | Reusable validation (build/lint + JS dependency audit + backend tests + CLI tests + OS matrix build/start) |
 | `.github/workflows/release.yml` | Tag / manual release: predeploy gate → publish npm + GitHub Packages |
 | `.github/workflows/desktop-ci.yml` | Desktop shell checks on PRs: typecheck, unit, invariants, build, Playwright smoke |
 | `.github/workflows/desktop-release.yml` | Tag-triggered desktop installers (NSIS / DMG+zip / AppImage+deb) into a draft release, then undraft. Separate from `release.yml` so npm publish is never blocked |
@@ -253,7 +253,7 @@ by hand, alongside test runs:
 
 - JS: bump the range in the relevant `package.json` (or the top-level
   `overrides` block in the root manifest for transitive pins), `bun install`,
-  run the suites.
+  `bun run audit:deps` (at the root and in `desktop/`), run the suites.
 - pip: `uv lock --upgrade-package <name>` in `server/`, regenerate
   `server/requirements.txt` with the `uv export` command in its header,
   `uv sync`, run the suites (`predeploy.yml` runs `uv lock --check`).
@@ -280,6 +280,22 @@ fix. Dependabot's own security-update attempts are a
 repository setting (Settings > Code security > Dependabot), not something
 the config file controls; turn them off there if the "Dependabot Updates"
 job should stop running entirely.
+
+GitHub's dependency graph does not read `bun.lock`; it sees only the ranges
+in each `package.json`, so no Dependabot alert ever covers a resolved JS
+version. `bun run audit:deps` is the check: `predeploy.yml` runs it at the
+root and in `desktop/` (`bun audit` reads the lockfile and needs no install),
+and it fails on any advisory except the ones each script ignores. An advisory
+is ignored only when it has no patched release and cannot be reached from
+untrusted input here:
+
+| Advisory | Package | Reached through | Why it is ignored |
+|---|---|---|---|
+| [GHSA-vfj7-8cjw-p6xm](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm) | braces 3.0.3 | root: the shadcn CLI's fast-glob | Stack exhaustion from deeply nested brace patterns; the CLI only expands patterns written in this repo |
+| [GHSA-ch52-4w7c-c8xp](https://github.com/advisories/GHSA-ch52-4w7c-c8xp) | http-cache-semantics 4.2.0 | `desktop/`: `@electron/get` | Cross-user disclosure through a shared HTTP cache; `@electron/get` only downloads Electron at install and build time |
+
+When an ignored advisory gets a patched release, drop its `--ignore` and pin
+the fix in `overrides`.
 
 Re-enable updates deliberately, never by just deleting the ignore rules:
 raise `open-pull-requests-limit`, add `groups` with `patterns: ["*"]` +

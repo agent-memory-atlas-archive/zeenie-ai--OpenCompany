@@ -1,11 +1,13 @@
 # Dependabot is DISABLED by policy (2026-09-12): no version-update PRs and no
 # security-update PRs. Dependencies move by hand, alongside test runs:
 #   JS   -> bump the range in the relevant package.json (or the top-level
-#           `overrides` block for transitive pins), `bun install`, run tests
+#           `overrides` block for transitive pins), `bun install`,
+#           `bun run audit:deps`, run tests
 #   pip  -> `uv lock --upgrade-package <name>` in server/, regenerate
 #           server/requirements.txt with the `uv export` command in its
 #           header, `uv sync`, tests
-# Alerts stay visible in the repository's Security tab.
+# Alerts stay visible in the repository's Security tab, except for bun.lock,
+# which GitHub cannot read: CI's `bun run audit:deps` covers the JS trees.
 #
 # Why this file still exists: without an entry for a directory, Dependabot
 # routes that directory's alerts to whatever updater it guesses, and for a
