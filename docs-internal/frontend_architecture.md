@@ -66,10 +66,14 @@ client/src/
 ├── features/chat/           # The chat shared by Home's employee page and Dev's console Chat pane
 │   │                        # (docs-internal/chat_protocol.md#client); only its index.ts is importable (ESLint)
 │   ├── ChatPane.tsx / host.ts  # The pane, and the ChatHost contract its hosts fill in
-│   ├── data/                # Thread query (scope all/live), run subscription, send / clear, conversation
+│   ├── data/                # Thread query (scope all/live), run subscription, send / stop / clear, parts,
+│   │                        # UI state sync, conversation
 │   ├── state/               # composerStore: what the owner is writing, per session
 │   ├── thread/              # model.ts (turns from messages + runs, pure), ChatThread (stick to bottom)
-│   └── turns/ composer/ markdown/  # UserTurn / AssistantTurn / StatusLine, the message box, ReplyMarkdown
+│   ├── genui/               # Generated UI in replies: catalog (parity with server/config/chat_genui_catalog.json),
+│   │                        # views, registry, ChatUi (lazy, with json-render), prepare, actions
+│   └── turns/ composer/ markdown/  # UserTurn / AssistantTurn / StepsDisclosure / GeneratedUiBlock / StatusLine,
+│                                   # the message box, ReplyMarkdown
 │
 ├── features/home/           # Normal mode (see docs-internal/normal_mode.md)
 │   ├── HomeShell.tsx        # Sidebar + header + current view + Workspace dock + Settings + orb stage

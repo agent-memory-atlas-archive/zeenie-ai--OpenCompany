@@ -16,8 +16,9 @@ meaning.
 Built so far: runs and their storage, the lifecycle events (`started`, `finished`, `failed`), subscriptions,
 `get_chat_messages` v2 (with each message's `run`), `get_chat_run`, the watchdog and the MachinaWorkflow patch (see
 [Runs](#runs)); the answer streaming as text events, working steps and Stop (see [Streaming, steps and
-Stop](#streaming-steps-and-stop)); and the shared chat UI on both hosts (see [Client](#client)). Every other event,
-handler and part below is the contract the later phases build to.
+Stop](#streaming-steps-and-stop)); generated UI in replies with its state and button presses (see [Generated
+UI](#generated-ui)); and the shared chat UI on both hosts (see [Client](#client)). Every other event, handler and
+part below is the contract the later phases build to.
 
 ## Concepts
 
@@ -124,6 +125,7 @@ All are WebSocket request/response handlers with snake_case payloads. Failures a
 | `chat_unsubscribe` | `{session_id}` | `{success, session_id, hub_epoch}` |
 | `get_chat_run` | `{run_id}` | `{success, run: RunSnapshot}`, or `not_found` |
 | `stop_chat_run` | `{run_id}` | `{success, run_id, state: "stopping" \| "stopped"}`; `not_stoppable` (with `state`) for a run that ended otherwise |
+| `chat_ui_state` | `{session_id, part_id, changes: [{path, value}]}` (at most 32; the last value per path wins) | `{success, part_id, state_revision}`; `not_found`, `invalid_request` |
 | `edit_chat_message` | `{message_id, text, attachments?, expected_revision}` | `{success, message_id, run_id}` |
 | `regenerate_chat_reply` | `{message_id, expected_revision}` | `{success, run_id}` |
 | `switch_chat_branch` | `{message_id, target_id, expected_revision}` | `{success, thread}` |
@@ -137,9 +139,10 @@ and run the first call created, and dispatches nothing again.
 **RunSnapshot** is the state the client reducer would hold after replaying the run's events
 (`server/services/chat/reducer.py` folds them the same way):
 `{run_id, session_id, workflow_id, kind, state, seq, hub_epoch, user_message_id, reply_message_id, parent_run_id,
-created_at, started_at, finished_at, steps, segments: [{message_id, text, final}], activities, interrupts, outcome,
-result, error, error_code}`. `state` is `queued`, `pending`, `running`, `stopping`, `finished`, `error` or `stopped`.
-A snapshot read after a server restart has its steps but no text segments (text is stored with the reply).
+created_at, started_at, finished_at, steps, segments: [{message_id, text, final}], activities: [{message_id,
+activity_type, content, patches}], interrupts, outcome, result, error, error_code}`. `state` is `queued`, `pending`,
+`running`, `stopping`, `finished`, `error` or `stopped`. A snapshot read after a server restart has its steps but no
+text segments or activities (those are stored with the reply).
 
 ### Approvals (`server/services/approvals/handlers.py`)
 
@@ -160,7 +163,6 @@ summary adds `kind` (`gate` or `tool_call`), `node_type`, `tool_name`, `tool_cal
 
 | Handler | Owner | Request | Response |
 |---|---|---|---|
-| `chat_ui_state` | `nodes/chat/chat_ui` | `{workflow_id, part_id, delta: [{op: "replace" \| "add", path, value}], base_revision}` | `{success, state_revision}` or `stale` |
 | `canvas_versions` | `nodes/tool/canvas` | `{workflow_id, node_id, item_id}` | `{success, versions: [{version, title, created_at, source, size_bytes}], latest}` |
 | `canvas_version` | `nodes/tool/canvas` | `{workflow_id, node_id, item_id, version}` | `{success, item_id, version, title, content, language, created_at, filename}` |
 | `transcribe_audio` | `nodes/speech` | `{workflow_id, audio: FileRef, language?}` | `{success, text, provider, model, duration_seconds}` |
@@ -196,10 +198,10 @@ sources, follow-ups.
 ```
 parts: {
   steps?:     {duration_ms, items: [{step_id, name, state, detail?, duration_ms?}]},
-  ui?:        [{part_id, ui_id, title?, spec, state, state_revision, elements}],
+  ui?:        [{part_id, spec, state, state_revision, elements}],
   artifacts?: [{workflow_id, canvas_node_id, item_id, version, title, format}],
   approvals?: [{approval_id, tool_call_id?}],
-  sources?:   [{n, display, label, detail?, url?, kind, cited}],
+  sources?:   [{n, title, url, detail?}],
   followups?: [string],
   stopped?:   true
 }
@@ -207,19 +209,36 @@ parts: {
 
 Approvals are joined live from the approvals store; the part only names them.
 
+A run's tools record parts on the run as they go (`chat_run_parts`, keyed so a retried activity writes the same
+row; `services/chat/parts.py`). Reply in Chat saves its reply with the parts recorded so far, and the run's end seals
+any later ones into it, creating an empty-text reply when the run showed an interface but wrote nothing (sources
+alone make none: they show only where a reply cites them); the end is published after the seal, so its
+`result.reply_message_id` names a reply that holds them.
+
 ## Generated UI
 
-- **Source.** The employee calls the `show_ui` tool (`chatUi` plugin) with a json-render flat spec
-  `{root, state, elements}`. The server validates it against `server/config/chat_genui_catalog.json`, the single
-  source of truth for the client catalog, and streams it as `activity.snapshot` (empty spec) followed by one
-  `activity.delta` per patch: `add /root`, `add /state`, then `add /elements/<id>` in depth-first order.
-- **Owner edits.** `$bindState` writes stay in the message's local state and are sent with `chat_ui_state`; the last
-  write per path wins, and the client flushes after 300 ms idle, on blur, before an action and when the page hides.
-  The employee sees the state on its next turn as a `[ui-state]` note.
-- **Buttons.** A press resolves `$state` params at click time. `ask` sends its text as the owner's message only when
-  it equals the button's label; otherwise the text goes into the composer for review. Any other action becomes
-  `send_chat_message{ui_event}`; the server checks it against the saved spec and starts a run of kind `action`
-  whose turn carries `[ui-event]{…}[/ui-event]`.
+- **Source.** The employee calls the `show_ui` tool (`chatUi` plugin, `nodes/chat/chat_ui`) with a json-render flat
+  spec `{root, state, elements}`. `services/genui/spec.py` checks it against `server/config/chat_genui_catalog.json`
+  (JSON Schema per component, which prop each input binds, what each layout may hold, the limits): a spec that
+  breaks a rule fails the call with every reason, so the model writes it again; unknown types, unreachable elements,
+  stray fields and props are left out and reported back. The tool's description is generated from the same manifest,
+  byte for byte the same for the same file, and a test on each side reads the other's catalogue. The checked spec is
+  saved as a `ui` part and streamed as `activity.snapshot` (empty spec) followed by one `activity.delta` per patch:
+  `add /root`, `add /state`, then `add /elements/<id>` in depth-first order (`services/genui/patches.py`, matching
+  the handoff's `*.patches.jsonl` line for line). Only the agent answering the owner's chat message can show UI; a
+  call anywhere else says nothing was shown.
+- **Owner edits.** `$bindState` writes go to the interface's own state store and to `chat_ui_state`; the last write
+  per path wins, and the client sends after 300 ms idle, when the page hides, when the chat closes and before a
+  button press goes (`features/chat/data/uiState.ts`). The server keeps them on the part (`state`,
+  `state_revision`), on the reply once it is saved, so a reload shows them.
+- **Buttons.** A press resolves `$state` params at click time; the client tags each press with its element and label
+  (json-render hands a handler the params only). `ask` sends its text as the owner's message only when it is what
+  the button says (case and spacing aside); otherwise the text goes into the composer for review. Any other action
+  becomes `send_chat_message{ui_event: {part_id, element_id, action, params}}`: the server checks it against the
+  saved spec (a Button whose press runs that action, params it declares), saves the owner's message as the button's
+  label (`kind: "action"`, the press in `meta.ui_event`), starts a run of kind `action`, and sends the employee the
+  line `[ui-event]{"ui_id", "element", "label", "action", "params"}[/ui-event]`. A press while the employee is still
+  answering is held back with a notice. `ui_event_rejected` says why one does not fit.
 - **Sanitising.** json-render 0.21 does not guard state paths (`setByPath` descends into `__proto__`), does not
   validate props against the catalog, and supports `watch` (actions fired by state changes), `repeat`, `$computed`
   and an action binding's `confirm`, `onSuccess` and `onError` (the last two set state or run further actions).
@@ -339,13 +358,50 @@ editor's console pane (`ConsoleChat`, compact, scope `live`) are the two hosts.
   until its saved reply lands in the thread, so the streamed answer and the reply stay one element.
 - **Stop** (`data/stop.ts`): the Stop button, or Esc anywhere in the pane, sends `stop_chat_run` for the lane's run
   and applies the answer to the store at once; the run's events take it from there.
+- **Generated UI** (`features/chat/genui/`, `turns/GeneratedUiBlock.tsx`): a reply's interfaces come from its saved
+  `parts.ui`, or while the run streams them from its `json_render` activities (`data/parts.ts`), the run's first turn
+  keeping them until the saved reply carries them, so one element shows throughout and keeps what the owner set. The
+  renderer (`genui/ChatUi.tsx`, with json-render, in its own chunk) sanitizes again (`genui/prepare.ts`), draws the
+  twelve components (`genui/views.tsx`, through `lib/jsonRender/guard.tsx`), reveals a live one element by element
+  (forward only, so patches arriving in bursts never restart it), and routes any button action (`genui/actions.ts`,
+  a Proxy over action names). Development builds show the element and patch counts and an Inspect view.
 
 ## Notes to the employee
 
-Things the employee should learn on its next turn are queued in `chat_notes` and prepended to that turn's user
-message in brackets: `[updates]` (approval outcomes), `[ui-state]`, `[feedback]`. The agent's system prompt says that
-bracketed lines come from OpenCompany, not from the owner. Notes are claimed when the next run's payload is prepared
-and marked delivered when its conversation is saved, so a failed run offers them again.
+Things the employee should learn on its next turn are kept in `chat_notes` (`services/chat/notes.py`) and put ahead
+of that turn's user message, one bracketed line each. Built: `[ui-state]{"ui_id", "state"}[/ui-state]`, written by
+`chat_ui_state` for what the owner set without pressing anything; later phases add `[updates]` (approval outcomes)
+and `[feedback]`. A note is keyed per session (`ui-state:<part id>`), so a newer one replaces an older one not yet
+told. `agent.prepare_payload` claims the session's untold notes for the agent answering a run (the one with a
+`chat_stream`); the run's end marks them told when it answered (it finished, or it stopped having written
+something), so a run that failed or stopped before writing offers them again, and a note changed after its claim stays
+untold. Clearing the chat forgets them.
+
+The answering agent's system prompt ends with a fixed guide (`services/chat/guide.py` `CHAT_REPLY_GUIDE`, byte for
+byte the same on every turn): bracketed lines come from OpenCompany, not from the owner; a search result numbered
+n is cited as `[n]`; and how to suggest follow-ups.
+
+## Follow-ups
+
+The answering agent may end its reply with `<followups>["…", "…"]</followups>` (a list of lines works too). The
+stream holds the block back; Reply in Chat takes it off the reply (`guide.split_followups`: the last block, at most
+3 suggestions, 160 characters each, repeats dropped) and saves the suggestions as `parts.followups`. Outside a chat
+run the block is dropped, and a message that is only the block posts nothing. The chat shows them as buttons under
+the latest answer only, once it is done; one sends its text as the owner's message, or waits in the box while an
+answer is still coming.
+
+## Sources
+
+A plugin that declares `chat_sources` (the web searches) returns `results` with addresses. When the answering
+agent calls it, `BaseNode.as_activity` numbers them for the conversation (`services/chat/sources.py`: the session's
+counter `chat_threads.next_source`, so a number never repeats in a conversation and an older `[n]` keeps meaning
+what it did), writes `n` on each result the model reads, and saves `{n, title, url, detail?}` (at most 10 per call)
+as a `sources` part of the run; the reply carries them as `parts.sources`. The guide tells the agent to cite what it
+relies on as `[n]`. The client numbers a reply's sources 1, 2, ... in the order its text first cites them
+(`markdown/citations.ts`): each `[n]` outside code reads as a chip with that number and a tooltip naming the
+source, and the cited sources are listed under the answer (`turns/SourceChips.tsx`); sources it did not cite are
+not shown. A reply may cite a source an earlier search found: each answer resolves `[n]` against the conversation's
+sources up to it (`thread/model.ts`, `ChatTurn.sources`).
 
 ## Fixtures
 

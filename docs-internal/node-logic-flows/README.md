@@ -97,6 +97,7 @@ that a retired node remains registered.
 
 - [Chat History (`chatHistory`)](./chat_utility/chatHistory.md)
 - [Reply in Chat (`chatReply`)](./chat_utility/chatReply.md)
+- [Show UI (`chatUi`)](./chat_utility/chatUi.md)
 - [Chat Send (`chatSend`)](./chat_utility/chatSend.md)
 - [Console (`console`)](./chat_utility/console.md)
 - [File Handler (`fileHandler`)](./chat_utility/fileHandler.md)
