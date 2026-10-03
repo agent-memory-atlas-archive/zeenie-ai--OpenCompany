@@ -443,7 +443,8 @@ dispatch is what removes the whole class of it.
 
 `case 'file'` POSTs to `/api/workspace/{workflow_id}/uploads` via
 [`lib/workspaceUpload.ts`](../client/src/lib/workspaceUpload.ts) and stores the
-returned `AudioRef` (~400 bytes). Do **not** set `Content-Type` on that fetch —
+returned reference (~400 bytes: an `AudioRef` for audio, otherwise a file
+reference). Do **not** set `Content-Type` on that fetch —
 the browser must set it so the multipart boundary is generated.
 
 The legacy base64 envelope (`{type: 'upload', data: '<base64>'}`) survives only

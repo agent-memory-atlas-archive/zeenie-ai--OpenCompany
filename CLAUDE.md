@@ -715,7 +715,9 @@ Node groups (palette categories) are registered in [`server/nodes/groups.py`](./
   envelope for no gain.
 - `POST /api/workspace/{workflow_id}/uploads` - Streamed multipart upload (the first in the repo on
   either side of the wire). Chunked read with a running total — `Content-Length` is never trusted —
-  413 past `MEDIA_MAX_UPLOAD_BYTES`. Returns an `AudioRef`, which `coerce_file_param` accepts.
+  413 past `MEDIA_MAX_UPLOAD_BYTES`. Owner-only, and never falls back to the shared anonymous
+  workspace (both refusals are 404). Returns an `AudioRef` for audio (probed) and otherwise a
+  `FileRef` whose kind follows `preview_kind`; `coerce_file_param` accepts both.
 - **The URL carries `workflow_id`; the directory is named by `Workflow.slug`.** The router owns that
   lookup because it needs the database, while `services.media` stays synchronous. See
   [Media Transport](./docs-internal/media_transport.md).

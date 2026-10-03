@@ -230,6 +230,63 @@ class TestUpload:
         assert stored.parts[0] == "uploads"
         assert ".." not in stored.parts
 
+    @pytest.mark.parametrize(
+        ("name", "declared", "kind"),
+        [
+            ("cover.png", "image/png", "image"),
+            ("clip.mp4", "video/mp4", "video"),
+            ("price list.pdf", "application/pdf", "document"),
+            # Script-bearing types are never shown in place, so they are plain files.
+            ("vector.svg", "image/svg+xml", "file"),
+            ("page.html", "image/png", "file"),
+            ("notes.txt", "text/plain", "file"),
+        ],
+    )
+    async def test_non_audio_uploads_are_not_claimed_as_audio(self, client, workspace, name, declared, kind):
+        """kind="audio" asserts a probed container; other files say only what they are."""
+        async with client as http:
+            response = await http.post(
+                f"/api/workspace/{WORKFLOW_ID}/uploads",
+                files={"file": (name, b"not really media", declared)},
+            )
+
+        assert response.status_code == 200
+        ref = response.json()
+        assert ref["kind"] == kind
+        assert "duration_seconds" not in ref
+
+    async def test_an_unknown_workflow_is_404_not_the_shared_workspace(self, workspace, monkeypatch):
+        app = FastAPI()
+        app.include_router(workspace_router.router)
+        database = AsyncMock()
+        database.get_workflow.return_value = None
+        app.dependency_overrides[workspace_router._db] = lambda: database
+
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as http:
+            response = await http.post(
+                f"/api/workspace/{WORKFLOW_ID}/uploads",
+                files={"file": ("clip.wav", _wav(), "audio/wav")},
+            )
+
+        assert response.status_code == 404
+        assert not (workspace.parent / "default").exists()
+
+    @pytest.mark.parametrize(("owner", "status"), [("someone-else", 404), ("owner", 200), ("", 200)])
+    async def test_only_the_owner_may_upload(self, workspace, owner, status):
+        app = FastAPI()
+        app.include_router(workspace_router.router)
+        database = AsyncMock()
+        database.get_workflow.return_value = SimpleNamespace(slug=SLUG, data={"owner_id": owner})
+        app.dependency_overrides[workspace_router._db] = lambda: database
+
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as http:
+            response = await http.post(
+                f"/api/workspace/{WORKFLOW_ID}/uploads",
+                files={"file": ("clip.wav", _wav(), "audio/wav")},
+            )
+
+        assert response.status_code == status
+
 
 class TestInlineDispositionHasOneDefinition:
     """The route and the gallery listing must agree on what renders inline.
