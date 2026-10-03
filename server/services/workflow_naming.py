@@ -140,27 +140,60 @@ def canonicalize_node_ids(
     Plugin ``type`` is the fixed identity while the per-type ordinal permits
     repeatable plugins such as ``aiAgent``. List order is the stable migration
     order used for legacy graphs. The function is pure and idempotent.
+
+    Ids are unique in the result. The first node holding a canonical id keeps
+    it, and its ordinal is reserved before any other node gets one, so a node
+    that needs a new id never receives an id a canonical node later in the
+    list keeps. Every other node takes the next free ordinal of its type in
+    list order.
     """
     prefix = f"{workflow_id}:"
+
+    def plugin_type_of(node: dict) -> str:
+        plugin_type = str(node.get("type") or (node.get("data") or {}).get("type") or "node")
+        return re.sub(r"[^A-Za-z0-9_-]+", "-", plugin_type).strip("-") or "node"
+
+    def canonical_ordinal(node_id: str, plugin_type: str) -> int | None:
+        match = re.fullmatch(re.escape(prefix + plugin_type) + r":([1-9]\d*)", node_id)
+        return int(match.group(1)) if match else None
+
+    keeps: set[int] = set()
+    kept_ids: set[str] = set()
+    reserved: dict[str, set[int]] = {}
+    for index, node in enumerate(nodes):
+        plugin_type = plugin_type_of(node)
+        old_id = str(node.get("id") or "")
+        ordinal = canonical_ordinal(old_id, plugin_type)
+        if ordinal is None or old_id in kept_ids:
+            continue
+        keeps.add(index)
+        kept_ids.add(old_id)
+        reserved.setdefault(plugin_type, set()).add(ordinal)
+
     counts: dict[str, int] = {}
     mapping: dict[str, str] = {}
     normalized_nodes: list[dict] = []
-    for node in nodes:
+    for index, node in enumerate(nodes):
         item = dict(node)
-        plugin_type = str(item.get("type") or (item.get("data") or {}).get("type") or "node")
-        plugin_type = re.sub(r"[^A-Za-z0-9_-]+", "-", plugin_type).strip("-") or "node"
+        plugin_type = plugin_type_of(item)
         counts[plugin_type] = counts.get(plugin_type, 0) + 1
         old_id = str(item.get("id") or "")
-        expected = f"{prefix}{plugin_type}:{counts[plugin_type]}"
-        # Already canonical graphs retain their ordinals even if nodes were
-        # reordered by a later layout/save operation.
-        match = re.fullmatch(re.escape(prefix + plugin_type) + r":([1-9]\d*)", old_id)
-        if match:
-            counts[plugin_type] = max(counts[plugin_type], int(match.group(1)))
-            expected = old_id
-        if old_id and old_id != expected:
-            mapping[old_id] = expected
-        item["id"] = expected
+        if index in keeps:
+            # Already canonical graphs retain their ordinals even if nodes were
+            # reordered by a later layout/save operation.
+            counts[plugin_type] = max(counts[plugin_type], canonical_ordinal(old_id, plugin_type) or 0)
+            new_id = old_id
+        else:
+            taken = reserved.get(plugin_type, set())
+            while counts[plugin_type] in taken:
+                counts[plugin_type] += 1
+            new_id = f"{prefix}{plugin_type}:{counts[plugin_type]}"
+            # Edges and parameter rows name a node by its id. An id that a
+            # kept node holds, or that an earlier node already claimed, stays
+            # with that node: a duplicate cannot be told apart from it.
+            if old_id and old_id not in kept_ids and old_id not in mapping:
+                mapping[old_id] = new_id
+        item["id"] = new_id
         normalized_nodes.append(item)
 
     normalized_edges: list[dict] = []

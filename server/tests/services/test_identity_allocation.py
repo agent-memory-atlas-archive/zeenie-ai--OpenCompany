@@ -42,6 +42,57 @@ def test_node_ids_are_plugin_derived_repeatable_and_idempotent():
     assert aliases["old-b"] == "7:aiAgent:2"
 
 
+def test_a_legacy_node_never_takes_an_id_a_later_canonical_node_keeps():
+    """A legacy node listed before a canonical node of the same type used to
+    be given ordinal 1 while the canonical node kept ``7:aiAgent:1``, so the
+    saved graph held two nodes with one id."""
+    nodes = [
+        {"id": "legacy-x", "type": "aiAgent"},
+        {"id": "7:aiAgent:1", "type": "aiAgent"},
+    ]
+    edges = [
+        {"id": "e1", "source": "legacy-x", "target": "7:aiAgent:1"},
+    ]
+    migrated_nodes, migrated_edges, aliases = canonicalize_node_ids("7", nodes, edges)
+
+    ids = [node["id"] for node in migrated_nodes]
+    assert len(set(ids)) == len(ids)
+    assert ids == ["7:aiAgent:2", "7:aiAgent:1"]
+    assert aliases == {"legacy-x": "7:aiAgent:2"}
+    assert (migrated_edges[0]["source"], migrated_edges[0]["target"]) == ("7:aiAgent:2", "7:aiAgent:1")
+    assert canonicalize_node_ids("7", migrated_nodes, migrated_edges)[2] == {}
+
+
+def test_a_duplicated_canonical_id_is_split_and_edges_stay_with_the_first_node():
+    """A graph saved while the bug was live holds one id twice. The second
+    node gets a fresh id; edges naming the id stay with the first node,
+    because nothing tells the two apart."""
+    nodes = [
+        {"id": "7:aiAgent:1", "type": "aiAgent"},
+        {"id": "7:aiAgent:1", "type": "aiAgent"},
+        {"id": "7:start:1", "type": "start"},
+    ]
+    edges = [{"id": "e1", "source": "7:start:1", "target": "7:aiAgent:1"}]
+    migrated_nodes, migrated_edges, aliases = canonicalize_node_ids("7", nodes, edges)
+
+    assert [node["id"] for node in migrated_nodes] == ["7:aiAgent:1", "7:aiAgent:2", "7:start:1"]
+    assert aliases == {}
+    assert migrated_edges[0]["target"] == "7:aiAgent:1"
+
+
+def test_a_mixed_graph_without_a_collision_keeps_its_ids():
+    """Only a collision changes an assignment: a legacy node listed before
+    ``7:aiAgent:3`` still gets ordinal 1, as before the fix."""
+    nodes = [
+        {"id": "legacy-x", "type": "aiAgent"},
+        {"id": "7:aiAgent:3", "type": "aiAgent"},
+        {"id": "legacy-y", "type": "aiAgent"},
+    ]
+    migrated_nodes, _edges, _aliases = canonicalize_node_ids("7", nodes, [])
+
+    assert [node["id"] for node in migrated_nodes] == ["7:aiAgent:1", "7:aiAgent:3", "7:aiAgent:4"]
+
+
 @pytest.mark.asyncio
 async def test_allocators_are_atomic_and_execution_ids_are_workflow_scoped(tmp_path: Path):
     path = tmp_path / f"identity-{uuid.uuid4().hex}.db"
