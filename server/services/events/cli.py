@@ -4,7 +4,7 @@
 plugin's API key via the convention flag (``--api-key`` by default),
 runs the subprocess with a timeout, captures stdout/stderr, and parses
 stdout as JSON when possible. Used by any plugin that wraps a CLI
-tool (Stripe, future GitHub-CLI / Cloudflare-Wrangler / etc.).
+tool (Stripe, GitHub, Vercel, Cloudflare, gcloud, ...).
 """
 
 from __future__ import annotations

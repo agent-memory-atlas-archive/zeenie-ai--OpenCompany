@@ -59,7 +59,8 @@ appears in the Component Palette under its first `group` entry.
 ## Five-minute recipe — Wave 12 self-contained folder (signed webhook + CLI)
 
 For nodes that wrap a CLI tool **and** receive signed webhooks
-(Stripe, future GitHub-CLI / Cloudflare-Wrangler integrations), use
+(Stripe; CLI wrappers without webhooks — GitHub, Vercel, Cloudflare,
+gcloud — need only the CLI-managed-auth variants further down), use
 the [Wave 12 framework](./plugin_system.md#wave-12--generalized-event-framework-servicesevents).
 Stripe is the reference implementation
 ([`server/nodes/stripe/`](../server/nodes/stripe/)). The shape:

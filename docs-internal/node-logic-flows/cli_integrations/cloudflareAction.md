@@ -206,8 +206,9 @@ flowchart TD
   (`<xdg-config>/cloudflare/config/default.json`) and is never read by
   OpenCompany; the modal badge is a synthetic `cli-managed` marker OAuth
   row written by `_handlers.py`.
-- **Services**: the `cf` CLI (declares `engines.node >= 22`; runs on bun for
-  every API command, `bun` on PATH or `OPENCOMPANY_BUN_BIN` for the
+- **Services**: the `cf` CLI (declares `engines.node >= 22`; its API
+  commands run on bun — only commands that load a `cloudflare.config.ts`
+  need Node 22.18+; `bun` on PATH or `OPENCOMPANY_BUN_BIN` for the
   install); Cloudflare's OAuth device authorization for login (URL + code
   shown in the modal; see `_handlers.py`).
 - **Python packages**: `httpx`, `pydantic`; `services.events.run_cli_command`.

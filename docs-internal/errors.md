@@ -660,3 +660,32 @@ A real Temporal dev server confirmed the matching times for every frequency, and
 - A follow-up gave the sequential and parallel paths the same `errors` and `error`, and made every path report `total_nodes` and `completed_nodes`. `MachinaWorkflow` now returns its `total_nodes`.
 
 Locked by `server/tests/temporal/test_run_errors.py` and `server/tests/services/test_workflow_run_result.py`. The result contract is in [Temporal Architecture → The run result](./TEMPORAL_ARCHITECTURE.md#4-the-run-result).
+
+## 32. Cloudflare: a DNS record delete reports success, but the record is still there
+
+**Symptom**: `dns_record_delete` on the Cloudflare node (or a `custom` delete such as `kv namespaces delete <id>`) returns success, yet the record or resource still exists. The output's `stderr_tail` ends with:
+```
+? This permanently deletes the resource. Continue?
+  (non-interactive; pass --force to confirm)
+Aborted.
+```
+
+**Root cause**: the `cf` CLI asks before every destructive command. When no terminal is attached, as when the backend runs it, cf prints the question and `Aborted.`, changes nothing, and **exits 0**, so `run_cli_command` reported a successful run. The node never passed `--force`, on cf 0.2.0 or later.
+
+**Fix** (`9a5cd688`): `dns_record_delete` always passes `--force`; choosing the operation is the confirmation. For any other command, `_run` in `nodes/cloudflare/cloudflare_action.py` turns that output into a `NodeUserError` asking for `--force`. Locked by `test_dns_record_delete_forces_and_uses_positional_id` and `test_aborted_confirmation_is_an_error` in `server/tests/test_cloudflare_plugin.py`. Scripts that run cf by hand need `--force` too.
+
+## 33. Cloudflare: `No authentication token found` after the cf 1.0 upgrade, or `More than one account available`
+
+**Symptom**: after updating past `9a5cd688`, the first Cloudflare operation is slow (cf is reinstalled), the Credentials modal shows Cloudflare as not connected, and operations fail with:
+```
+No authentication token found. Either:
+1. Set the CLOUDFLARE_API_TOKEN environment variable
+2. Run 'cf auth login' to authenticate via OAuth
+```
+With a login that can see several Cloudflare accounts, operations fail instead with `More than one account available but unable to select one in non-interactive mode`.
+
+**Root cause**:
+- The node moved from cf 0.2.0 to 1.0.0-beta.12. `ensure_cf_cli` reinstalls when the installed version differs from the pin (the first install downloads about 300 MB). cf 1.0 keeps its login in a new place (`<xdg-config>/cloudflare/config/default.json`; `%APPDATA%\xdg.config\cloudflare\...` on Windows) and does not pick up the login 0.2.0 stored, so the upgrade also clears the catalogue's "connected" marker.
+- cf has no `--account-id` flag on most commands. It takes the account from `CLOUDFLARE_ACCOUNT_ID`, or uses the only one the login can see, and with no terminal to ask it stops when there are several.
+
+**Fix**: log in again (Credentials → Cloudflare → Login: the modal shows a one-time code to approve on Cloudflare's page, from any browser), or paste an API token there. With several accounts, set the node's `account_id` to the account to use; the `whoami` operation lists them. See [Cloudflare Service](./cloudflare_service.md).

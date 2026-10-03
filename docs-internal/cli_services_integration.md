@@ -48,7 +48,10 @@ Follow the plugin-runtime pattern (references: `nodes/whatsapp/_runtime.py`,
    under `<DATA_DIR>/packages/<name>/` (pooch for release archives; the
    shared bun-managed packages tree via `core.js_runtime.add_package` for
    npm-registry packages, whose bin shims then run on bun). Idempotent; callable one-shot from
-   `company build` when pre-caching is worth it.
+   `company build` when pre-caching is worth it. Pin the version, and for
+   an npm package compare `core.js_runtime.installed_version(name)` with
+   the pin so a bump reaches machines that already have it
+   (`nodes/cloudflare/_install.py`).
 2. **Supervise** — a `BaseProcessSupervisor` subclass in the plugin folder
    (`_runtime.py`) owning argv/cwd/env, with `ensure_started()`
    (probe-or-spawn) for on-demand starts. Register the singleton via
@@ -69,5 +72,6 @@ Follow the plugin-runtime pattern (references: `nodes/whatsapp/_runtime.py`,
 | Adding plugin-daemon ports to `Config.all_ports` | the CLI would kill a backend-owned daemon during startup | The backend supervises them; the CLI carries no plugin knowledge |
 | Spelling `node_modules/.bin/<cli>[.cmd]` by hand | Drifts per platform (bun writes `<name>.exe` + `<name>.bunx` on Windows, `<name>` elsewhere) | `core.js_runtime.shared_tree_bin(name)` after `add_package(spec)` |
 | Running the CLI through `bun x` / `npx` per call | Slow, unpinned version, no shared tree | `add_package("<pkg>@<version>")` once into the shared packages tree, then call the shim directly |
+| Treating an existing shim as the pinned version | A pin bump never reaches machines that already have the package (`company clean` keeps `packages/`) | Compare `core.js_runtime.installed_version(name)` with the pin and re-run `add_package` on a mismatch (`nodes/cloudflare/_install.py`) |
 | Wrapping CLI in a JS script | Unnecessary indirection | Use CLI commands directly |
 | Hardcoding port numbers in code or docs | drifts when ports change | Declare in `.env.template`; read via `core.env_defaults` |

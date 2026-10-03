@@ -14,7 +14,7 @@ Settings are the ones validated on a live t3.micro in September 2026:
 | Credit mode | `standard` | Caps compute at the hourly rate under continuous CPU load. |
 | Root disk | 10 GiB gp3, deleted with the instance | A fresh install uses ~4.5 GiB. |
 | Image | Ubuntu 24.04 LTS (Canonical) | Python 3.12 inside the server's `<3.13` pin. |
-| bun | installed by `install.sh` (the official bun installer, into `~ubuntu/.bun`) when none is present; no Node, no npm | The published package runs on bun: the `company` shim, the JS executor sidecar and the plugin CLIs (including the Cloudflare `cf` CLI, whose `engines.node >= 22` bun ignores). systemd gets `$APP_HOME/.bun/bin` on PATH and `ExecStart=$APP_HOME/.bun/bin/company serve`. |
+| bun | installed by `install.sh` (the official bun installer, into `~ubuntu/.bun`) when none is present; no Node, no npm | The published package runs on bun: the `company` shim, the JS executor sidecar and the plugin CLIs (including the Cloudflare `cf` CLI: bun ignores its `engines.node >= 22` and runs its API commands; only cf's project commands, which load a `cloudflare.config.ts`, need Node 22.18+). systemd gets `$APP_HOME/.bun/bin` on PATH and `ExecStart=$APP_HOME/.bun/bin/company serve`. |
 | Install | `install.sh` as `ubuntu`, no sudo | Root installs leave the venvs unusable by the login user (errors.md #16). |
 | Runtime | `company serve` under systemd as `ubuntu` on port 5678 | The server rejects ports below 1024; 80/443 stay free for a TLS front door. |
 | Security group | 22, 80, 443 and the app port from `allow_cidr` | Same shape as the gcp module. |

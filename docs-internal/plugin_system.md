@@ -1205,8 +1205,9 @@ does above.
 
 ### `DaemonEventSource` — supervised subprocess driver
 
-For plugins that wrap a long-lived CLI tool or SDK loop (Stripe CLI,
-future GitHub-CLI / Cloudflare-Wrangler / etc.). Delegates lifecycle
+For plugins that wrap a long-lived CLI tool or SDK loop (the Stripe
+CLI's `stripe listen`; one-shot CLI wrappers such as GitHub, Vercel,
+Cloudflare and gcloud call `run_cli_command` instead). Delegates lifecycle
 to `ProcessService` (battle-tested PATHEXT-aware launching, kill_tree
 cleanup, log capture, Terminal-tab broadcast). The base subscribes to
 ProcessService's per-line callback hook (`line_handler`), so plugins

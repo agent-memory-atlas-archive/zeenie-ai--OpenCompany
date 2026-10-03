@@ -85,8 +85,11 @@ tests, update this page and the skill.
 ## Runtime — bun, delegation, and the working directory
 
 cf declares `engines.node >= 22`; bun 1.4 reports a Node version that
-passes the bin's guard, and every API command works on it (verified with
-no Node on PATH). Two documented limits follow from running on bun:
+passes the bin's guard. With no Node on PATH, `--help`, `--dry-run` of
+every wrapped command, `auth whoami`, `cli search` and `schema` all ran
+on bun, and cf's own docs name only the commands that load a
+`cloudflare.config.ts` as failing there. Two documented limits follow
+from running on bun:
 
 - **`cloudflare.config.ts` cannot load under bun** ("Bun is not
   supported" — commands that load it fail with *"cloudflare.config.ts
@@ -261,7 +264,7 @@ Contract notes:
   always passes `--force` (choosing the operation is the confirmation),
   and `_run` turns that output into a `NodeUserError` for `custom`.
 - **Errors** are a box on stderr (`┌ Error │ ... └`; API errors add
-  `[<code>] <message>` and `<status> · HTTP <path>`) with exit 1.
+  `[<code>] <message>` and `<status> <text> · HTTP <path>`) with exit 1.
   `_run` raises `NodeUserError("cf <command> failed: <stderr tail>")`
   plus a `hint` for known failures: no login / 401 (also
   `requires_user_action=True`, and a note when only a `cfk_` key is
