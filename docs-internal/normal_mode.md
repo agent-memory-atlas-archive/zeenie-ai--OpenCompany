@@ -176,7 +176,10 @@ Help in browser), else the first on the team.
   It loads in its own chunk, which keeps the board's markdown, code and
   JSON viewers out of Home's, and refreshes on `canvas_updated` like the
   editor's hosts. An employee without a Canvas gets a note and Open
-  workflow.
+  workflow. A note shows as a document: its versions (‹ v2/3 ›), Preview or
+  Markdown, Copy and Download. A document card in a reply (a note the
+  employee wrote or revised while answering) opens the Workspace here, on
+  that employee and item at that version (`homeStore.openCanvasItem`).
 - **Browser**: the shared `components/browser/BrowserWorkspace` attaches to
   the employee's saved Browser nodes, supplied by `browser_nodes` in its
   summary. Multiple nodes get a selector. Running sessions appear automatically;

@@ -218,11 +218,21 @@ parts: {
 
 Approvals are joined live from the approvals store; the part only names them (`{approval_id, tool_call_id}`).
 
+Artifacts name the documents (Canvas notes) the run wrote or revised, one entry per item at the latest version
+the run left it: the canvas tool calls `show_artifact` (`artifact:<item_id>`, so a later version replaces the
+earlier one) and publishes an `activity.snapshot` with `activity_type: "artifact"` and `message_id:
+"artifact_<item_id>"`. The card (`features/chat/turns/ArtifactCard.tsx`) shows the title, Document or Code, the
+version, and Open, which asks the host to show the item at that version (Home: the Workspace's Canvas tab; the
+editor: the Canvas dock; see [canvas_node.md](./canvas_node.md)). The client shows each saved document at the newer
+of its saved and live versions.
+
 A run's tools record parts on the run as they go (`chat_run_parts`, keyed so a retried activity writes the same
 row; `services/chat/parts.py`). Reply in Chat saves its reply with the parts recorded so far, and the run's end seals
-any later ones into it, creating an empty-text reply when the run showed an interface but wrote nothing (sources
-alone make none: they show only where a reply cites them); the end is published after the seal, so its
-`result.reply_message_id` names a reply that holds them.
+any later ones into it, creating an empty-text reply when the run showed an interface, made a draft or wrote a
+document but wrote no text (sources alone make none: they show only where a reply cites them); the end is published
+after the seal, so its `result.reply_message_id` names a reply that holds them. A sealed item the reply already holds
+stays as it is there (the owner may have changed an interface's state since), except a document's, where the run's
+newer version wins in place.
 
 ## Generated UI
 
@@ -409,7 +419,9 @@ What an employee sends to someone waits for the owner's OK while its workflow as
 - **The employee hears how it went**: an `[update]{...}[/update]` note (`approval:<id>`) at the start of its next
   turn in the chat, for a send that went, failed or was discarded.
 - **In the chat.** A draft made answering the owner is recorded on the run (`parts.approvals`) and shown at once (an
-  `activity.snapshot` with `activity_type: "approval"`); its card sits on that reply. Drafts no reply in view made (a
+  `activity.snapshot` with `activity_type: "approval"`); its card sits on that reply. A draft made in a run a button
+  press started (its owner message carries `meta.ui_event`) records that interface (`ui_part_id`,
+  `ledger.ui_part_of_run`), and the card says "Linked to the form above". Drafts no reply in view made (a
   gate's, from the employee's own work) show after the conversation. The card (`features/chat/approval/`): Discard /
   Edit / Send while it waits, "Sends in Ns" with Undo, Sending, Sent (and when, and whether Ask first was off),
   Restore while it can, Try again (asking first when it may have gone), and "Sends when you resume" for a gate's
