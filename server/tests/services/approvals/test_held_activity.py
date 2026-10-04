@@ -1,10 +1,12 @@
 """A sending tool call through the node's own Temporal activity
 (``BaseNode.as_activity``): held, it never reaches the node and the model
 reads that it waits; with Ask first off it runs and is recorded; a send
-the owner approved runs under its claim."""
+the owner approved runs under its claim; a later attempt (the one before
+broke off) never sends again."""
 
 from __future__ import annotations
 
+import dataclasses
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -89,3 +91,53 @@ async def test_an_approved_send_runs_only_under_its_claim(harness, service):
     stale = await ActivityEnvironment().run(activity_fn, node_context(sending, "someone-else"))
     assert stale["success"] is False and stale["error_type"] == "ApprovalNotClaimed"
     service.execute_node.assert_awaited_once()
+
+
+def attempt(number: int) -> ActivityEnvironment:
+    env = ActivityEnvironment()
+    env.info = dataclasses.replace(env.info, attempt=number)
+    return env
+
+
+async def test_a_later_attempt_does_not_send_again(harness, service):
+    await rules.set_ask_first(harness.database, "wf", False)
+    result = await attempt(2).run(get_node_class("whatsappSend").as_activity(), context())
+    service.execute_node.assert_not_awaited()
+    assert result["success"] is False and result["error_type"] == "SendOutcomeUnknown"
+    assert "may already have gone out" in result["error"]
+    assert ("wf:whatsappSend:1", "error") in [(node_id, status) for node_id, status, *_ in harness.broadcaster.statuses]
+
+
+async def test_a_later_attempt_in_the_chat_is_recorded_as_unknown(harness, service, monkeypatch):
+    from services.chat import parts
+
+    async def show_approval(database, stream, **_):
+        return None
+
+    monkeypatch.setattr(parts, "show_approval", show_approval)
+    await rules.set_ask_first(harness.database, "wf", False)
+    stream = {"run_id": "r_1", "session_id": "wf", "workflow_id": "wf"}
+    await attempt(3).run(get_node_class("whatsappSend").as_activity(), context(chat_stream=stream))
+    service.execute_node.assert_not_awaited()
+    (row,) = await store.list_approvals(harness.database, status="failed")
+    assert (row.approved_by, row.outcome) == ("auto", "unknown")
+
+
+async def test_a_later_attempt_still_holds_or_runs_what_does_not_send(harness, service):
+    # A draft is made once per call, so holding it again is safe.
+    await rules.set_ask_first(harness.database, "wf", True)
+    held = await attempt(2).run(get_node_class("whatsappSend").as_activity(), context())
+    assert held["result"]["status"] == "waiting_for_owner"
+    # A call that does not send (a search) retries as before.
+    search = {"operation": "search", "query": "invoice"}
+    reading = context(node_id="wf:googleGmail:1", node_data=dict(search), tool_args=dict(search))
+    result = await attempt(2).run(get_node_class("googleGmail").as_activity(), reading)
+    service.execute_node.assert_awaited_once()
+    assert result["success"] is True
+
+
+async def test_the_first_attempt_sends_as_before(harness, service):
+    await rules.set_ask_first(harness.database, "wf", False)
+    result = await attempt(1).run(get_node_class("whatsappSend").as_activity(), context())
+    service.execute_node.assert_awaited_once()
+    assert result["success"] is True

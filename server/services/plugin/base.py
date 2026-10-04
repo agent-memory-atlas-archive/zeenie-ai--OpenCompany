@@ -1159,6 +1159,27 @@ class BaseNode:
                 node_data = checked.node_data
             if checked.tool_args is not None:
                 context = {**context, "tool_args": checked.tool_args}
+            # A send runs at most once: a later attempt (the one before broke
+            # off) answers that it may have gone out instead of sending again.
+            resend = approval_calls.resend_refusal(context, cls, node_data)
+            if resend is not None:
+                result = {
+                    "node_id": node_id,
+                    "node_type": cls.type,
+                    "execution_id": execution_id,
+                    "timestamp": datetime.now().isoformat(),
+                    **resend,
+                }
+                if checked.record is not None:
+                    await checked.record(result, unknown=True)
+                await chat_steps.end(chat_step, state="failed", detail="It may already have gone out")
+                await broadcaster.update_node_status(
+                    node_id,
+                    "error",
+                    {"error": resend["error"], "execution_id": execution_id},
+                    workflow_id=workflow_id,
+                )
+                return result
 
             # Broadcast executing — UI cyan-glow.
             await broadcaster.update_node_status(

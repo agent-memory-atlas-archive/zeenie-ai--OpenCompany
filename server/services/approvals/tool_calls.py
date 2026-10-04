@@ -17,6 +17,15 @@ A call that comes back to run because the owner pressed Send carries
 ``approval_execution`` (services/approvals/execution.py): it runs only when
 its row is the one being sent, and is never held again.
 
+**At most once.** Temporal runs a tool activity again only when an attempt
+broke off (the worker stopped, a timeout): a failure the node reports comes
+back as a result and is not retried. The attempt that broke off may have
+sent the message, so a later attempt of a call that sends does not send it
+again (:func:`resend_refusal`): the model reads that it may have gone out,
+and with Ask first off the chat's record says so (``outcome: unknown``). The
+owner's approved sends already run with no retry
+(services/temporal/approved_tool_call_workflow.py).
+
 What a node sends as (its locked ``server_controlled_fields``: the account,
 the mailbox) never comes from the model, so the row keeps the call's
 arguments without them; the node's own settings supply them when it runs.
@@ -45,6 +54,10 @@ HELD_MESSAGE = (
 REFUSED_MESSAGE = (
     "Not run: {channel} cannot wait for the owner's OK, and they ask to approve everything first. "
     "Tell them what you would do; they can turn Ask first off to let you."
+)
+RESEND_MESSAGE = (
+    "Not sent again: the first try at this broke off, and it may already have gone out. "
+    "Do not send it again unless the owner asks; tell them it may or may not have gone out."
 )
 
 
@@ -257,9 +270,11 @@ async def _show_in_chat(database: Any, context: Mapping[str, Any], row: Any) -> 
 
 
 def _auto_recorder(database: Any, context: Mapping[str, Any], node_cls: Any, spec: Any, node_data: Mapping[str, Any]):
-    async def record(result: Dict[str, Any]) -> None:
+    async def record(result: Dict[str, Any], *, unknown: bool = False) -> None:
+        """Record how the call went; ``unknown``: it may have gone out
+        (an attempt broke off, see :func:`resend_refusal`)."""
         try:
-            success = bool(isinstance(result, dict) and result.get("success", True) is not False)
+            success = not unknown and bool(isinstance(result, dict) and result.get("success", True) is not False)
             now = _utcnow()
             fields = _row_fields(context, node_cls, spec, node_data)
             fields.update(
@@ -267,7 +282,7 @@ def _auto_recorder(database: Any, context: Mapping[str, Any], node_cls: Any, spe
                 approved_by="auto",
                 decided_at=now,
                 consumed_at=now,
-                outcome="sent" if success else "not_sent",
+                outcome="sent" if success else ("unknown" if unknown else "not_sent"),
                 outcome_error=None if success else str((result or {}).get("error") or "It did not go out.")[:1000],
                 outcome_at=now,
                 final_text=fields.get("draft_text"),
@@ -282,8 +297,44 @@ def _auto_recorder(database: Any, context: Mapping[str, Any], node_cls: Any, spe
     return record
 
 
+def _attempt() -> int:
+    """This activity attempt's number (1 outside an activity)."""
+    try:
+        from temporalio import activity
+
+        return int(activity.info().attempt)
+    except Exception:  # noqa: BLE001 - not in an activity
+        return 1
+
+
+def resend_refusal(context: Mapping[str, Any], node_cls: Any, node_data: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
+    """What a later attempt of an agent's call that sends answers instead
+    of sending (see the module docstring), or None to run it."""
+    from services.plugin.approval import approval_spec
+
+    spec = approval_spec(node_cls)
+    if spec is None or _attempt() <= 1:
+        return None
+    if context.get("approval_execution") is None and not is_agent_tool_call(context):
+        return None
+    if not spec.sends(node_data):
+        return None
+    return {"success": False, "error": RESEND_MESSAGE, "error_type": "SendOutcomeUnknown"}
+
+
 def claim_token() -> str:
     return uuid.uuid4().hex
 
 
-__all__ = ["Checked", "HELD_MESSAGE", "RUN", "call_key", "check", "claim_token", "hold", "is_agent_tool_call"]
+__all__ = [
+    "Checked",
+    "HELD_MESSAGE",
+    "RESEND_MESSAGE",
+    "RUN",
+    "call_key",
+    "check",
+    "claim_token",
+    "hold",
+    "is_agent_tool_call",
+    "resend_refusal",
+]
