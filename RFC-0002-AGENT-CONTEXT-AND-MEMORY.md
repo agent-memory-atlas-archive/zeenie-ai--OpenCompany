@@ -19,6 +19,19 @@ Compatibility boundary: new workflow generations only
 > is the normative Context reference.** Sections below describing the
 > journal are historical rationale, not the running system.
 
+> ## Amendment (October 2026): the chat
+>
+> The plain store gained three behaviors for the owner's chat, specified in
+> [agent_context_flow.md](./docs-internal/agent_context_flow.md) and
+> [chat_protocol.md](./docs-internal/chat_protocol.md): a stopped turn is
+> saved as far as it went, and a load answers any tool call left open; what
+> the owner did in the chat between turns reaches the agent as bracketed
+> notes ahead of their message (`chat_notes`), never in the stored system
+> prompt; and editing a message, trying an answer again or switching between
+> versions takes the stored conversation back to the cursor the run recorded
+> (`chat_runs.context_cursors`), or restores the copy kept for that branch
+> (`chat_branch_snapshots`), under the store's lock.
+
 ## 1. Summary
 
 OpenCompany separates two concepts that were previously conflated:

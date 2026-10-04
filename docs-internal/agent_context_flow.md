@@ -133,6 +133,23 @@ passes the stored row through `close_unanswered_tool_calls`
 latest assistant turn with `UNANSWERED_TOOL_RESULT`, after the results the turn
 already has. A closed conversation is returned unchanged.
 
+### Chat branches rewind and restore
+
+Editing the owner's message, trying an answer again or switching to another
+version of the chat changes what the agent should remember
+([Chat Protocol → Branches](./chat_protocol.md#branches)). When a chat run's
+agent is prepared, `agent.prepare_payload` records on the run where the stored
+conversation stood (`chat_runs.context_cursors`: its length and a digest that
+leaves out the `ts` stamps), the stored row as loaded, before
+`close_unanswered_tool_calls`. A branch move then writes the conversation
+directly, under `conversation_lock` (the lock `save_conversation` holds) and
+inside the move's reserved transaction: back to the cursor of the first run on
+the part of the chat being left (refused when the stored row no longer starts
+with what the cursor recorded, as after a compaction), or, for a switch, to the
+conversation kept for the branch moved to (`chat_branch_snapshots`). Turns other
+firings added after that point go with the branch. The Context listeners hear
+of each conversation changed, as after a save.
+
 ## Transcript size: capped results, cleared old results
 
 The transcript is the `agent.execute_llm_step` input on every turn and the
@@ -317,6 +334,7 @@ workflow, not only the removed Context's agent.
 | 9 | The store never imports `nodes/`; the plugin registers its broadcaster via `register_conversation_listener`, and a listener failure can never fail a save. | Same layering rule as every plugin registry; a UI notification must not break execution. |
 | 10 | External tool results are capped before they enter the transcript; the latest turn is never cleared or summarized; the pressure rules are chosen by the recorded `context_pressure_version`. | Uncapped results bricked every later firing (`errors.md` #28); an unread turn summarized away loses what the model asked for; a replay must schedule the commands it recorded. |
 | 11 | A stopped turn is saved as far as it went, and a load answers any tool call the stored row left open. | A provider refuses a conversation with an unanswered call, so one cancelled run would otherwise break every later firing. |
+| 12 | Only `save_conversation` and a chat branch move (under `conversation_lock`, checked against the run's cursor) rewrite a stored conversation. | A move that ignored the lock or the cursor would cut a turn being saved, or cut a summarized conversation at the wrong place. |
 
 ## How this broke (August 2026 regression), and why the journal went away
 

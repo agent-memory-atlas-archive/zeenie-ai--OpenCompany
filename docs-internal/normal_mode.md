@@ -472,6 +472,16 @@ sending and drafts belong to the chat (wire and client rules in
 - **Stop.** While the run works, Send is Stop, and Esc stops it too: the
   answer so far stays, marked "You stopped this reply." A message still
   waiting for Resume is withdrawn the same way.
+- **Changing the conversation** (between runs): the owner's message has Edit
+  (in place; ArrowUp in an empty box edits the last one) and ‹ 1 / 2 ›
+  between their edits of it; the latest answer has Try again, and ‹ 1 / 2 ›
+  moves between the answers tried. The employee's memory follows what is
+  shown: an edit or a retry takes them back to before the message, and moving
+  between versions brings back what they remembered on each
+  ([chat_protocol.md → Branches](./chat_protocol.md#branches)). Drafts waiting
+  on the part left behind are cancelled, and the employee hears of anything
+  sent there. Good and Bad rate an answer; the toast says the employee will see
+  it next time, which is when the rating reaches them.
 - **The box** follows the control state the way `send_chat_message` does
   (`talkMode` in `presentation.ts`):
   - *send* (running, starting, resuming): a message shows at once

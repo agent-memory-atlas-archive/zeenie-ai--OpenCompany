@@ -126,10 +126,10 @@ All are WebSocket request/response handlers with snake_case payloads. Failures a
 | `get_chat_run` | `{run_id}` | `{success, run: RunSnapshot}`, or `not_found` |
 | `stop_chat_run` | `{run_id}` | `{success, run_id, state: "stopping" \| "stopped"}`; `not_stoppable` (with `state`) for a run that ended otherwise |
 | `chat_ui_state` | `{session_id, part_id, changes: [{path, value}]}` (at most 32; the last value per path wins) | `{success, part_id, state_revision}`; `not_found`, `invalid_request` |
-| `edit_chat_message` | `{message_id, text, attachments?, expected_revision}` | `{success, message_id, run_id}` |
-| `regenerate_chat_reply` | `{message_id, expected_revision}` | `{success, run_id}` |
-| `switch_chat_branch` | `{message_id, target_id, expected_revision}` | `{success, thread}` |
-| `set_chat_feedback` | `{message_id, rating: "good" \| "bad" \| null, comment?}` | `{success, reaches: ["next_reply", "memory"?]}` |
+| `edit_chat_message` | `{session_id, message_id, message, expected_revision?, client_message_id?}` | `{success, message_id, run_id, delivery}` (the edit's id; a resent `client_message_id` answers the first edit) |
+| `regenerate_chat_reply` | `{session_id, message_id, expected_revision?}` (the latest answer, or the owner's last message when its run gave none) | `{success, message_id, run_id, delivery}` (`message_id`: the owner's message answered again) |
+| `switch_chat_branch` | `{session_id, message_id, expected_revision?}` (a message beside one on the path) | `{success, leaf_id}` |
+| `set_chat_feedback` | `{session_id, message_id, value: "up" \| "down" \| null}` | `{success, message_id, value, reaches: ["next_turn", "memory"?]}` (`[]` when taken back) |
 | `get_chat_context` | `{session_id}` | `{success, commands, suggestions, capabilities, genui_catalog, limits, ask_first: {value, editable, replies_gated}}` |
 | `clear_chat_messages` | `{session_id}` | `{success}`; also clears runs, parts, snapshots, notes and feedback, and makes the employee forget the conversation |
 
@@ -196,10 +196,15 @@ tool_call_id?, ui_part_id?, agent_node_id?, deployment_state?}`. `status` is `pe
   a failed run the error with the hint the run recorded, the steps it saved, and once it has ended how long it
   worked (`duration_ms`). It is how a reload still shows that a message went unanswered and what the employee did;
   while the session is subscribed, the run's events are fresher (see [Client](#client)).
-- Until branches land, `siblings` always holds the message alone and `editable` is false.
-- `kind`: `text`, `report` (Post to Talk: no parent, not editable), `action` (a button press), `notice`.
+- `siblings` are the messages beside it (the same parent and role), oldest first, itself included: the owner's
+  edits of a message, or the answers tried for one. `index` is its own place.
+- `editable` says the owner may change it now (the server decides): their text message a run answered, in the live
+  generation (Edit), and the answer the path ends at once its run has ended (Try again).
+- `run_id` on the owner's message names the run answering it on this path: the run of the answer after it, else its
+  newest run (an answer being tried again), else the run it started.
+- `feedback` is the owner's rating of an answer: `up`, `down` or null.
+- `kind`: `text`, `report` (Post to Talk: not editable), `action` (a button press), `notice`.
 - `status`: `complete`, `stopped`, `error`.
-- `siblings` are branches for owner messages and versions for replies.
 
 Parts render in this order, whatever order they were produced in: steps, text, generated UI, artifacts, approvals,
 sources, follow-ups.
@@ -377,6 +382,15 @@ editor's console pane (`ConsoleChat`, compact, scope `live`) are the two hosts.
   until its saved reply lands in the thread, so the streamed answer and the reply stay one element.
 - **Stop** (`data/stop.ts`): the Stop button, or Esc anywhere in the pane, sends `stop_chat_run` for the lane's run
   and applies the answer to the store at once; the run's events take it from there.
+- **Changing the conversation** (`data/branches.ts`, `thread/turnActions.ts`): under the owner's message a hover bar
+  (`turns/UserTurn.tsx`: time, ‹ 1 / 2 › between versions, Edit, Copy; Edit opens `turns/UserEditBox.tsx` in place,
+  Enter sends, Esc cancels, ArrowUp in an empty box edits the last message); under a finished answer
+  (`turns/ReplyActions.tsx`) Copy, Good and Bad (pressing again takes the rating back), Try again on the latest
+  answer, ‹ 1 / 2 › between answers, and the time. A run that stopped or failed without an answer has Try again in
+  its note. Each command sends the thread's revision as read; a refusal is told in the host's words
+  (`turns/runCopy.ts` `branchRefusalText`), `not_running` through the host's own refusal. A rating shows at once and
+  goes back when it does not save; its toast says where it goes (`feedbackThanks`). Suggested questions hide while
+  the box holds text, and under a stopped answer.
 - **Generated UI** (`features/chat/genui/`, `turns/GeneratedUiBlock.tsx`): a reply's interfaces come from its saved
   `parts.ui`, or while the run streams them from its `json_render` activities (`data/parts.ts`), the run's first turn
   keeping them until the saved reply carries them, so one element shows throughout and keeps what the owner set. The
@@ -433,12 +447,55 @@ What an employee sends to someone waits for the owner's OK while its workflow as
   `com.opencompany.approval.<stage>`: requested, decided, undone, restored, sending, sent, failed, expired,
   cancelled), identity only, with the chat run when there is one.
 
+## Branches
+
+`services/chat/branches.py`. A session's messages form a tree: each row names the one before it (`parent_uid`) and
+`chat_threads.active_leaf_uid` is where the path shown ends; `get_chat_messages` returns that path only.
+
+- **Edit** (`edit_chat_message`) adds the new text beside the message it edits (same parent; `meta.edit_of` names
+  the original) and starts a run of kind `edit` answering it (`parent_run_id`: the original's run).
+- **Try again** (`regenerate_chat_reply`) moves the leaf back to the owner's message and starts a run of kind
+  `regenerate` for it (`user_message_id`: that message), whose answer goes beside the old one. Only the answer the
+  path ends at, or the owner's last message when its run ended without an answer.
+- **Switch** (`switch_chat_branch`) moves the leaf to the newest message in the chosen version's branch.
+
+**Memory follows the path.** `agent.prepare_payload` records, on the chat run an agent with a stored conversation
+works for, that conversation as the run began (`chat_runs.context_cursors[agent] = {generation, length, digest}`,
+the digest leaving out the stored `ts` stamps; the first preparation in a run wins). A move takes every agent the
+runs on the part it leaves touched back to the cursor of the first such run, after checking the stored conversation
+still starts that way, and keeps their conversations under the left branch's leaf (`chat_branch_snapshots`, at most
+`branches.max_snapshots_per_session` per session and `branches.max_snapshot_bytes` each, `config/chat_defaults.json`).
+A switch restores the snapshots of the branch it moves to. It all runs in one reserved write transaction under the
+conversation store's locks (`conversation_lock`), and is refused with:
+
+- `revision_conflict`: `expected_revision` is not the thread's revision (something was added meanwhile);
+- `run_in_progress`: a run holds the lane;
+- `cannot_rewind`: a stored conversation no longer starts the way it did (summarized or cleared since); going back to
+  an empty conversation always works;
+- `branch_unavailable`: the branch switched to has no kept conversation for an agent that worked on it;
+- `older_generation`: a message or run from before the live generation;
+- `not_editable` / `not_found`: not the owner's text message a run answered, not the latest answer, or not on the
+  path.
+
+After it commits, the Context listeners hear of each conversation changed, the drafts the runs on the part left made
+that still wait are cancelled (`approval_lifecycle` `cancelled`), and an `[update]` note (`branch:<run id>`) tells the
+employee what those runs sent anyway. `chat.updated` follows (role `user` for an edit, null for a retry or a switch).
+
+## Feedback
+
+`set_chat_feedback` keeps the owner's rating of an answer (`chat_feedback`, one per answer; `services/chat/
+feedback.py`) and leaves a `[feedback]{"rating": "good" | "bad", "answer": "<excerpt>"}[/feedback]` note
+(`feedback:<message id>`; taking the rating back drops it while untold). `reaches` lists where the rating goes:
+`next_turn`, plus what a listener registered with `register_feedback_listener` adds (a plugin that keeps it too
+answers `memory`; none is registered yet).
+
 ## Notes to the employee
 
 Things the employee should learn on its next turn are kept in `chat_notes` (`services/chat/notes.py`) and put ahead
-of that turn's user message, one bracketed line each. Built: `[ui-state]{"ui_id", "state"}[/ui-state]`, written by
-`chat_ui_state` for what the owner set without pressing anything; later phases add `[updates]` (approval outcomes)
-and `[feedback]`. A note is keyed per session (`ui-state:<part id>`), so a newer one replaces an older one not yet
+of that turn's user message, one bracketed line each: `[ui-state]{"ui_id", "state"}[/ui-state]`, written by
+`chat_ui_state` for what the owner set without pressing anything; `[update]{...}[/update]` for what became of a draft
+(`approval:<id>`) or what a branch left behind still sent (`branch:<run id>`); and `[feedback]{...}[/feedback]` for a
+rating. A note is keyed per session (`ui-state:<part id>`), so a newer one replaces an older one not yet
 told. `agent.prepare_payload` claims the session's untold notes for the agent answering a run (the one with a
 `chat_stream`); the run's end marks them told when it answered (it finished, or it stopped having written
 something), so a run that failed or stopped before writing offers them again, and a note changed after its claim stays
@@ -486,15 +543,19 @@ and server tests alike:
 
 | Code | Where | Meaning |
 |---|---|---|
-| `run_in_progress` | send, edit, regenerate, switch | A run is live in this session; `run_id` names it. |
-| `save_failed` | send | The message could not be saved; nothing was dispatched. |
-| `not_running` | send | The employee is not running and cannot queue messages. |
+| `run_in_progress` | send, edit, regenerate, switch | A run is live in this session; `run_id` names it (send only). |
+| `save_failed` | send, edit, regenerate, switch | The change could not be saved; nothing was dispatched. |
+| `not_running` | send, edit, regenerate, switch | The employee is not running and cannot queue messages (a switch: nothing was started since the last Reset). |
 | `invalid_request` | send, save | A malformed field (`detail` says which): an empty message, a role other than the owner's, or a bad `client_message_id`. |
 | `read_failed` | get_chat_messages, chat_subscribe | The thread could not be read. Never answered as an empty thread. |
 | `not_found` | get_chat_run, stop_chat_run | No such run. |
 | `not_stoppable` | stop_chat_run | The run ended before Stop reached it; `state` says how. |
-| `conflict` | edit, regenerate, switch, set_ask_first | `expected_revision` is stale. |
-| `not_editable` | edit, regenerate, decide | The message belongs to an older generation, its prefix was compacted, or an edited argument is not editable. |
+| `revision_conflict` | edit, regenerate, switch | `expected_revision` is not the thread's revision. |
+| `conflict` | set_ask_first | `expected_revision` is stale. |
+| `not_editable` | edit, regenerate, decide | Not the owner's text message a run answered, not the latest answer, the editor's `default` chat, or an edited argument that is not editable. |
+| `older_generation` | edit, regenerate, switch | A message or run from before the employee restarted. |
+| `cannot_rewind` | edit, regenerate, switch | An agent's stored conversation no longer starts the way it did when the run being undone began. |
+| `branch_unavailable` | switch | The branch's kept conversations are gone (too many branches, or too large to keep). |
 | `ui_event_rejected` | send | The element or action does not match the saved spec. |
 | `access_denied` | all | The socket's principal does not own the workflow, or it is the internal worker socket. |
 | `too_late` | decide | The Undo or Restore window has passed. |
