@@ -912,6 +912,27 @@ async def store_agent_output(payload: Dict[str, Any]) -> Dict[str, Any]:
     return {"stored": True}
 
 
+async def _record_chat_cursor(
+    database: Any, context: Dict[str, Any], *, node_id: str, generation: int, stored: List[Dict[str, Any]]
+) -> None:
+    """Keep, on the chat run this agent works for, where its stored
+    conversation stood as the run began, so editing the owner's message or
+    trying an answer again can take it back there
+    (``services/chat/branches.py``). Best effort: a run that kept none
+    leaves this agent's memory as it is when the chat moves."""
+    from services.chat.stream import chat_run_id_of
+
+    run_id = chat_run_id_of(context)
+    if not run_id:
+        return
+    try:
+        from services.chat.branches import record_cursor
+
+        await record_cursor(database, run_id=run_id, agent_node_id=node_id, generation=generation, messages=stored)
+    except Exception:  # noqa: BLE001 - the run goes on; only rewinding past it is lost
+        activity.logger.warning("Chat run cursor not recorded for agent %s", node_id, exc_info=True)
+
+
 @activity.defn(name="agent.prepare_payload")
 async def prepare_agent_payload(context: Dict[str, Any]) -> Dict[str, Any]:
     """Resolve everything ``AgentWorkflow`` needs from the canvas + DB.
@@ -1270,14 +1291,10 @@ async def prepare_agent_payload(context: Dict[str, Any]) -> Dict[str, Any]:
             from services.agent_context import load_conversation
             from services.agent_context.conversation import close_unanswered_tool_calls
 
+            stored = await load_conversation(database, **conversation_key)
             # A run stopped or crashed mid-tool left calls without results,
             # which no provider accepts: answer them before continuing.
-            conversation = close_unanswered_tool_calls(
-                await load_conversation(
-                    database,
-                    **conversation_key,
-                )
-            )
+            conversation = close_unanswered_tool_calls(stored)
         except Exception as exc:
             raise ApplicationError(
                 f"Conversation load failed for agent {node_id!r} "
@@ -1300,6 +1317,7 @@ async def prepare_agent_payload(context: Dict[str, Any]) -> Dict[str, Any]:
                     type="ConversationTooLarge",
                     non_retryable=True,
                 )
+        await _record_chat_cursor(database, context, node_id=node_id, generation=generation, stored=stored)
 
     # ---- Tools ----------------------------------------------------------
     # We call ``ai_service._build_tool_from_node`` once here ONLY to

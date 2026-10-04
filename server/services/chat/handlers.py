@@ -12,19 +12,26 @@ the message starts a run, admitted in the same transaction
 (``services/chat/ledger.py``), and the response names it. The editor's
 ``"default"`` session is saved and dispatched to every deployment, without a
 run, as it always was.
+
+``get_chat_messages`` reads the path shown (``services/chat/branches.py``):
+each message with its versions (``siblings``), whether the owner may change
+it (``editable``) and their rating. ``edit_chat_message``,
+``regenerate_chat_reply`` and ``switch_chat_branch`` move that path, and
+``set_chat_feedback`` rates an answer (``services/chat/feedback.py``).
 """
 
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import WebSocket
 
 from core.container import container
 from core.logging import get_logger
-from services.chat import ledger, reducer
+from services.chat import branches, ledger, reducer
 from services.chat.access import ChatAccessDenied, authorize_session, session_id_of
+from services.chat.feedback import FeedbackRefused, feedback_for, set_feedback
 from services.chat.events import MESSAGE_WIRE_ROUTING_KEY, dispatch_chat_message_received
 from services.chat.hub import get_chat_hub
 from services.chat_thread import (
@@ -62,9 +69,22 @@ def _wire_run(run: Any) -> Dict[str, Any]:
     return wire
 
 
-def _wire_message(row: Dict[str, Any], runs: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """A stored message as ``get_chat_messages`` sends it."""
+def _wire_message(
+    row: Dict[str, Any],
+    runs: Optional[Dict[str, Any]] = None,
+    *,
+    siblings: Optional[List[str]] = None,
+    editable: bool = False,
+    feedback: Optional[str] = None,
+    run_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """A stored message as ``get_chat_messages`` sends it. ``siblings``: its
+    versions, oldest first (itself included); ``run_id``: the run answering
+    it on the path shown (an owner's message answered again names the newest
+    answer's run)."""
     message_id = row.get("uid") or f"m{row.get('id')}"
+    versions = siblings if siblings and message_id in siblings else [message_id]
+    run_id = run_id or row.get("run_id")
     wire: Dict[str, Any] = {
         "id": message_id,
         "legacy_id": row.get("id"),
@@ -74,20 +94,19 @@ def _wire_message(row: Dict[str, Any], runs: Optional[Dict[str, Any]] = None) ->
         "message": row.get("message"),
         "timestamp": row.get("timestamp"),
         "run_key": row.get("execution_id"),
-        "run_id": row.get("run_id"),
+        "run_id": run_id,
         "parent_id": row.get("parent_uid"),
         "status": row.get("status") or "complete",
         "attachments": row.get("attachments") or [],
         "parts": row.get("parts") or {},
-        "feedback": None,
-        "siblings": {"index": 0, "count": 1, "ids": [message_id]},
-        # Editing arrives with branches; until then no message is editable.
-        "editable": False,
+        "feedback": feedback,
+        "siblings": {"index": versions.index(message_id), "count": len(versions), "ids": list(versions)},
+        "editable": editable,
     }
     client_message_id = (row.get("meta") or {}).get("client_message_id")
     if client_message_id:
         wire["client_message_id"] = client_message_id
-    run = (runs or {}).get(row.get("run_id") or "")
+    run = (runs or {}).get(run_id or "")
     if run is not None:
         wire["run"] = _wire_run(run)
     return wire
@@ -162,6 +181,18 @@ async def _ui_event(database: Any, session_id: str, raw: Any) -> Dict[str, Any]:
     }
 
 
+async def _dispatch(
+    session_id: str, workflow_id: Optional[str], *, message_uid: str, prompt: str, run_id: Optional[str], timestamp: str
+) -> None:
+    """Send the owner's message to the workflow's chat triggers: the run it
+    starts is the event's id, so the trigger's child workflow is the run's."""
+    event_data: Dict[str, Any] = {"message": prompt, "timestamp": timestamp, "session_id": session_id, "message_id": message_uid}
+    if run_id is not None:
+        event_data["run_id"] = run_id
+    await dispatch_chat_message_received(event_data, workflow_id=workflow_id, event_id=run_id)
+    logger.info("Chat message dispatched", session_id=session_id, run_id=run_id)
+
+
 @ws_handler("message")
 async def handle_send_chat_message(data: Dict[str, Any], websocket: WebSocket) -> Dict[str, Any]:
     """Save the owner's message, start its run, and dispatch it. Answers
@@ -232,20 +263,14 @@ async def handle_send_chat_message(data: Dict[str, Any], websocket: WebSocket) -
     row, run = admission.message, admission.run
     if admission.created:
         await announce_chat_updated(session_id, "user")
-        event_data: Dict[str, Any] = {
-            "message": press["prompt"] if press is not None else message,
-            "timestamp": timestamp,
-            "session_id": session_id,
-            "message_id": row["uid"],
-        }
-        if run is not None:
-            event_data["run_id"] = run.run_id
-        await dispatch_chat_message_received(
-            event_data,
-            workflow_id=scope.workflow_id,
-            event_id=run.run_id if run is not None else None,
+        await _dispatch(
+            session_id,
+            scope.workflow_id,
+            message_uid=row["uid"],
+            prompt=press["prompt"] if press is not None else message,
+            run_id=run.run_id if run is not None else None,
+            timestamp=timestamp,
         )
-        logger.info("Chat message dispatched", session_id=session_id, run_id=run.run_id if run is not None else None)
 
     response: Dict[str, Any] = {
         "success": True,
@@ -261,41 +286,55 @@ async def handle_send_chat_message(data: Dict[str, Any], websocket: WebSocket) -
 
 @ws_handler()
 async def handle_get_chat_messages(data: Dict[str, Any], websocket: WebSocket) -> Dict[str, Any]:
-    """A session's messages, oldest first, the newest ``limit`` of them, with
-    the thread's state and its live runs. The live generation's messages
-    only, unless ``all_generations`` (Home's thread, which also shows a
-    message from before a Start). A read that fails answers ``read_failed``,
-    never an empty thread."""
+    """The path shown in a session (``services/chat/branches.py``), oldest
+    first, the newest ``limit`` of it, with the thread's state and its live
+    runs. The live generation's messages only, unless ``all_generations``
+    (Home's thread, which also shows a message from before a Start). Each
+    message carries its versions, whether the owner may change it now
+    (``editable``: edit theirs, try the latest answer again) and their
+    rating. A read that fails answers ``read_failed``, never an empty
+    thread."""
     session_id = session_id_of(data)
     limit = data.get("limit")
     database = container.database()
     try:
-        await authorize_session(database, websocket, session_id)
+        scope = await authorize_session(database, websocket, session_id)
     except ChatAccessDenied:
         return dict(_DENIED)
     try:
-        if data.get("all_generations"):
-            rows = await database.read_chat_messages(session_id, limit)
-        else:
-            control = await database.get_latest_workflow_control(session_id)
-            if control is not None and control.status == "reset":
-                rows = []
-            else:
-                rows = await database.read_chat_messages(
-                    session_id, limit,
-                    execution_id=control.root_execution_id if control is not None else None,
-                )
+        rows = await database.read_chat_messages(session_id)
         thread = await _thread_state(database, session_id)
+        control = await database.get_latest_workflow_control(session_id) if scope.workflow_id is not None else None
+        path = branches.active_path(rows, thread["active_leaf_id"])
+        if not data.get("all_generations") and control is not None:
+            path = [] if control.status == "reset" else [row for row in path if row.get("execution_id") == control.root_execution_id]
+        runs_list = await ledger.session_runs(database, session_id)
+        runs = {run.run_id: run for run in runs_list}
+        answering = branches.answering_run_ids(path, runs_list)
+        editable = branches.editable_ids(path, runs_list, chat_execution_id(control)) if scope.workflow_id is not None else set()
+        siblings = branches.sibling_ids(rows)
+        ratings = await feedback_for(database, session_id)
         active_runs = await run_snapshots(database, session_id)
-        runs = await ledger.runs_by_id(database, [row.get("run_id") for row in rows])
     except Exception:
         logger.warning("Chat messages could not be read", session_id=session_id, exc_info=True)
         return {"success": False, "error": "read_failed", "session_id": session_id}
+    if isinstance(limit, int) and not isinstance(limit, bool) and limit > 0:
+        path = path[-limit:]
     return {
         "success": True,
         "protocol_version": PROTOCOL_VERSION,
         "session_id": session_id,
-        "messages": [_wire_message(row, runs) for row in rows],
+        "messages": [
+            _wire_message(
+                row,
+                runs,
+                siblings=siblings.get(row.get("uid") or ""),
+                editable=row.get("uid") in editable,
+                feedback=ratings.get(row.get("uid") or ""),
+                run_id=answering.get(row.get("uid") or ""),
+            )
+            for row in path
+        ],
         "thread": thread,
         "active_runs": active_runs,
     }
@@ -406,6 +445,205 @@ async def handle_chat_ui_state(data: Dict[str, Any], websocket: WebSocket) -> Di
     return {"success": True, "part_id": part_id, "state_revision": updated["state_revision"]}
 
 
+def _expected_revision(data: Dict[str, Any]) -> Optional[int]:
+    value = data.get("expected_revision")
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError("expected_revision is the thread's revision, a number")
+    return value
+
+
+async def _branch_context(
+    database: Any, websocket: WebSocket, data: Dict[str, Any], *, starts_run: bool
+) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any]]:
+    """The workflow session a branch command changes, with its live
+    generation and (for a command that starts a run) where a message goes
+    now; or the refusal."""
+    session_id = session_id_of(data)
+    try:
+        scope = await authorize_session(database, websocket, session_id)
+    except ChatAccessDenied:
+        return dict(_DENIED), {}
+    if scope.workflow_id is None:
+        return {"success": False, "error": "not_editable", "detail": "this chat keeps no versions"}, {}
+    try:
+        revision = _expected_revision(data)
+    except ValueError as exc:
+        return {"success": False, "error": "invalid_request", "detail": str(exc)}, {}
+    control = await database.get_latest_workflow_control(session_id)
+    live_root = chat_execution_id(control)
+    if control is None or live_root is None:
+        return {"success": False, "error": "not_running"}, {}
+    context: Dict[str, Any] = {
+        "session_id": session_id,
+        "workflow_id": scope.workflow_id,
+        "generation": int(control.generation),
+        "live_root": live_root,
+        "expected_revision": revision,
+        "delivery": None,
+        "state": "pending",
+    }
+    if starts_run:
+        delivery = delivery_for(control)
+        if delivery is None or not await _answers_session(database, control, session_id):
+            return {"success": False, "error": "not_running"}, {}
+        context["delivery"] = delivery
+        context["state"] = "queued" if delivery == "queued" else "pending"
+    return None, context
+
+
+def _branch_refusal(exc: "branches.BranchRefused") -> Dict[str, Any]:
+    return {"success": False, "error": exc.code, "detail": exc.detail}
+
+
+async def _answer_branch(database: Any, moved: "branches.Moved", context: Dict[str, Any], *, role: Optional[str], timestamp: str) -> Dict[str, Any]:
+    """After an edit or a retry committed: settle what the part left made,
+    tell open threads, and send the message to the chat triggers."""
+    await branches.after_move(database, moved)
+    await announce_chat_updated(moved.session_id, role)
+    message, run = moved.result["message"], moved.result["run"]
+    await _dispatch(
+        moved.session_id, moved.workflow_id, message_uid=message["uid"], prompt=moved.result["prompt"], run_id=run.run_id, timestamp=timestamp,
+    )
+    response: Dict[str, Any] = {"success": True, "message_id": message["uid"], "run_id": run.run_id}
+    if context.get("delivery") is not None:
+        response["delivery"] = context["delivery"]
+    return response
+
+
+@ws_handler("message_id", "message")
+async def handle_edit_chat_message(data: Dict[str, Any], websocket: WebSocket) -> Dict[str, Any]:
+    """Edit one of the owner's messages (``message_id``): the edit goes
+    beside it as its new version, and the employee answers it remembering the
+    conversation as it stood before the original. Answers ``{message_id,
+    run_id, delivery}``; a resent edit (the same ``client_message_id``)
+    answers the first. Refused with ``not_editable``, ``older_generation``,
+    ``revision_conflict`` (``expected_revision`` is not the thread's),
+    ``run_in_progress``, ``cannot_rewind``, ``not_found``, ``not_running``,
+    ``access_denied``, ``invalid_request`` or ``save_failed``."""
+    text = data.get("message")
+    if not isinstance(text, str) or not text.strip():
+        return {"success": False, "error": "invalid_request", "detail": "message must be text"}
+    database = container.database()
+    refused, context = await _branch_context(database, websocket, data, starts_run=True)
+    if refused is not None:
+        return refused
+    client_message_id = data.get("client_message_id")
+    if client_message_id is not None:
+        try:
+            uid = ledger.client_message_uid(context["session_id"], client_message_id)
+        except ValueError as exc:
+            return {"success": False, "error": "invalid_request", "detail": str(exc)}
+        sent = await ledger.saved_message(database, uid)
+        if sent is not None:
+            return {"success": True, "message_id": sent.uid, "run_id": sent.run_id, "delivery": context["delivery"]}
+    try:
+        moved = await branches.edit_message(
+            database,
+            session_id=context["session_id"],
+            workflow_id=context["workflow_id"],
+            generation=context["generation"],
+            live_root=context["live_root"],
+            message_uid=str(data["message_id"]),
+            text=text.strip(),
+            expected_revision=context["expected_revision"],
+            state=context["state"],
+            client_message_id=client_message_id,
+        )
+    except branches.BranchRefused as exc:
+        return _branch_refusal(exc)
+    except Exception:
+        logger.warning("Chat message could not be edited", session_id=context["session_id"], exc_info=True)
+        return {"success": False, "error": "save_failed"}
+    timestamp = data.get("timestamp") or datetime.now(timezone.utc).isoformat()
+    return await _answer_branch(database, moved, context, role="user", timestamp=timestamp)
+
+
+@ws_handler("message_id")
+async def handle_regenerate_chat_reply(data: Dict[str, Any], websocket: WebSocket) -> Dict[str, Any]:
+    """Try again: answer anew the message the latest answer (``message_id``)
+    answered, or the owner's last message when its run gave no answer. The
+    new answer goes beside the old one, and the employee writes it
+    remembering the conversation as it stood before the old one. Answers
+    ``{message_id (the owner's message), run_id, delivery}``. Refused like
+    ``edit_chat_message``."""
+    database = container.database()
+    refused, context = await _branch_context(database, websocket, data, starts_run=True)
+    if refused is not None:
+        return refused
+    try:
+        moved = await branches.retry_answer(
+            database,
+            session_id=context["session_id"],
+            workflow_id=context["workflow_id"],
+            generation=context["generation"],
+            live_root=context["live_root"],
+            message_uid=str(data["message_id"]),
+            expected_revision=context["expected_revision"],
+            state=context["state"],
+        )
+    except branches.BranchRefused as exc:
+        return _branch_refusal(exc)
+    except Exception:
+        logger.warning("Chat answer could not be tried again", session_id=context["session_id"], exc_info=True)
+        return {"success": False, "error": "save_failed"}
+    timestamp = data.get("timestamp") or datetime.now(timezone.utc).isoformat()
+    return await _answer_branch(database, moved, context, role=None, timestamp=timestamp)
+
+
+@ws_handler("message_id")
+async def handle_switch_chat_branch(data: Dict[str, Any], websocket: WebSocket) -> Dict[str, Any]:
+    """Show another version (``message_id``: a message beside one on the
+    path) and the conversation after it, the employee remembering that
+    branch. Answers ``{leaf_id}``. Refused with ``branch_unavailable`` (its
+    conversations are no longer kept), ``cannot_rewind``,
+    ``older_generation``, ``revision_conflict``, ``run_in_progress``,
+    ``not_found``, ``not_running``, ``access_denied`` or ``save_failed``."""
+    database = container.database()
+    refused, context = await _branch_context(database, websocket, data, starts_run=False)
+    if refused is not None:
+        return refused
+    try:
+        moved = await branches.switch_branch(
+            database,
+            session_id=context["session_id"],
+            workflow_id=context["workflow_id"],
+            generation=context["generation"],
+            live_root=context["live_root"],
+            message_uid=str(data["message_id"]),
+            expected_revision=context["expected_revision"],
+        )
+    except branches.BranchRefused as exc:
+        return _branch_refusal(exc)
+    except Exception:
+        logger.warning("Chat branch could not be switched", session_id=context["session_id"], exc_info=True)
+        return {"success": False, "error": "save_failed"}
+    await branches.after_move(database, moved)
+    await announce_chat_updated(moved.session_id, None)
+    return {"success": True, "leaf_id": moved.result.get("leaf")}
+
+
+@ws_handler("message_id")
+async def handle_set_chat_feedback(data: Dict[str, Any], websocket: WebSocket) -> Dict[str, Any]:
+    """Rate an answer (``value``: ``up`` or ``down``) or take the rating back
+    (``null``). Answers where it reaches (``reaches``: ``next_turn``, and
+    ``memory`` when the employee keeps it too); ``not_found`` for a message
+    that is not an answer in this chat."""
+    session_id = session_id_of(data)
+    database = container.database()
+    try:
+        await authorize_session(database, websocket, session_id)
+    except ChatAccessDenied:
+        return dict(_DENIED)
+    value = data.get("value")
+    try:
+        reaches = await set_feedback(database, session_id=session_id, message_uid=str(data["message_id"]), value=value)
+    except FeedbackRefused as exc:
+        return {"success": False, "error": exc.code}
+    return {"success": True, "message_id": str(data["message_id"]), "value": value, "reaches": reaches}
+
+
 @ws_handler()
 async def handle_clear_chat_messages(data: Dict[str, Any], websocket: WebSocket) -> Dict[str, Any]:
     """Clear a session's chat, every generation of it, with its runs. For a
@@ -445,6 +683,10 @@ WS_HANDLERS = {
     "get_chat_run": handle_get_chat_run,
     "stop_chat_run": handle_stop_chat_run,
     "chat_ui_state": handle_chat_ui_state,
+    "edit_chat_message": handle_edit_chat_message,
+    "regenerate_chat_reply": handle_regenerate_chat_reply,
+    "switch_chat_branch": handle_switch_chat_branch,
+    "set_chat_feedback": handle_set_chat_feedback,
     "clear_chat_messages": handle_clear_chat_messages,
     "save_chat_message": handle_save_chat_message,
 }

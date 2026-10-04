@@ -43,6 +43,13 @@ def _lock(workflow_id: str, generation: int, agent_node_id: str) -> asyncio.Lock
     return lock
 
 
+def conversation_lock(workflow_id: str, generation: int, agent_node_id: str) -> asyncio.Lock:
+    """The lock :func:`save_conversation` holds for one conversation. Hold
+    it (``async with``) to rewrite the conversation outside this module,
+    as a chat branch move does (``services/chat/branches.py``)."""
+    return _lock(workflow_id, generation, agent_node_id)
+
+
 async def load_conversation(
     database: Any,
     *,
@@ -284,6 +291,7 @@ __all__ = [
     "UNANSWERED_TOOL_RESULT",
     "clear_conversation",
     "close_unanswered_tool_calls",
+    "conversation_lock",
     "list_conversations",
     "load_conversation",
     "save_conversation",

@@ -174,6 +174,22 @@ async def ui_part_of_run(database: Any, run_id: str) -> Optional[str]:
     return part_id if isinstance(part_id, str) and part_id else None
 
 
+async def saved_message(database: Any, uid: str) -> Optional[ChatMessage]:
+    """The message saved under ``uid``, if any."""
+    async with database.get_session() as session:
+        result = await session.execute(select(ChatMessage).where(ChatMessage.uid == uid))
+        return result.scalar_one_or_none()
+
+
+async def session_runs(database: Any, session_id: str) -> List[ChatRun]:
+    """Every run of a session, live or ended, oldest first."""
+    async with database.get_session() as session:
+        result = await session.execute(
+            select(ChatRun).where(ChatRun.session_id == session_id).order_by(ChatRun.created_at, ChatRun.run_id)
+        )
+        return list(result.scalars().all())
+
+
 async def session_run_ids(database: Any, session_id: str) -> List[str]:
     """Every run of a session, live or ended."""
     async with database.get_session() as session:
@@ -734,7 +750,9 @@ __all__ = [
     "reply_uid",
     "request_stop",
     "runs_by_id",
+    "saved_message",
     "session_run_ids",
+    "session_runs",
     "start_run",
     "ui_part_of_run",
     "sweep",

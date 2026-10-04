@@ -17,8 +17,16 @@ agent_context_flow.md). A second message while one is live is refused with
 ``ChatRunPart`` collects what a run's tools produce for its reply (generated
 UI, sources, artifacts, approvals), keyed so an activity retry writes the
 same row again. ``ChatThread`` holds a session's active leaf: the message the
-shown path ends at, which branches will move, and its source counter.
+shown path ends at, which branches move, and its source counter.
 ``ChatNote`` holds what the employee should learn on its next turn.
+
+**Branches** (``services/chat/branches.py``). A run records, for each agent
+with a stored conversation that works for it, the conversation as it was
+when the run began (``context_cursors``: its length and a digest), so an
+edit or a retry can take the agent back to it. ``ChatBranchSnapshot`` keeps
+the conversations of a branch the owner moved away from, keyed by the leaf
+they left, so moving back restores them. ``ChatFeedback`` is the owner's
+rating of an answer.
 """
 
 from __future__ import annotations
@@ -87,6 +95,10 @@ class ChatRun(SQLModel, table=True):
     #: When the owner pressed Stop; the watchdog ends a run still stopping
     #: ``runs.stop_grace_s`` later.
     stop_requested_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
+    #: Per agent that worked for it with a stored conversation, that
+    #: conversation as the run began: ``{agent_node_id: {generation, length,
+    #: digest}}`` (the first time each agent was prepared in the run).
+    context_cursors: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
 
 
 class ChatRunPart(SQLModel, table=True):
@@ -126,4 +138,42 @@ class ChatNote(SQLModel, table=True):
     delivered_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
 
 
-__all__ = ["ChatNote", "ChatRun", "ChatRunPart", "ChatThread", "LIVE_STATES", "TERMINAL_STATES"]
+class ChatBranchSnapshot(SQLModel, table=True):
+    """An agent's conversation on a branch the owner moved away from, keyed
+    by the message that branch ended at (its leaf)."""
+
+    __tablename__ = "chat_branch_snapshots"
+    __table_args__ = (UniqueConstraint("session_id", "leaf_uid", "agent_node_id", name="uq_chat_branch_snapshots_key"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    session_id: str = Field(index=True, max_length=255)
+    leaf_uid: str = Field(max_length=64)
+    agent_node_id: str = Field(max_length=255)
+    generation: int = Field(default=0)
+    messages: List[Dict[str, Any]] = Field(default_factory=list, sa_column=Column(JSON))
+    created_at: datetime = Field(default_factory=_utcnow, sa_column=Column(DateTime(timezone=True), nullable=False))
+
+
+class ChatFeedback(SQLModel, table=True):
+    """The owner's rating of an answer: ``up`` or ``down``."""
+
+    __tablename__ = "chat_feedback"
+    __table_args__ = (UniqueConstraint("session_id", "message_uid", name="uq_chat_feedback_message"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    session_id: str = Field(index=True, max_length=255)
+    message_uid: str = Field(max_length=64)
+    value: str = Field(max_length=10)
+    updated_at: datetime = Field(default_factory=_utcnow, sa_column=Column(DateTime(timezone=True), nullable=False))
+
+
+__all__ = [
+    "ChatBranchSnapshot",
+    "ChatFeedback",
+    "ChatNote",
+    "ChatRun",
+    "ChatRunPart",
+    "ChatThread",
+    "LIVE_STATES",
+    "TERMINAL_STATES",
+]

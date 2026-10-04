@@ -15,5 +15,9 @@
   },
   "steps": {
     "max_per_run": 100
+  },
+  "branches": {
+    "max_snapshots_per_session": 50,
+    "max_snapshot_bytes": 1048576
   }
 }

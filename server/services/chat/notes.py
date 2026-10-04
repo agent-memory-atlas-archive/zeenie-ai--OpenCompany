@@ -95,6 +95,18 @@ async def deliver_notes(database: Any, run_id: str) -> int:
         return told
 
 
+async def drop_note(database: Any, *, session_id: str, key: str) -> None:
+    """Forget the note under ``key`` if it was not told yet (what it said no
+    longer holds, such as a rating taken back)."""
+    from sqlalchemy import delete
+
+    async with database.get_session() as session:
+        await session.execute(
+            delete(ChatNote).where(ChatNote.session_id == session_id, ChatNote.key == key, ChatNote.delivered_at.is_(None))
+        )
+        await session.commit()
+
+
 async def clear_notes(database: Any, session_id: str) -> None:
     """Forget a session's notes (its conversation was cleared or reset)."""
     from sqlalchemy import delete
@@ -109,4 +121,4 @@ def notes_prompt(notes: List[ChatNote]) -> str:
     return "\n".join(note.text for note in notes)
 
 
-__all__ = ["MAX_NOTES_PER_TURN", "claim_notes", "clear_notes", "deliver_notes", "notes_prompt", "upsert_note"]
+__all__ = ["MAX_NOTES_PER_TURN", "claim_notes", "clear_notes", "deliver_notes", "drop_note", "notes_prompt", "upsert_note"]

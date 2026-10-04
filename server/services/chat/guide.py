@@ -32,7 +32,9 @@ CHAT_REPLY_GUIDE = (
     "You are answering the owner in a chat.\n"
     "- A line in square brackets at the start of the owner's message comes from OpenCompany, not from the owner: "
     "[ui-event]{...}[/ui-event] is a button they pressed in an interface you showed (with what they picked), and "
-    "[ui-state]{...}[/ui-state] is what they set in one without pressing anything. Treat it as the owner's choice.\n"
+    "[ui-state]{...}[/ui-state] is what they set in one without pressing anything; treat both as the owner's choice. "
+    "[update]{...}[/update] says what became of something you did (a draft sent or not, a part of the chat the owner "
+    "went back from), and [feedback]{...}[/feedback] is how the owner rated one of your answers; learn from it.\n"
     "- A search result numbered n is a source: cite the ones you rely on as [n] right after what they support.\n"
     "- When a few short next questions would help the owner, end your reply with "
     '<followups>["...", "..."]</followups>: at most 3, each a short question in the owner\'s own words. The chat '

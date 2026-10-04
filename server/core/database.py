@@ -61,6 +61,8 @@ from models.approvals import (  # noqa: F401 - registers SQLModel tables
     WorkflowRule,
 )
 from models.chat import (  # noqa: F401 - registers SQLModel tables
+    ChatBranchSnapshot,
+    ChatFeedback,
     ChatNote,
     ChatRun,
     ChatRunPart,
@@ -70,6 +72,10 @@ from models.cache import CacheEntry  # SQLite-backed cache for Redis alternative
 from core.logging import get_logger
 
 logger = get_logger(__name__)
+
+#: ``Database.append_chat_row``'s default: the new message follows the
+#: thread's active leaf.
+FOLLOW_LEAF: Any = object()
 
 RuntimeMutationCallback = Callable[
     [AsyncSession],
@@ -533,7 +539,7 @@ class Database:
         """Give older ``chat_runs`` and ``chat_threads`` tables the columns
         added since."""
         additions = {
-            "chat_runs": {"stop_requested_at": "DATETIME"},
+            "chat_runs": {"stop_requested_at": "DATETIME", "context_cursors": "JSON DEFAULT '{}'"},
             "chat_threads": {"next_source": "INTEGER NOT NULL DEFAULT 1"},
         }
         try:
@@ -1510,6 +1516,7 @@ class Database:
         parts: Optional[Dict[str, Any]] = None,
         attachments: Optional[List[Dict[str, Any]]] = None,
         meta: Optional[Dict[str, Any]] = None,
+        after: Any = FOLLOW_LEAF,
     ) -> ChatMessage:
         """Append a message to the end of a session's shown path, inside the
         caller's :meth:`reserved_session` (the caller commits).
@@ -1518,6 +1525,9 @@ class Database:
         every message joins one chain: two writers at once would otherwise
         both follow the same leaf and fork it, and a fork hides one branch. A
         session written before threads existed follows its newest message.
+        ``after`` names the message it follows instead (None: it starts the
+        conversation), the way an edit goes beside the message it edits
+        (``services/chat/branches.py``).
         """
         from uuid import uuid4
 
@@ -1534,6 +1544,8 @@ class Database:
             session.add(thread)
         else:
             parent_uid = thread.active_leaf_uid
+        if after is not FOLLOW_LEAF:
+            parent_uid = after
         row = ChatMessage(
             session_id=session_id, role=role, message=message,
             execution_id=execution_id,
@@ -1650,8 +1662,8 @@ class Database:
 
     async def clear_chat_messages(self, session_id: str) -> int:
         """Clear a session's chat: its messages, and the runs, run parts,
-        notes and thread state that belong to them. Returns the messages
-        deleted."""
+        notes, branch snapshots, ratings and thread state that belong to
+        them. Returns the messages deleted."""
         from sqlalchemy import delete as sa_delete
 
         try:
@@ -1668,6 +1680,8 @@ class Database:
                 await session.execute(sa_delete(ChatRunPart).where(ChatRunPart.run_id.in_(run_ids)))
                 await session.execute(sa_delete(ChatRun).where(ChatRun.session_id == session_id))
                 await session.execute(sa_delete(ChatNote).where(ChatNote.session_id == session_id))
+                await session.execute(sa_delete(ChatBranchSnapshot).where(ChatBranchSnapshot.session_id == session_id))
+                await session.execute(sa_delete(ChatFeedback).where(ChatFeedback.session_id == session_id))
                 await session.execute(sa_delete(ChatThread).where(ChatThread.session_id == session_id))
 
                 await session.commit()
