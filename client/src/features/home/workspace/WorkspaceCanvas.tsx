@@ -2,18 +2,23 @@
  * The Workspace's Canvas tab: one employee's Canvas board, through the
  * renderer the editor's Canvas panel and dock use (CanvasPanel.tsx is the
  * template). The board refreshes on the `canvas_updated` broadcast, like
- * everywhere else it shows. Loaded lazily by WorkspaceDock.
+ * everywhere else it shows, and shows the item a reply's document card
+ * asked for (homeStore.openCanvasItem). Loaded lazily by WorkspaceDock.
  */
 
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import CanvasContent from '@/components/parameterPanel/canvas/CanvasContent';
 import { useCanvasBoardQuery, useCanvasRemove } from '@/hooks/useCanvasBoard';
+import { useHomeStore } from '../state/homeStore';
 import { pillToast } from '../ui/pillToast';
 
 export default function WorkspaceCanvas({ workflowId, nodeId, name }: { workflowId: string; nodeId: string; name: string }) {
   const board = useCanvasBoardQuery(workflowId, nodeId);
   const remove = useCanvasRemove(workflowId, nodeId);
+  // A reply's document card asked for an item on this board.
+  const focus = useHomeStore((s) => s.workspaceFocus);
+  const ownFocus = focus && focus.workflowId === workflowId && focus.canvasNodeId === nodeId ? focus : null;
 
   if (board.isPending) return <Skeleton className="flex-1 rounded-card" />;
   if (board.isError) {
@@ -30,6 +35,8 @@ export default function WorkspaceCanvas({ workflowId, nodeId, name }: { workflow
     <CanvasContent
       items={board.data.items}
       workflowId={workflowId}
+      nodeId={nodeId}
+      focus={ownFocus}
       emptyHint={`Nothing here yet. When ${name} finishes something you’ll want to see, it shows up here.`}
       onRemove={(itemId) => remove.mutate(itemId, { onError: () => pillToast('Couldn’t remove that. Try again.', { tone: 'error' }) })}
     />

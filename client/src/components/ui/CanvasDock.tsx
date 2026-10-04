@@ -67,6 +67,7 @@ const CanvasDock: React.FC<CanvasDockProps> = ({ nodes }) => {
   const close = useCanvasDockStore((s) => s.close);
   const selectNode = useCanvasDockStore((s) => s.selectNode);
   const backToNode = useCanvasDockStore((s) => s.backToNode);
+  const focus = useCanvasDockStore((s) => s.focus);
 
   const workflowId = useAppStore((s) => s.currentWorkflow?.id);
 
@@ -226,6 +227,8 @@ const CanvasDock: React.FC<CanvasDockProps> = ({ nodes }) => {
             <CanvasContent
               items={board.data?.items ?? []}
               workflowId={workflowId}
+              nodeId={effectiveNodeId}
+              focus={focus?.nodeId === effectiveNodeId ? focus : null}
               followLatestDefault={followMode}
               onFollowLatestChange={setFollowMode}
               onRemove={(itemId) =>

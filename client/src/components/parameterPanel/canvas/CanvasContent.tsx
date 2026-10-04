@@ -21,16 +21,12 @@ import {
   File as FileIcon,
   X,
 } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
-import remarkBreaks from 'remark-breaks';
-import remarkGfm from 'remark-gfm';
-
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { buildApiUrl } from '../../../config/api';
 import { useWebSocketActions } from '../../../contexts/WebSocketContext';
-import type { CanvasItem } from '../../../lib/canvasBoard';
+import type { CanvasFocus, CanvasItem } from '../../../lib/canvasBoard';
 import type {
   ListWorkspaceFilesResponse,
   WorkspaceFileRef,
@@ -42,6 +38,7 @@ import {
   prismLanguageFor,
   resolveRenderKind,
 } from './canvasKinds';
+import NoteView from './NoteView';
 import TextFileView from './TextFileView';
 import { ExternalSiteView, PdfView, WorkspaceHtmlView } from './WebView';
 
@@ -50,6 +47,12 @@ const FOLLOW_POLL_MS = 5_000;
 interface Props {
   items: CanvasItem[];
   workflowId?: string | null;
+  /** The Canvas node whose board this is: a note's earlier versions are
+   *  read from it. */
+  nodeId?: string | null;
+  /** Show this item, at this version (a chat reply's artifact card). It
+   *  stays shown while newer items arrive; a new nonce asks again. */
+  focus?: CanvasFocus | null;
   onRemove?: (itemId: string) => void;
   emptyHint?: React.ReactNode;
   /** Initial state of the follow-latest toggle (dock persists it). */
@@ -99,6 +102,8 @@ const BinaryView: React.FC<{ refFile: WorkspaceFileRef }> = ({ refFile }) => {
 const CanvasContent: React.FC<Props> = ({
   items,
   workflowId,
+  nodeId,
+  focus,
   onRemove,
   emptyHint,
   followLatestDefault = false,
@@ -108,6 +113,16 @@ const CanvasContent: React.FC<Props> = ({
   const [pinnedId, setPinnedId] = useState<string | null>(null);
   const [followLatest, setFollowLatest] = useState(followLatestDefault);
   const [mediaFailed, setMediaFailed] = useState(false);
+
+  // A focus request lands once its item is on the board, and holds until
+  // the user moves to another item.
+  const [focusNonce, setFocusNonce] = useState<number | null>(null);
+  const [heldFocus, setHeldFocus] = useState<CanvasFocus | null>(null);
+  if (focus && focus.nonce !== focusNonce && items.some((item) => item.id === focus.itemId)) {
+    setFocusNonce(focus.nonce);
+    setHeldFocus(focus);
+    setPinnedId(focus.itemId);
+  }
 
   const activeIndex = useMemo(() => {
     if (items.length === 0) return -1;
@@ -127,6 +142,7 @@ const CanvasContent: React.FC<Props> = ({
       const clamped = Math.max(0, Math.min(items.length - 1, index));
       // Landing on the newest item resumes follow-newest.
       setPinnedId(clamped === items.length - 1 ? null : items[clamped].id);
+      setHeldFocus(null);
     },
     [items],
   );
@@ -145,6 +161,7 @@ const CanvasContent: React.FC<Props> = ({
       } else if (event.key === 'End') {
         event.preventDefault();
         setPinnedId(null);
+        setHeldFocus(null);
       }
     },
     [activeIndex, goTo],
@@ -198,11 +215,13 @@ const CanvasContent: React.FC<Props> = ({
     switch (verdict) {
       case 'note':
         return (
-          <div className="prose prose-sm min-h-0 max-w-none flex-1 overflow-auto dark:prose-invert">
-            <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
-              {active.content ?? ''}
-            </ReactMarkdown>
-          </div>
+          <NoteView
+            key={active.id}
+            item={active}
+            workflowId={workflowId}
+            nodeId={nodeId}
+            focus={heldFocus?.itemId === active.id ? heldFocus : null}
+          />
         );
       case 'web-external':
         return <ExternalSiteView url={active.url ?? ''} title={active.title} />;
@@ -356,6 +375,9 @@ const CanvasContent: React.FC<Props> = ({
 function canvasContentPropsEqual(prev: Props, next: Props): boolean {
   return (
     prev.workflowId === next.workflowId &&
+    prev.nodeId === next.nodeId &&
+    prev.focus?.nonce === next.focus?.nonce &&
+    prev.focus?.itemId === next.focus?.itemId &&
     prev.followLatestDefault === next.followLatestDefault &&
     prev.emptyHint === next.emptyHint &&
     prev.items.length === next.items.length &&

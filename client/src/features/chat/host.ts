@@ -7,6 +7,7 @@
 
 import type { ReactNode } from 'react';
 import type { ColorRole } from '@/components/catalog/presentation';
+import type { ArtifactRef } from './data/parts';
 import type { ThreadScope } from './data/thread';
 
 export type ChatHostKind = 'home' | 'dev';
@@ -61,6 +62,10 @@ export interface ChatHost {
   onScrolledChange?: (scrolled: boolean) => void;
   /** The console pane: denser type and spacing. */
   compact?: boolean;
+  /** Show a document the employee wrote on its Canvas (Home: the Workspace's
+   *  Canvas tab; Dev: the Canvas dock). Without it the reply's card cannot
+   *  open it. */
+  openArtifact?: (artifact: ArtifactRef) => void;
 }
 
 /** What a host can ask of a mounted chat. */

@@ -5,6 +5,8 @@
  * A message goes to the workflow's chat triggers; Clear clears the chat and
  * what the workflow's agents remember of it.
  *
+ * A document an agent wrote opens from its card in the Canvas dock.
+ *
  * The console's font size applies to the conversation. The `chat` panel
  * hook stays on ConsolePanel's root; the turns carry `chat-msg-user` /
  * `chat-msg-bot` for the stylized themes.
@@ -16,6 +18,7 @@ import { ActionButton } from '@/components/ui/action-button';
 import { Badge } from '@/components/ui/badge';
 import { ChatPane, useChatThread, useClearChat, type ChatPaneHandle, type NotifyTone } from '@/features/chat';
 import { useAppStore } from '../../store/useAppStore';
+import { useCanvasDockStore } from '../../stores/canvasDockStore';
 
 const SEND_REFUSED: Record<string, { message: string; tone: NotifyTone }> = {
   // Nothing listens while the workflow is stopped, so the server saved nothing.
@@ -74,6 +77,11 @@ export function ConsoleChat({ fontSize, ref }: { fontSize: number; ref?: Ref<Cha
               <p className="m-0 py-6 text-center text-xs text-muted-foreground">Send a message to trigger chatTrigger nodes</p>
             ),
             notify,
+            // A document the workflow's agent wrote opens in the Canvas dock.
+            openArtifact: (artifact) => {
+              if (artifact.workflowId !== useAppStore.getState().currentWorkflow?.id) return;
+              useCanvasDockStore.getState().focusItem(artifact.canvasNodeId, artifact.itemId, artifact.version);
+            },
             onSendRefused: (code) => {
               const refused = SEND_REFUSED[code] ?? { message: 'Your message didn’t send. Try again.', tone: 'error' as const };
               notify(refused.message, refused.tone);

@@ -74,6 +74,7 @@ const CanvasPanel: React.FC<Props> = ({ nodeId, workflowId }) => {
         <CanvasContent
           items={items}
           workflowId={workflowId}
+          nodeId={nodeId}
           onRemove={(itemId) =>
             removeItem.mutate(itemId, {
               onError: (error) => toast.error(error.message),

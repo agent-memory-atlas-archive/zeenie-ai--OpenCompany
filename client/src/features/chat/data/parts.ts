@@ -95,3 +95,59 @@ export function liveApprovalIds(activities: readonly RunActivity[] | undefined):
   const ids = (activities ?? []).flatMap((activity) => (activity.activityType === 'approval' ? [activity.messageId] : []));
   return [...new Set(ids)];
 }
+
+/** A document the employee wrote on its Canvas, named on its reply: the card
+ *  opens the board on it, at this version. */
+export interface ArtifactRef {
+  workflowId: string;
+  canvasNodeId: string;
+  itemId: string;
+  version: number;
+  title: string;
+  format: 'markdown' | 'code';
+}
+
+function readArtifact(item: unknown): ArtifactRef | null {
+  if (!isRecord(item)) return null;
+  const { workflow_id: workflowId, canvas_node_id: canvasNodeId, item_id: itemId } = item;
+  if (typeof workflowId !== 'string' || !workflowId || typeof canvasNodeId !== 'string' || !canvasNodeId) return null;
+  if (typeof itemId !== 'string' || !itemId) return null;
+  const version = typeof item.version === 'number' && Number.isInteger(item.version) && item.version > 0 ? item.version : 1;
+  const title = typeof item.title === 'string' && item.title.trim() ? item.title.trim() : 'Document';
+  return { workflowId, canvasNodeId, itemId, version, title, format: item.format === 'code' ? 'code' : 'markdown' };
+}
+
+/** The documents a saved reply names (`parts.artifacts`), once each. */
+export function savedArtifacts(parts: Record<string, unknown> | null | undefined): ArtifactRef[] {
+  const raw = parts?.artifacts;
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  return raw.flatMap((item) => {
+    const artifact = readArtifact(item);
+    if (!artifact || seen.has(artifact.itemId)) return [];
+    seen.add(artifact.itemId);
+    return [artifact];
+  });
+}
+
+/** The documents a run wrote so far (its `artifact` activities). */
+export function liveArtifacts(activities: readonly RunActivity[] | undefined): ArtifactRef[] {
+  return (activities ?? []).flatMap((activity) => {
+    if (activity.activityType !== 'artifact') return [];
+    const artifact = readArtifact(activity.content);
+    return artifact ? [artifact] : [];
+  });
+}
+
+/** A reply's documents: the saved ones in their order, each at the newer of
+ *  its saved and live versions (a run can revise a document after its reply
+ *  was saved), then the ones only the run has shown so far. */
+export function mergeArtifacts(saved: readonly ArtifactRef[], live: readonly ArtifactRef[]): ArtifactRef[] {
+  const newer = new Map(live.map((artifact) => [artifact.itemId, artifact]));
+  const merged = saved.map((artifact) => {
+    const shown = newer.get(artifact.itemId);
+    newer.delete(artifact.itemId);
+    return shown && shown.version > artifact.version ? shown : artifact;
+  });
+  return [...merged, ...newer.values()];
+}

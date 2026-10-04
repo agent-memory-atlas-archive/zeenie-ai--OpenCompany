@@ -25,6 +25,7 @@ import type { ChatPersona } from '../host';
 import { AssistantTurn } from '../turns/AssistantTurn';
 import { UserTurn } from '../turns/UserTurn';
 import type { ChatTurn } from './model';
+import type { ArtifactRef } from '../data/parts';
 
 /** Closer to the bottom than this counts as at the bottom. */
 const STICK_PX = 48;
@@ -59,6 +60,8 @@ export interface ChatThreadProps {
   onUiStateChange?: (partId: string, changes: UiStateChange[]) => void;
   /** Sends a suggested next question as the owner's message. */
   onFollowUp?: (text: string) => void;
+  /** Shows a document a reply wrote, in the host's Canvas. */
+  onOpenArtifact?: (artifact: ArtifactRef) => void;
   onScrolledChange?: (scrolled: boolean) => void;
 }
 
@@ -77,6 +80,7 @@ export function ChatThread({
   uiActions,
   onUiStateChange,
   onFollowUp,
+  onOpenArtifact,
   onScrolledChange,
 }: ChatThreadProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -217,6 +221,7 @@ export function ChatThread({
                       uiActions={uiActions}
                       onUiStateChange={onUiStateChange}
                       onFollowUp={onFollowUp}
+                      onOpenArtifact={onOpenArtifact}
                     />
                   )}
                 </div>

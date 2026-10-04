@@ -74,6 +74,18 @@ describe('canvasDockStore.notifyPushed', () => {
     expect(state.open).toBe(true);
     expect(state.tab).toBe('browser');
   });
+
+  it('opens on a document a chat reply names, leaving a preview, and asks again with a new nonce', () => {
+    useCanvasDockStore.setState({ tab: 'browser' });
+    useCanvasDockStore.getState().showEphemeral(ephemeral);
+    useCanvasDockStore.getState().focusItem('canvas-2', 'item-1', 3);
+    const state = useCanvasDockStore.getState();
+    expect(state).toMatchObject({ open: true, tab: 'board', mode: 'node', selectedNodeId: 'canvas-2', ephemeralItem: null });
+    expect(state.focus).toEqual({ nodeId: 'canvas-2', itemId: 'item-1', version: 3, nonce: 1 });
+
+    useCanvasDockStore.getState().focusItem('canvas-2', 'item-1');
+    expect(useCanvasDockStore.getState().focus).toEqual({ nodeId: 'canvas-2', itemId: 'item-1', version: null, nonce: 2 });
+  });
 });
 
 describe('canvasDockStore prefs', () => {

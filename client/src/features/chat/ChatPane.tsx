@@ -231,6 +231,7 @@ export function ChatPane({ host, ref }: { host: ChatHost; ref?: Ref<ChatPaneHand
         uiActions={uiActions}
         onUiStateChange={uiState.change}
         onFollowUp={composer === 'send' ? followUp : undefined}
+        onOpenArtifact={host.openArtifact}
         onScrolledChange={host.onScrolledChange}
       />
       <div className={cn('relative flex-none', compact ? 'border-t border-border-default px-3 py-2' : 'px-6 pb-3')}>

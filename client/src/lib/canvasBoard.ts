@@ -26,6 +26,29 @@ export interface CanvasItem {
   language: string | null;
   source: 'agent' | 'workflow' | string;
   created_at: string | null;
+  /** Its version: the agent's canvas tool revises an item in place, and the
+   *  board keeps the earlier ones (`canvas_versions` / `canvas_version`). */
+  version?: number;
+  updated_at?: string | null;
+}
+
+/** A request to show one item, at a version (a chat reply's artifact
+ *  card). A new nonce asks again for the same item. */
+export interface CanvasFocus {
+  itemId: string;
+  version?: number | null;
+  nonce: number;
+}
+
+/** One saved version, as `canvas_version` returns it: the item as it was
+ *  then, and which version is the latest. */
+export type CanvasItemVersion = Omit<CanvasItem, 'version' | 'updated_at'> & { version: number; latest: number };
+
+/** Response to `canvas_version`. */
+export interface CanvasVersionResponse {
+  success: boolean;
+  error?: string;
+  item?: CanvasItemVersion;
 }
 
 /** Response to `canvas_list`. */

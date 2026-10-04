@@ -22,7 +22,19 @@ import { isLiveRun, type RunSnapshot } from '@/lib/agui/reduceRun';
 import type { UiStateChange } from '@/lib/jsonRender/uiState';
 import { cn } from '@/lib/utils';
 import { ApprovalCard } from '../approval/ApprovalCard';
-import { liveApprovalIds, savedApprovalIds, savedFollowups, savedSources, savedUiParts, type SourceItem, type UiPart } from '../data/parts';
+import {
+  liveApprovalIds,
+  liveArtifacts,
+  mergeArtifacts,
+  savedApprovalIds,
+  savedArtifacts,
+  savedFollowups,
+  savedSources,
+  savedUiParts,
+  type ArtifactRef,
+  type SourceItem,
+  type UiPart,
+} from '../data/parts';
 import type { ChatMessage } from '../data/schemas';
 import type { ChatUiActions } from '../genui/actions';
 import type { ChatPersona } from '../host';
@@ -31,6 +43,7 @@ import { citationOrder } from '../markdown/citations';
 import { ChatAvatar } from '../thread/ChatAvatar';
 import type { TurnWork } from '../thread/model';
 import { timeLabel } from '../thread/timeLabel';
+import { ArtifactCard } from './ArtifactCard';
 import { GeneratedUiBlock } from './GeneratedUiBlock';
 import { FollowUps } from './FollowUps';
 import { failureLines, liveLabel, liveText } from './runCopy';
@@ -80,6 +93,7 @@ export function AssistantTurn({
   uiActions,
   onUiStateChange,
   onFollowUp,
+  onOpenArtifact,
 }: {
   message: ChatMessage | null;
   run: RunSnapshot | null;
@@ -102,6 +116,8 @@ export function AssistantTurn({
   onUiStateChange?: (partId: string, changes: UiStateChange[]) => void;
   /** Sends a suggested next question; absent where they cannot go. */
   onFollowUp?: (text: string) => void;
+  /** Shows a document the reply wrote, in the host's Canvas. */
+  onOpenArtifact?: (artifact: ArtifactRef) => void;
 }) {
   const queued = run?.state === 'queued';
   const live = Boolean(run && isLiveRun(run) && !queued);
@@ -114,6 +130,11 @@ export function AssistantTurn({
   const failure = run?.state === 'error' ? failureLines(run.error, persona.name) : null;
   const saved = message ? savedUiParts(message.parts) : NO_UI;
   const interfaces = saved.length > 0 ? saved : liveUi;
+  // The documents it wrote, at the latest version the reply or the run names.
+  const artifacts = useMemo(
+    () => mergeArtifacts(savedArtifacts(message?.parts), liveArtifacts(run?.activities)),
+    [message?.parts, run?.activities],
+  );
   // The drafts it made: named on the saved reply, or arriving with the run.
   const approvals = useMemo(
     () => [...new Set([...savedApprovalIds(message?.parts), ...liveApprovalIds(run?.activities)])],
@@ -166,6 +187,9 @@ export function AssistantTurn({
               onStateChange={onUiStateChange}
             />
           ))}
+        {artifacts.map((artifact) => (
+          <ArtifactCard key={artifact.itemId} artifact={artifact} onOpen={onOpenArtifact} />
+        ))}
         {approvals.map((id) => (
           <ApprovalCard key={id} approvalId={id} />
         ))}

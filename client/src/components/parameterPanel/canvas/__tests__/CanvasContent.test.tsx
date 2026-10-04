@@ -165,3 +165,148 @@ describe('CanvasContent sandbox regression (security invariants)', () => {
     expect(iframe.getAttribute('src')).toBeNull();
   });
 });
+
+describe('CanvasContent notes as documents', () => {
+  const doc = (id: string, content: string, extra: Partial<CanvasItem> = {}): CanvasItem => ({
+    ...note(id, content),
+    ...extra,
+  });
+
+  const versionReply = (content: string, version: number, latest: number) => ({
+    success: true,
+    item: { ...doc('a', content), version, latest },
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    wsMock.sendRequest.mockReset();
+  });
+
+  it('shows the preview, or the Markdown source', () => {
+    render(<CanvasContent items={[doc('a', '# Plan\n\nA **bold** step', { title: 'Plan' })]} workflowId="wf-1" />);
+    expect(screen.getByRole('heading', { name: 'Plan' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('radio', { name: 'Markdown' }));
+    expect(screen.getByText(/A \*\*bold\*\* step/)).toBeInTheDocument();
+  });
+
+  it('previews a code note as a code block and downloads it as text', () => {
+    const createObjectURL = vi.fn(() => 'blob:code');
+    Object.assign(URL, { createObjectURL, revokeObjectURL: vi.fn() });
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+      expect(this.download).toBe('script.txt');
+    });
+    const { container } = render(
+      <CanvasContent items={[doc('a', 'print("```")', { title: 'script', language: 'Python' })]} workflowId="wf-1" />,
+    );
+    expect(container.querySelector('pre code')?.textContent).toBe('print("```")\n');
+    fireEvent.click(screen.getByRole('button', { name: 'Download' }));
+    expect(click).toHaveBeenCalledTimes(1);
+    expect((createObjectURL.mock.calls[0] as unknown as [Blob])[0].type).toBe('text/plain;charset=utf-8');
+    click.mockRestore();
+  });
+
+  it('steps back to an earlier version read from its node', async () => {
+    wsMock.sendRequest.mockResolvedValue(versionReply('second draft', 2, 3));
+    render(<CanvasContent items={[doc('a', 'final', { version: 3 })]} workflowId="wf-1" nodeId="canvas-1" />);
+    expect(screen.getByText('v3/3')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Next version' })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Previous version' }));
+    expect(await screen.findByText('second draft')).toBeInTheDocument();
+    expect(screen.getByText('v2/3')).toBeInTheDocument();
+    expect(wsMock.sendRequest).toHaveBeenCalledWith('canvas_version', {
+      workflow_id: 'wf-1',
+      node_id: 'canvas-1',
+      item_id: 'a',
+      version: 2,
+    });
+  });
+
+  it('shows only the latest without a node to read versions from', () => {
+    render(<CanvasContent items={[doc('a', 'final', { version: 3 })]} workflowId="wf-1" />);
+    expect(screen.queryByRole('button', { name: 'Previous version' })).not.toBeInTheDocument();
+    expect(screen.getByText('final')).toBeInTheDocument();
+  });
+
+  it('follows a newer version unless the owner stepped back', async () => {
+    wsMock.sendRequest.mockResolvedValue(versionReply('one', 1, 2));
+    const { rerender } = render(
+      <CanvasContent items={[doc('a', 'one', { version: 1 })]} workflowId="wf-1" nodeId="canvas-1" />,
+    );
+    rerender(<CanvasContent items={[doc('a', 'two', { version: 2 })]} workflowId="wf-1" nodeId="canvas-1" />);
+    expect(screen.getByText('two')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Previous version' }));
+    expect(await screen.findByText('one')).toBeInTheDocument();
+    rerender(<CanvasContent items={[doc('a', 'three', { version: 3 })]} workflowId="wf-1" nodeId="canvas-1" />);
+    expect(screen.getByText('v1/3')).toBeInTheDocument();
+    expect(screen.queryByText('three')).not.toBeInTheDocument();
+  });
+
+  it('says so when a version cannot be read', async () => {
+    wsMock.sendRequest.mockResolvedValue({ success: false, error: 'No such version' });
+    render(<CanvasContent items={[doc('a', 'final', { version: 2 })]} workflowId="wf-1" nodeId="canvas-1" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Previous version' }));
+    expect(await screen.findByText('Couldn’t load version 1.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Copy' })).toBeDisabled();
+  });
+
+  it('opens on the item and version a reply asks for, and holds it while others arrive', async () => {
+    wsMock.sendRequest.mockResolvedValue(versionReply('draft of a', 1, 2));
+    const items = [doc('a', 'a, final', { version: 2 }), doc('b', 'b')];
+    const focus = { itemId: 'a', version: 1, nonce: 1 };
+    const { rerender } = render(
+      <CanvasContent items={items} workflowId="wf-1" nodeId="canvas-1" focus={focus} />,
+    );
+    expect(await screen.findByText('draft of a')).toBeInTheDocument();
+    expect(screen.getByText('v1/2')).toBeInTheDocument();
+
+    rerender(<CanvasContent items={[...items, doc('c', 'c')]} workflowId="wf-1" nodeId="canvas-1" focus={focus} />);
+    expect(screen.getByText('draft of a')).toBeInTheDocument();
+    expect(screen.getByText('1/3')).toBeInTheDocument();
+
+    // Moving on lets go of it: back on the item, the latest shows.
+    fireEvent.click(screen.getByRole('button', { name: 'Next item' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Previous item' }));
+    expect(screen.getByText('a, final')).toBeInTheDocument();
+  });
+
+  it('waits for the item a reply asks for to reach the board', () => {
+    const focus = { itemId: 'b', version: null, nonce: 1 };
+    const { rerender } = render(
+      <CanvasContent items={[doc('a', 'a')]} workflowId="wf-1" nodeId="canvas-1" focus={focus} />,
+    );
+    rerender(<CanvasContent items={[doc('a', 'a'), doc('b', 'b'), doc('c', 'c')]} workflowId="wf-1" nodeId="canvas-1" focus={focus} />);
+    expect(screen.getByText('b')).toBeInTheDocument();
+    expect(screen.getByText('2/3')).toBeInTheDocument();
+  });
+
+  it('copies the text and downloads it as a .md file', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    const createObjectURL = vi.fn(() => 'blob:doc');
+    const revokeObjectURL = vi.fn();
+    Object.assign(URL, { createObjectURL, revokeObjectURL });
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+      expect(this.download).toBe('Weekly-report-v2.md');
+      expect(this.href).toBe('blob:doc');
+    });
+
+    render(
+      <CanvasContent
+        items={[doc('a', '# Weekly report', { title: 'Weekly report!', version: 2 })]}
+        workflowId="wf-1"
+        nodeId="canvas-1"
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
+    expect(writeText).toHaveBeenCalledWith('# Weekly report');
+    expect(await screen.findByRole('button', { name: 'Copied' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Download' }));
+    expect(click).toHaveBeenCalledTimes(1);
+    const blob = (createObjectURL.mock.calls[0] as unknown as [Blob])[0];
+    expect(blob.type).toBe('text/markdown;charset=utf-8');
+    click.mockRestore();
+  });
+});

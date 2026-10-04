@@ -15,7 +15,7 @@
 import { z } from 'zod';
 import { create } from 'zustand';
 
-import type { CanvasItem } from '../lib/canvasBoard';
+import type { CanvasFocus, CanvasItem } from '../lib/canvasBoard';
 import type { WorkspaceTab } from '../components/workspace/WorkspaceTabs';
 
 const dockPrefsSchema = z.object({
@@ -62,6 +62,8 @@ interface CanvasDockState {
   mode: 'node' | 'ephemeral';
   selectedNodeId: string | null;
   ephemeralItem: CanvasItem | null;
+  /** An item to show on a node's board (a chat reply's document card). */
+  focus: (CanvasFocus & { nodeId: string }) | null;
 
   toggle: () => void;
   close: () => void;
@@ -83,6 +85,9 @@ interface CanvasDockState {
   notifyPushed: (nodeId: string) => void;
   /** An agent in the CURRENT workflow asked for help in its browser (caller verifies): show the Browser tab. */
   showBrowser: () => void;
+  /** Open the dock on a Canvas node's board at an item and version (a
+   *  document a chat reply names, in the CURRENT workflow; caller verifies). */
+  focusItem: (nodeId: string, itemId: string, version?: number | null) => void;
 }
 
 const persisted = loadDockPrefs();
@@ -109,6 +114,7 @@ export const useCanvasDockStore = create<CanvasDockState>((set, get) => ({
   mode: 'node',
   selectedNodeId: null,
   ephemeralItem: null,
+  focus: null,
 
   toggle: () => {
     set((state) => ({ open: !state.open }));
@@ -154,6 +160,17 @@ export const useCanvasDockStore = create<CanvasDockState>((set, get) => ({
   },
   showBrowser: () => {
     set({ open: true, tab: 'browser' });
+    persist(get());
+  },
+  focusItem: (nodeId, itemId, version) => {
+    set((state) => ({
+      open: true,
+      tab: 'board',
+      mode: 'node',
+      selectedNodeId: nodeId,
+      ephemeralItem: null,
+      focus: { nodeId, itemId, version: version ?? null, nonce: (state.focus?.nonce ?? 0) + 1 },
+    }));
     persist(get());
   },
 }));

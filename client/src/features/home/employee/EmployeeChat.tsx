@@ -15,6 +15,8 @@
  *   why a run of failures paused them.
  * - Without a talk line, Turn on Talk offers to add one; an employee whose
  *   setup cannot answer gets a note instead of the box.
+ * - A document they wrote opens from its card in the reply on the
+ *   Workspace's Canvas tab, at that version.
  */
 
 import { Monitor } from 'lucide-react';
@@ -142,6 +144,7 @@ export function EmployeeChat({
           ? `${name} asks before sending anything on your behalf.`
           : `${name} doesn’t ask before sending anything on your behalf.`,
         notify: (message, tone) => pillToast(message, { tone }),
+        openArtifact: (artifact) => useHomeStore.getState().openCanvasItem(artifact),
         onSendRefused,
         liveNote,
         onScrolledChange,

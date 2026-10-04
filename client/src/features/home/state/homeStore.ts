@@ -8,6 +8,7 @@
 
 import { z } from 'zod';
 import { create } from 'zustand';
+import type { CanvasFocus } from '@/lib/canvasBoard';
 import { useShellDialogsStore } from '@/stores/shellDialogsStore';
 import { SPIKE, spikeOrb } from '../orb/orb';
 
@@ -55,6 +56,12 @@ function saveWorkspacePrefs(state: HomeState): void {
   }
 }
 
+/** A Canvas item the Workspace was asked to show (homeStore.openCanvasItem). */
+export interface WorkspaceFocus extends CanvasFocus {
+  workflowId: string;
+  canvasNodeId: string;
+}
+
 /** What a hire could not set up as asked (a tool left out while they ask
  *  first, a skill an employee cannot be given), shown on the new
  *  employee's page until the owner dismisses it or moves on. */
@@ -96,6 +103,9 @@ interface HomeState {
   workspaceWide: boolean;
   /** Whose workspace it shows: the employee last opened or watched. */
   workspaceFor: string | null;
+  /** A Canvas item to show (a reply's document card); the nonce lets the
+   *  same one be asked for again. */
+  workspaceFocus: WorkspaceFocus | null;
 
   showHire: (options?: { focus?: boolean }) => void;
   showEmployee: (workflowId: string) => void;
@@ -116,6 +126,9 @@ interface HomeState {
   /** Clamped to 360px .. the window less 420px; ends Expand. */
   setWorkspaceWidth: (px: number) => void;
   toggleWorkspaceWide: () => void;
+  /** Open the Workspace on the Canvas tab, at an item and version of an
+   *  employee's board. */
+  openCanvasItem: (target: { workflowId: string; canvasNodeId: string; itemId: string; version?: number | null }) => void;
 }
 
 const workspace = loadWorkspacePrefs();
@@ -135,6 +148,7 @@ export const useHomeStore = create<HomeState>((set, get) => ({
   workspaceTab: workspace.tab,
   workspaceWide: false,
   workspaceFor: null,
+  workspaceFocus: null,
 
   showHire: (options) =>
     set((state) => ({
@@ -192,4 +206,14 @@ export const useHomeStore = create<HomeState>((set, get) => ({
     saveWorkspacePrefs(get());
   },
   toggleWorkspaceWide: () => set((state) => ({ workspaceWide: !state.workspaceWide })),
+  openCanvasItem: ({ workflowId, canvasNodeId, itemId, version }) => {
+    if (!get().workspaceOpen) spikeOrb(SPIKE.workspace);
+    set((state) => ({
+      workspaceOpen: true,
+      workspaceFor: workflowId,
+      workspaceTab: 'board',
+      workspaceFocus: { workflowId, canvasNodeId, itemId, version: version ?? null, nonce: (state.workspaceFocus?.nonce ?? 0) + 1 },
+    }));
+    saveWorkspacePrefs(get());
+  },
 }));

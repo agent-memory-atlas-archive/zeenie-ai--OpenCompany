@@ -229,6 +229,37 @@ describe('WorkspaceDock', () => {
     renderWith([]);
     expect(screen.getByText('No one on your team yet')).toBeInTheDocument();
   });
+
+  it('opens on the document a reply names, on its employee’s Canvas tab', async () => {
+    const note = (id: string, content: string, version = 1) => ({
+      id,
+      kind: 'note',
+      title: null,
+      ref: null,
+      url: null,
+      content,
+      language: null,
+      source: 'agent',
+      created_at: null,
+      version,
+    });
+    actions.sendRequest.mockImplementation(async (type: string) =>
+      type === 'canvas_list'
+        ? { success: true, items: [note('n1', 'The plan', 2), note('n2', 'Later notes')], revision: 3 }
+        : { success: true },
+    );
+    useHomeStore.setState({ workspaceTab: 'browser' });
+    orbState.spike = 0;
+    renderWith([employee(), employee({ workflow_id: 'w2', name: 'Ravi' })]);
+    act(() => useHomeStore.getState().openCanvasItem({ workflowId: 'w2', canvasNodeId: 'w2:canvas:1', itemId: 'n1', version: 2 }));
+
+    expect(useHomeStore.getState()).toMatchObject({ workspaceOpen: true, workspaceFor: 'w2', workspaceTab: 'board' });
+    expect(orbState.spike).toBe(SPIKE.workspace);
+    expect(loadWorkspacePrefs()).toMatchObject({ open: true, tab: 'board' });
+    expect(await screen.findByText('The plan')).toBeInTheDocument();
+    expect(screen.getByText('1/2')).toBeInTheDocument();
+    expect(actions.sendRequest).toHaveBeenCalledWith('canvas_list', { workflow_id: 'w2', node_id: 'w2:canvas:1' });
+  });
 });
 
 describe('WorkspaceButton', () => {
