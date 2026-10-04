@@ -10,7 +10,7 @@
 import { useEffect, useRef } from 'react';
 import { useUserSettingsQuery, useSaveUserSettingsMutation } from './useUserSettingsQuery';
 import { useStoredProviderCount } from './useCatalogueQuery';
-import { useWebSocket } from '../contexts/WebSocketContext';
+import { useChatThread } from '../features/chat';
 import { useTheme } from '../contexts/ThemeContext';
 import { useAppStore } from '../store/useAppStore';
 import {
@@ -47,7 +47,9 @@ export function useGetStarted(): GetStartedState {
 
   // Live signals.
   const storedProviderCount = useStoredProviderCount();
-  const { chatMessages } = useWebSocket();
+  // The open workflow's chat, the thread the console's Chat pane shows.
+  const chatSessionId = useAppStore((s) => s.currentWorkflow?.id || 'default');
+  const chatMessages = useChatThread(chatSessionId, 'live').data?.messages ?? [];
   const { theme } = useTheme();
   const initialThemeRef = useRef(theme);
   const currentWorkflowName = useAppStore((s) => s.currentWorkflow?.name);

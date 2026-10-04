@@ -285,10 +285,6 @@ describe('WebSocket recovery and ownership', () => {
     const respond = async (requests: Array<Record<string, any>>, label: string) => {
       await act(async () => {
         for (const request of requests) {
-          if (request.type === 'get_chat_messages') latest().message({
-            request_id: request.request_id, success: true,
-            messages: [{ role: 'assistant', message: label, timestamp: 'now' }],
-          });
           if (request.type === 'get_console_logs') latest().message({
             request_id: request.request_id, success: true,
             logs: [{ node_id: 'n1', label, data: label, timestamp: 'now' }],
@@ -296,11 +292,11 @@ describe('WebSocket recovery and ownership', () => {
         }
       });
     };
+    // The chats read their own thread queries; the context fetches logs only.
+    expect(newRequests.some((request) => request.type === 'get_chat_messages')).toBe(false);
     await respond(newRequests, 'B');
-    expect(context.chatMessages[0]?.message).toBe('B');
     expect(context.consoleLogs[0]?.label).toBe('B');
     await respond(oldRequests, 'A');
-    expect(context.chatMessages[0]?.message).toBe('B');
     expect(context.consoleLogs[0]?.label).toBe('B');
   });
 

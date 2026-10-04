@@ -401,14 +401,6 @@ export interface TerminalLogEntry {
   details?: any;
 }
 
-// Chat message for chatTrigger nodes
-export interface ChatMessage {
-  role: 'user' | 'assistant';
-  message: string;
-  timestamp: string;
-  session_id?: string;
-}
-
 // WhatsApp received message structure (from Go service via whatsapp_message_received event)
 export interface WhatsAppMessage {
   message_id: string;
@@ -480,7 +472,6 @@ interface WebSocketContextValue {
   apiKeyStatuses: Record<string, ApiKeyStatus>;
   consoleLogs: ConsoleLogEntry[];  // Console node output logs
   terminalLogs: TerminalLogEntry[];  // Server/terminal logs
-  chatMessages: ChatMessage[];  // Chat messages for chatTrigger
   nodeStatuses: Record<string, NodeStatus>;  // Current workflow's node statuses
   nodeParameters: Record<string, NodeParameters>;
   variables: Record<string, any>;
@@ -503,8 +494,6 @@ interface WebSocketContextValue {
   clearWhatsAppMessages: () => void;
   clearConsoleLogs: () => void;
   clearTerminalLogs: () => void;
-  clearChatMessages: () => void;
-  sendChatMessage: (message: string, nodeId?: string) => Promise<void>;
 
   // Generic request method. timeoutMs: omitted = the 30 s default,
   // negative = no timeout.
@@ -827,11 +816,6 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [apiKeyStatuses, setApiKeyStatuses] = useState<Record<string, ApiKeyStatus>>({});
   const [consoleLogs, setConsoleLogs] = useState<ConsoleLogEntry[]>([]);
   const [terminalLogs, setTerminalLogs] = useState<TerminalLogEntry[]>([]);
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
-  // Bumped by a `chat.updated` for the open workflow's session; an effect
-  // after `sendRequest` reloads `chatMessages` then (handleMessage is
-  // defined before sendRequest, so it cannot send the request itself).
-  const [devChatRevision, setDevChatRevision] = useState(0);
   // Per-workflow node statuses live in a dedicated Zustand store
   // (`stores/nodeStatusStore.ts`). The store is built on
   // useSyncExternalStore so consumers can subscribe to a single
@@ -1207,16 +1191,13 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
         case 'chat.updated': {
           // CloudEvents-typed chat row change from services/chat_thread.py,
-          // sent after every chat insert and clear. Identity only: Home's
-          // thread refetches through `get_chat_messages`, and Dev's chat
-          // pane reloads when the session is the open workflow's.
+          // sent after every chat insert and clear. Identity only: every
+          // chat showing the session (Home's employee page, the editor's
+          // Chat pane) refetches its thread through `get_chat_messages`.
           const identity = (data as WorkflowEvent<{ workflow_id?: string; session_id?: string; role?: string }>)?.data;
           const sessionId = identity?.session_id;
           if (sessionId) {
             void queryClient.invalidateQueries({ queryKey: queryKeys.chatThread.bySession(sessionId).queryKey });
-            if (sessionId === (useAppStore.getState().currentWorkflow?.id || 'default')) {
-              setDevChatRevision((revision) => revision + 1);
-            }
           }
           break;
         }
@@ -1824,11 +1805,10 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             });
             queryClient.removeQueries({ queryKey: queryKeys.compactionStats._def });
             // The Reset cleared the thread on the server (the chat nodes'
-            // Reset hook); Home refetches it.
+            // Reset hook); every chat showing it refetches.
             void queryClient.invalidateQueries({ queryKey: queryKeys.chatThread.bySession(workflowId).queryKey });
             if (useAppStore.getState().currentWorkflow?.id === workflowId) {
               setConsoleLogs([]);
-              setChatMessages([]);
             }
             dispatchToListeners(type, { ...message.data, workflow_id: workflowId });
           }
@@ -2245,8 +2225,8 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
         // Page-state restore (background). Fire-and-forget — these writes
         // hydrate panels that PersistQueryClient doesn't cache (terminal /
-        // chat / console history come straight from the server's per-request
-        // log read, not from a query cache).
+        // console history come straight from the server's per-request log
+        // read, not from a query cache).
         const sendBurstRequest = <T = any>(payload: Record<string, any>): Promise<T> =>
           sendOnSocket<T>(ws, payload, 5000);
 
@@ -2267,26 +2247,6 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             }
           } catch {
             // Ignore errors loading terminal logs
-          }
-        })();
-
-        void (async () => {
-          try {
-            const workflowId = useAppStore.getState().currentWorkflow?.id || 'default';
-            const chatResponse = await sendBurstRequest<any>(
-              { type: 'get_chat_messages', session_id: workflowId },
-            );
-            if (isCurrentOpen() && (useAppStore.getState().currentWorkflow?.id || 'default') === workflowId
-              && chatResponse.success && chatResponse.messages) {
-              const messages: ChatMessage[] = chatResponse.messages.map((msg: any) => ({
-                role: msg.role as 'user' | 'assistant',
-                message: msg.message,
-                timestamp: msg.timestamp,
-              }));
-              setChatMessages(messages);
-            }
-          } catch {
-            // Ignore errors loading chat messages
           }
         })();
 
@@ -2437,49 +2397,25 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
   }, []);
 
-  // Clear chat messages (both local state and database). Scoped to
-  // the currently-open workflow (session_id == workflow_id on the
-  // chat side); other workflows' history survives.
-  // Uses direct WebSocket send to avoid dependency on sendRequest (which is defined later).
-  const clearChatMessages = useCallback(() => {
-    setChatMessages([]);
-    if (wsRef.current?.readyState === ReconnectingWebSocket.OPEN) {
-      const workflowId = useAppStore.getState().currentWorkflow?.id || 'default';
-      wsRef.current.send(JSON.stringify({
-        type: 'clear_chat_messages',
-        session_id: workflowId,
-      }));
-    }
-  }, []);
-
-  // Refetch chat + console panels when the user switches workflow.
-  // Both are scoped on the backend (chat by session_id == workflow id,
-  // console by workflow_id). Resets local state first so the panel
-  // doesn't briefly show the previous workflow's content while the
-  // refetch is in flight. The initial bootstrap inside ws.onopen runs
-  // before this effect with a "default" / null id; this effect then
-  // refires once ``currentWorkflowId`` resolves to a real value.
+  // Refetch the console panel when the user switches workflow (the
+  // backend scopes console logs by workflow_id; each chat reads its own
+  // thread query). Resets local state first so the panel doesn't
+  // briefly show the previous workflow's logs while the refetch is in
+  // flight. The initial bootstrap inside ws.onopen runs before this
+  // effect with a null id; this effect then refires once
+  // ``currentWorkflowId`` resolves to a real value.
   useEffect(() => {
     if (!isReady || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
       return;
     }
-    setChatMessages([]);
     setConsoleLogs([]);
-    const sessionId = currentWorkflowId || 'default';
     const ws = wsRef.current;
 
-    const chatRequestId = `chat_switch_${generateRequestId()}`;
     const consoleRequestId = `console_switch_${generateRequestId()}`;
     const handler = (event: MessageEvent) => {
       try {
         const msg = JSON.parse(event.data);
-        if (msg.request_id === chatRequestId && msg.success && Array.isArray(msg.messages)) {
-          setChatMessages(msg.messages.map((m: any) => ({
-            role: m.role as 'user' | 'assistant',
-            message: m.message,
-            timestamp: m.timestamp,
-          })));
-        } else if (msg.request_id === consoleRequestId && msg.success && Array.isArray(msg.logs)) {
+        if (msg.request_id === consoleRequestId && msg.success && Array.isArray(msg.logs)) {
           setConsoleLogs(msg.logs.map((log: any) => ({
             node_id: log.node_id,
             label: log.label,
@@ -2498,7 +2434,6 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       }
     };
     ws.addEventListener('message', handler);
-    ws.send(JSON.stringify({ type: 'get_chat_messages', session_id: sessionId, request_id: chatRequestId }));
     ws.send(JSON.stringify({ type: 'get_console_logs', limit: 100, workflow_id: currentWorkflowId, request_id: consoleRequestId }));
     return () => {
       ws.removeEventListener('message', handler);
@@ -2614,69 +2549,6 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       }
     });
   }, [sendOnSocket]);
-
-  // =========================================================================
-  // Chat Message Operations
-  // =========================================================================
-
-  // Send chat message (triggers chatTrigger nodes and saves to database)
-  // nodeId: optional specific chatTrigger node to target
-  const sendChatMessageAsync = useCallback(async (message: string, nodeId?: string): Promise<void> => {
-    const timestamp = new Date().toISOString();
-    const chatMessage: ChatMessage = {
-      role: 'user',
-      message,
-      timestamp
-    };
-
-    // Add to local messages immediately for UI feedback; taken back out if
-    // the send fails (`not_running` means the server saved nothing).
-    setChatMessages(prev => [...prev, chatMessage]);
-
-    // Send to backend to dispatch to chatTrigger nodes (also saves to database).
-    // session_id is the workflow id when one is open, "default" otherwise --
-    // this is what scopes the persisted chat history to a single workflow.
-    try {
-      const workflowId = useAppStore.getState().currentWorkflow?.id || 'default';
-      const response = await sendRequest<{ success?: boolean; error?: string }>('send_chat_message', {
-        message,
-        role: 'user',
-        node_id: nodeId,  // Target specific chatTrigger node if specified
-        session_id: workflowId,
-        timestamp
-      });
-      if (response?.success === false) throw new Error(response.error || 'send_failed');
-    } catch (error) {
-      setChatMessages(prev => prev.filter((entry) => entry !== chatMessage));
-      console.error('[WebSocket] Failed to send chat message:', error);
-      throw error;
-    }
-  }, [sendRequest]);
-
-  // Reload the chat pane after a `chat.updated` for the open workflow's
-  // session: a reply, a routine report, or a message from another tab.
-  useEffect(() => {
-    if (devChatRevision === 0) return;
-    let current = true;
-    const sessionId = useAppStore.getState().currentWorkflow?.id || 'default';
-    sendRequest<any>('get_chat_messages', { session_id: sessionId })
-      .then((response) => {
-        if (!current || !response?.success || !Array.isArray(response.messages)) return;
-        // A workflow switch meanwhile loads its own history.
-        if (sessionId !== (useAppStore.getState().currentWorkflow?.id || 'default')) return;
-        setChatMessages(response.messages.map((m: any) => ({
-          role: m.role as 'user' | 'assistant',
-          message: m.message,
-          timestamp: m.timestamp,
-        })));
-      })
-      .catch(() => {
-        // The next update, reconnect or workflow switch reloads the pane.
-      });
-    return () => {
-      current = false;
-    };
-  }, [devChatRevision, sendRequest]);
 
   // =========================================================================
   // Node Parameters Operations
@@ -3133,7 +3005,6 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     void queryClient.invalidateQueries({ queryKey: queryKeys.chatThread.bySession(workflowId).queryKey });
     if (useAppStore.getState().currentWorkflow?.id === workflowId) {
       setConsoleLogs([]);
-      setChatMessages([]);
     }
     dispatchToListeners('workflow_runtime_reset', { workflow_id: workflowId });
     return result;
@@ -3776,7 +3647,6 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     apiKeyStatuses,
     consoleLogs,
     terminalLogs,
-    chatMessages,
     nodeStatuses,
     nodeParameters,
     variables,
@@ -3799,8 +3669,6 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     clearWhatsAppMessages,
     clearConsoleLogs,
     clearTerminalLogs,
-    clearChatMessages,
-    sendChatMessage: sendChatMessageAsync,
 
     // Generic request method
     sendRequest,
@@ -3877,14 +3745,14 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     whatsappStatus, twitterStatus, googleStatus, telegramStatus,
     whatsappMessages, lastWhatsAppMessage,
     apiKeyStatuses,
-    consoleLogs, terminalLogs, chatMessages,
+    consoleLogs, terminalLogs,
     nodeStatuses, nodeParameters,
     variables, workflowStatus, deploymentStatus, workflowControlStatuses, workflowControlPending, workflowLock,
     compactionStats, updateCompactionStats,
     getNodeStatus, getApiKeyStatus, getVariable,
     requestStatus, clearNodeStatus,
-    clearWhatsAppMessages, clearConsoleLogs, clearTerminalLogs, clearChatMessages,
-    sendChatMessageAsync, sendRequest, addEventListener,
+    clearWhatsAppMessages, clearConsoleLogs, clearTerminalLogs,
+    sendRequest, addEventListener,
     getNodeParametersAsync, getAllNodeParametersAsync,
     saveNodeParametersAsync, deleteNodeParametersAsync,
     executeNodeAsync, executeWorkflowAsync, getNodeOutputAsync,

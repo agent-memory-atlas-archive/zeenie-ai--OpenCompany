@@ -72,13 +72,6 @@ function broadcast(message: Record<string, unknown>): void {
   });
 }
 
-/** Answer a request, letting its awaiters run. */
-async function respond(message: Record<string, unknown>): Promise<void> {
-  await act(async () => {
-    sockets[0].onmessage?.({ data: JSON.stringify(message) });
-  });
-}
-
 /** Mount the provider and let its delayed connect create the socket. */
 function mount(Probe: () => null = () => null) {
   const view = render(
@@ -192,12 +185,11 @@ describe('WebSocket actions for Normal mode', () => {
     await expect(request).rejects.toThrow('Component unmounted');
   });
 
-  it('refreshes the thread a chat.updated names, and the open workflow’s chat pane', async () => {
+  it('refreshes only the thread a chat.updated names', async () => {
     const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
     useAppStore.setState({ currentWorkflow: { id: 'wf1' } as WorkflowData });
-    let chat: unknown[] = [];
     function Probe() {
-      chat = useWebSocket().chatMessages;
+      useWebSocket();
       return null;
     }
     const { unmount } = mount(Probe);
@@ -216,50 +208,14 @@ describe('WebSocket actions for Normal mode', () => {
       },
     });
 
-    // Another workflow's conversation: its thread only.
     broadcast(updated('wf2'));
     expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.chatThread.bySession('wf2').queryKey });
-    await act(async () => {});
-    expect(frames(socket).filter((frame) => frame.type === 'get_chat_messages')).toHaveLength(0);
-
     broadcast(updated('wf1'));
     expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.chatThread.bySession('wf1').queryKey });
     await act(async () => {});
-    const request = frames(socket).find((frame) => frame.type === 'get_chat_messages');
-    expect(request).toMatchObject({ session_id: 'wf1' });
-
-    await respond({ request_id: request!.request_id, success: true, messages: [{ role: 'assistant', message: 'Done', timestamp: 't1' }] });
-    expect(chat).toEqual([{ role: 'assistant', message: 'Done', timestamp: 't1' }]);
-    unmount();
-  });
-
-  it('takes a chat line back out when the send is refused', async () => {
-    let value!: ReturnType<typeof useWebSocket>;
-    function Probe() {
-      value = useWebSocket();
-      return null;
-    }
-    const { unmount } = mount(Probe);
-    const socket = sockets[0];
-    await open(socket);
-
-    let failure: unknown = null;
-    let sending!: Promise<void>;
-    act(() => {
-      sending = value.sendChatMessage('Hello').catch((error) => {
-        failure = error;
-      });
-    });
-    expect(value.chatMessages.map((message) => message.message)).toEqual(['Hello']);
-
-    const request = frames(socket).find((frame) => frame.type === 'send_chat_message')!;
-    await respond({ request_id: request.request_id, success: false, error: 'not_running' });
-    await act(async () => {
-      await sending;
-    });
-    expect(failure).toBeInstanceOf(Error);
-    expect((failure as Error).message).toBe('not_running');
-    expect(value.chatMessages).toEqual([]);
+    // The chats read their threads through their own queries; the context
+    // keeps no copy of its own to reload.
+    expect(frames(socket).filter((frame) => frame.type === 'get_chat_messages')).toHaveLength(0);
     unmount();
   });
 });

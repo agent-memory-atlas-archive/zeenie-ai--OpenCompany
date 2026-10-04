@@ -38,13 +38,17 @@ vi.mock('../useCatalogueQuery', () => ({
   useStoredProviderCount: () => catalogueState.storedCount,
 }));
 
-const wsState = {
-  chatMessages: [] as Array<{ role: 'user' | 'assistant'; message: string; timestamp: string }>,
+const chatState = {
+  messages: [] as Array<{ role: 'user' | 'assistant'; text: string }>,
+  reads: [] as Array<[string | null, string]>,
 };
 // Full-module replace — importActual+spread is broken under React 19 (see
 // CredentialsModal.test.tsx for the canonical note).
-vi.mock('../../contexts/WebSocketContext', () => ({
-  useWebSocket: () => ({ chatMessages: wsState.chatMessages }),
+vi.mock('../../features/chat', () => ({
+  useChatThread: (sessionId: string | null, scope: string) => {
+    chatState.reads.push([sessionId, scope]);
+    return { data: { messages: chatState.messages } };
+  },
 }));
 
 const themeState = { theme: 'dark' };
@@ -92,7 +96,8 @@ beforeEach(() => {
   settingsState.data = completedSettings();
   settingsState.isSuccess = true;
   catalogueState.storedCount = 0;
-  wsState.chatMessages = [];
+  chatState.messages = [];
+  chatState.reads = [];
   themeState.theme = 'dark';
   useAppStore.setState({ currentWorkflow: null, hasUnsavedChanges: false });
 });
@@ -168,16 +173,24 @@ describe('useGetStarted add-key', () => {
 
 describe('useGetStarted chat-example', () => {
   it('stays incomplete with only user messages', () => {
-    wsState.chatMessages = [{ role: 'user', message: 'hi', timestamp: 't1' }];
+    chatState.messages = [{ role: 'user', text: 'hi' }];
     const { result } = renderHook(() => useGetStarted());
     expect(itemCompleted(result, 'chat-example')).toBe(false);
     expect(saveMutate).not.toHaveBeenCalled();
   });
 
+  it("reads the open workflow's live thread", () => {
+    renderHook(() => useGetStarted());
+    expect(chatState.reads.at(-1)).toEqual(['default', 'live']);
+    useAppStore.setState({ currentWorkflow: makeWorkflow('My Automation') });
+    renderHook(() => useGetStarted());
+    expect(chatState.reads.at(-1)).toEqual(['wf-1', 'live']);
+  });
+
   it('completes on an assistant message and persists the latch', () => {
-    wsState.chatMessages = [
-      { role: 'user', message: 'hi', timestamp: 't1' },
-      { role: 'assistant', message: 'hello!', timestamp: 't2' },
+    chatState.messages = [
+      { role: 'user', text: 'hi' },
+      { role: 'assistant', text: 'hello!' },
     ];
     const { result } = renderHook(() => useGetStarted());
     expect(itemCompleted(result, 'chat-example')).toBe(true);
