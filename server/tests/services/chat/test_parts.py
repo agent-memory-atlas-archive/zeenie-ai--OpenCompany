@@ -215,3 +215,51 @@ async def test_the_ui_state_command(chat):
     assert (await chat.handlers.handle_chat_ui_state({"session_id": "wf", "part_id": "ui_x", "changes": [{"path": "/a", "value": 1}]}, None))["error"] == "not_found"
     bad = await chat.handlers.handle_chat_ui_state({"session_id": "wf", "part_id": part_id, "changes": "nope"}, None)
     assert bad["error"] == "invalid_request"
+
+
+# ----- documents the run wrote -----
+
+
+def document(version=1, item_id="item_1"):
+    return {"workflow_id": "wf", "canvas_node_id": "wf:canvas:1", "item_id": item_id, "version": version, "title": "Plan", "format": "markdown"}
+
+
+async def test_a_document_the_run_wrote_shows_once_at_its_latest_version(database, hub):
+    socket = FakeSocket()
+    hub.subscribe(socket, "wf")
+    run = await running(database)
+    await parts.show_artifact(database, stream_of(run), artifact=document(1))
+    await parts.show_artifact(database, stream_of(run), artifact=document(2))
+    # One part per document, at the latest version.
+    [saved] = await parts.run_parts(database, run.run_id)
+    assert (saved.kind, saved.key, saved.payload) == ("artifacts", "artifact:item_1", document(2))
+    await asyncio.sleep(0)
+    shown = [event["data"] for event in socket.events() if event["type"].endswith("activity.snapshot")]
+    assert [(data["activity_type"], data["message_id"], data["content"]["version"]) for data in shown] == [
+        ("artifact", "artifact_item_1", 1),
+        ("artifact", "artifact_item_1", 2),
+    ]
+    # A run that wrote nothing but the document gets a reply holding its card.
+    finished = await ledger.finish_run(database, run_id=run.run_id, success=True, **CLAIM)
+    assert finished.result == {"reply_message_id": run.reply_message_uid}
+    [_, reply] = await database.get_chat_messages("wf")
+    assert (reply["message"], reply["parts"]["artifacts"]) == ("", [document(2)])
+
+
+async def test_a_newer_version_replaces_the_card_on_a_saved_reply(database, hub):
+    run = await running(database)
+    await parts.show_artifact(database, stream_of(run), artifact=document(1))
+    reply = await ledger.post_reply(database, run=run, node_id="n", text="Here is the plan.", execution_id="gen-1")
+    assert reply["parts"]["artifacts"] == [document(1)]
+    await parts.show_artifact(database, stream_of(run), artifact=document(2))
+    await parts.show_artifact(database, stream_of(run), artifact=document(1, item_id="item_2"))
+    await ledger.finish_run(database, run_id=run.run_id, success=True, **CLAIM)
+    [_, saved] = await database.get_chat_messages("wf")
+    # In place, then the new one.
+    assert saved["parts"]["artifacts"] == [document(2), document(1, item_id="item_2")]
+
+
+async def test_a_document_without_an_item_shows_nothing(database, hub):
+    run = await running(database)
+    await parts.show_artifact(database, stream_of(run), artifact={**document(), "item_id": ""})
+    assert await parts.run_parts(database, run.run_id) == []

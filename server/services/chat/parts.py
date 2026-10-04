@@ -11,12 +11,16 @@ first kind: ``show_ui`` saves the checked spec and publishes it as an empty
 Sources (``services/chat/sources.py``) are the numbered results of a search
 the answering agent ran. Approvals name the drafts it made that wait for the
 owner (``services/approvals/tool_calls.py``): the card reads them live from
-the approvals store, so the part only names them.
+the approvals store, so the part only names them. Artifacts name the
+documents (Canvas notes) it wrote or revised, at the version it left them
+(``show_artifact``, called by the canvas tool): a card that opens the
+Canvas on it.
 
 When the run ends, ``seal_parts`` copies its parts into the reply message's
-``parts`` (``{"ui": [...], "sources": [...], "approvals": [...]}``), creating
-an empty reply when the run showed an interface or made a draft but wrote
-nothing, so a reload draws what the run showed. Every write here is best effort for the run: a part that cannot be
+``parts`` (``{"ui": [...], "sources": [...], "approvals": [...],
+"artifacts": [...]}``), creating an empty reply when the run showed an
+interface, made a draft or wrote a document but wrote no text, so a reload
+draws what the run showed. Every write here is best effort for the run: a part that cannot be
 saved is logged, and the run goes on.
 """
 
@@ -38,7 +42,7 @@ logger = get_logger(__name__)
 #: The ``activity_type`` of a generated UI's events.
 JSON_RENDER = "json_render"
 #: The kinds of part a run collects for its reply.
-PART_KINDS = ("ui", "sources", "approvals")
+PART_KINDS = ("ui", "sources", "approvals", "artifacts")
 
 
 def ui_part_id(run_id: str, tool_call_id: str) -> str:
@@ -137,8 +141,24 @@ async def show_approval(database: Any, stream: Mapping[str, Any], *, approval_id
     )
 
 
+async def show_artifact(database: Any, stream: Mapping[str, Any], *, artifact: Dict[str, Any]) -> None:
+    """Name a document the run wrote on the Canvas (``{workflow_id,
+    canvas_node_id, item_id, version, title, format}``) on its reply, and
+    show its card live. A newer version of the same item replaces it."""
+    item_id = str(artifact.get("item_id") or "")
+    if not item_id:
+        return
+    await record_part(database, stream["run_id"], kind="artifacts", key=f"artifact:{item_id}", payload=dict(artifact))
+    _publish(
+        stream,
+        "activity.snapshot",
+        {"message_id": f"artifact_{item_id}", "activity_type": "artifact", "content": dict(artifact), "replace": True},
+        f"artifact:{item_id}:{artifact.get('version')}",
+    )
+
+
 #: What names one item of each kind, for merging a run's parts into a reply.
-_ITEM_KEYS = {"ui": "part_id", "sources": "n", "approvals": "approval_id"}
+_ITEM_KEYS = {"ui": "part_id", "sources": "n", "approvals": "approval_id", "artifacts": "item_id"}
 
 
 def grouped_parts(parts: List[ChatRunPart]) -> Dict[str, List[Dict[str, Any]]]:
@@ -157,13 +177,23 @@ def grouped_parts(parts: List[ChatRunPart]) -> Dict[str, List[Dict[str, Any]]]:
     return dict(grouped)
 
 
+#: Kinds whose run copy is the newer one: a document's card names the latest
+#: version the run wrote, and nothing the owner does changes it.
+_RUN_COPY_WINS = frozenset({"artifacts"})
+
+
 def _merged(kind: str, existing: List[Any], incoming: List[Dict[str, Any]]) -> List[Any]:
     """The reply's items of a kind with the run's new ones added. An item the
     reply already holds stays as it is there: the owner may have changed it
-    since (an interface's state), and the run's copy is older."""
+    since (an interface's state), and the run's copy is older. A document's
+    card is the exception: the run's copy names a newer version."""
     key = _ITEM_KEYS.get(kind)
     if key is None:
         return incoming
+    if kind in _RUN_COPY_WINS:
+        newer = {item.get(key): item for item in incoming}
+        kept = [newer.pop(item.get(key), item) if isinstance(item, dict) else item for item in existing]
+        return [*kept, *newer.values()]
     held = {item.get(key) for item in existing if isinstance(item, dict)}
     return [*existing, *[item for item in incoming if item.get(key) not in held]]
 
@@ -191,7 +221,7 @@ async def seal_parts(database: Any, run: ChatRun) -> bool:
             else:
                 # Sources show only where a reply cites them: alone they
                 # are no reason to make one.
-                if not (grouped.get("ui") or grouped.get("approvals")):
+                if not (grouped.get("ui") or grouped.get("approvals") or grouped.get("artifacts")):
                     return False
                 current = await session.get(ChatRun, run.run_id)
                 stopped = current is not None and current.state in ("stopping", "stopped")
@@ -395,6 +425,7 @@ __all__ = [
     "run_parts",
     "seal_parts",
     "show_approval",
+    "show_artifact",
     "show_ui",
     "ui_event_message",
     "ui_part_id",

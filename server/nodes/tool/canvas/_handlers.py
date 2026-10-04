@@ -136,11 +136,42 @@ async def handle_canvas_clear(
     return {"success": True, **result}
 
 
+@ws_response
+async def handle_canvas_versions(data: Dict[str, Any], websocket: WebSocket) -> Dict[str, Any]:
+    """An item's versions, newest first."""
+    store, scope = await _resolve_store_and_scope(data, websocket)
+    item_id = str(data.get("item_id") or "").strip()
+    if not item_id:
+        raise NodeUserError("item_id required")
+    try:
+        result = await store.versions(scope, item_id)
+    except CanvasStoreError as exc:
+        raise NodeUserError(str(exc)) from exc
+    return {"success": True, **result}
+
+
+@ws_response
+async def handle_canvas_version(data: Dict[str, Any], websocket: WebSocket) -> Dict[str, Any]:
+    """One version of an item, whole."""
+    store, scope = await _resolve_store_and_scope(data, websocket)
+    item_id = str(data.get("item_id") or "").strip()
+    version = data.get("version")
+    if not item_id or not isinstance(version, int) or version < 1:
+        raise NodeUserError("item_id and version required")
+    try:
+        item = await store.version(scope, item_id, version)
+    except CanvasStoreError as exc:
+        raise NodeUserError(str(exc)) from exc
+    return {"success": True, "item": item}
+
+
 WSHandler = Callable[[Dict[str, Any], WebSocket], Awaitable[Dict[str, Any]]]
 WS_HANDLERS: Dict[str, WSHandler] = {
     "canvas_list": handle_canvas_list,
     "canvas_remove": handle_canvas_remove,
     "canvas_clear": handle_canvas_clear,
+    "canvas_versions": handle_canvas_versions,
+    "canvas_version": handle_canvas_version,
 }
 
 
@@ -149,4 +180,6 @@ __all__ = [
     "handle_canvas_clear",
     "handle_canvas_list",
     "handle_canvas_remove",
+    "handle_canvas_version",
+    "handle_canvas_versions",
 ]

@@ -28,6 +28,7 @@ from pydantic import (
     model_validator,
 )
 
+from core.logging import get_logger
 from services.plugin import (
     NodeContext,
     NodeUserError,
@@ -45,6 +46,11 @@ from ._store import (
     UNSAVED_WORKFLOW_ID,
     truncate_note,
 )
+
+logger = get_logger(__name__)
+
+#: Languages a note is a document in, not code.
+_DOCUMENT_LANGUAGES = frozenset({"markdown", "md"})
 
 # Depth cap for the structural FileRef scan of connected outputs. Node
 # results are already payload-disciplined; anything nested deeper than this
@@ -86,6 +92,14 @@ class CanvasParams(BaseModel):
     mode: Literal["append", "replace"] = Field(
         default="append",
         description="append adds to the board; replace clears it first.",
+    )
+    update_id: Optional[str] = Field(
+        default=None,
+        max_length=64,
+        description=(
+            "The id of an item already on the board (from an earlier result's added list) to update instead: "
+            "what this call shows (one path, url or content, of the same kind) becomes its next version."
+        ),
     )
 
     model_config = ConfigDict(extra="ignore")
@@ -160,7 +174,8 @@ class CanvasNode(ToolNode):
         "http(s) URL, or markdown text via content. Use this after producing "
         "a file or result the user should see — e.g. a screenshot, a chart, "
         "or a report. mode=replace clears the board first; the default "
-        "append adds to it."
+        "append adds to it. To revise something you showed, pass its id as "
+        "update_id: the board keeps its earlier versions."
     )
     handles = (
         {"name": "input-main", "kind": "input", "position": "left", "label": "Input", "role": "main"},
@@ -260,6 +275,20 @@ class CanvasNode(ToolNode):
             items[0]["title"] = params.title
 
         store = CanvasStore(get_database())
+        if params.update_id:
+            if len(items) != 1:
+                raise NodeUserError("update_id updates one item: pass one path, url or content.")
+            try:
+                updated, revision = await store.update(scope, params.update_id, items[0])
+            except CanvasStoreError as exc:
+                raise NodeUserError(str(exc)) from exc
+            await dispatch_canvas_updated(workflow_id=ctx.workflow_id, node_id=ctx.node_id, revision=revision)
+            await _show_in_chat(ctx, updated)
+            return {
+                "message": f"Updated {updated['title'] or 'the item'} to version {updated['version']}.",
+                "revision": revision,
+                "added": [{"id": updated["id"], "kind": updated["kind"], "title": updated["title"], "version": updated["version"]}],
+            }
         try:
             added, revision, total = await store.append(
                 scope, items, mode=params.mode
@@ -272,6 +301,8 @@ class CanvasNode(ToolNode):
             node_id=ctx.node_id,
             revision=revision,
         )
+        for row in added:
+            await _show_in_chat(ctx, row)
 
         message = f"Displayed {len(added)} item(s); board holds {total}."
         if params.mode == "replace":
@@ -287,6 +318,43 @@ class CanvasNode(ToolNode):
                 for row in added
             ],
         }
+
+
+async def _show_in_chat(ctx: NodeContext, item: Dict[str, Any]) -> None:
+    """A note the agent answering the owner writes is an artifact of its
+    answer: a card in the reply that opens the board on it (and its
+    versions). Best effort: the board has it either way."""
+    stream = ctx.raw.get("chat_stream") if isinstance(ctx.raw, dict) else None
+    if not isinstance(stream, dict) or item.get("kind") != "note" or not ctx.workflow_id:
+        return
+    language = str(item.get("language") or "").strip().lower()
+    try:
+        from services.chat.parts import show_artifact
+        from services.plugin.deps import get_database
+
+        await show_artifact(
+            get_database(),
+            stream,
+            artifact={
+                "workflow_id": ctx.workflow_id,
+                "canvas_node_id": ctx.node_id,
+                "item_id": item["id"],
+                "version": int(item.get("version") or 1),
+                "title": item.get("title") or _note_title(item.get("content") or ""),
+                "format": "code" if language and language not in _DOCUMENT_LANGUAGES else "markdown",
+            },
+        )
+    except Exception:  # noqa: BLE001 - the board has the note either way
+        logger.warning("Could not show a canvas note in the chat", item_id=item.get("id"), exc_info=True)
+
+
+def _note_title(content: str) -> str:
+    """A note's first line (its heading), as its title."""
+    for line in content.splitlines():
+        text = line.strip().lstrip("#").strip()
+        if text:
+            return text[:120]
+    return "Note"
 
 
 def _build_ref(ctx: NodeContext, raw_path: str) -> Dict[str, Any]:

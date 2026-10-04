@@ -28,9 +28,12 @@ from nodes.tool.canvas._handlers import (
     handle_canvas_clear,
     handle_canvas_list,
     handle_canvas_remove,
+    handle_canvas_version,
+    handle_canvas_versions,
 )
 from nodes.tool.canvas._store import (
     CANVAS_NOTE_MAX_BYTES,
+    CanvasItemVersion,
     CanvasScope,
     CanvasStore,
     CanvasStoreError,
@@ -169,7 +172,118 @@ async def test_item_wire_shape_is_stable(canvas_database):
         "language",
         "source",
         "created_at",
+        "version",
+        "updated_at",
     }
+    assert (added[0]["version"], added[0]["updated_at"]) == (1, None)
+
+
+# ---------------------------------------------------------------------------
+# Versions
+# ---------------------------------------------------------------------------
+
+
+async def _version_count(database, item_id=None) -> int:
+    from sqlalchemy import func, select
+
+    async with database.get_session() as session:
+        query = select(func.count()).select_from(CanvasItemVersion)
+        if item_id is not None:
+            query = query.where(CanvasItemVersion.item_id == item_id)
+        return int((await session.execute(query)).scalar() or 0)
+
+
+async def test_an_update_is_the_next_version_and_the_earlier_ones_stay(canvas_database):
+    store = CanvasStore(canvas_database)
+    scope = _scope()
+    [first], first_revision, _ = await store.append(scope, [{"kind": "note", "content": "# Plan\none", "title": "Plan"}])
+    updated, revision = await store.update(scope, first["id"], {"kind": "note", "content": "# Plan\ntwo", "source": "agent"})
+    assert revision == first_revision + 1
+    assert (updated["id"], updated["version"], updated["content"], updated["title"]) == (first["id"], 2, "# Plan\ntwo", "Plan")
+    assert updated["updated_at"] is not None
+
+    listed = (await store.list(scope))["items"]
+    assert [(item["version"], item["content"]) for item in listed] == [(2, "# Plan\ntwo")]
+    history = await store.versions(scope, first["id"])
+    assert history["latest"] == 2
+    assert [(entry["version"], entry["size_bytes"]) for entry in history["versions"]] == [(2, 10), (1, 10)]
+    old = await store.version(scope, first["id"], 1)
+    assert (old["version"], old["latest"], old["content"]) == (1, 2, "# Plan\none")
+    with pytest.raises(CanvasStoreError):
+        await store.version(scope, first["id"], 3)
+
+
+async def test_an_update_keeps_the_kind_and_needs_the_item(canvas_database):
+    store = CanvasStore(canvas_database)
+    scope = _scope()
+    [note], _, _ = await store.append(scope, [{"kind": "note", "content": "x"}])
+    with pytest.raises(CanvasStoreError, match="note"):
+        await store.update(scope, note["id"], {"kind": "url", "url": "https://example.com"})
+    with pytest.raises(CanvasStoreError):
+        await store.update(scope, "missing", {"kind": "note", "content": "y"})
+    # Another node's board does not hold it.
+    with pytest.raises(CanvasStoreError):
+        await store.update(_scope(node_id="other"), note["id"], {"kind": "note", "content": "y"})
+
+
+async def test_an_item_keeps_its_newest_versions(canvas_database, monkeypatch):
+    monkeypatch.setattr("nodes.tool.canvas._store.CANVAS_MAX_VERSIONS", 3)
+    store = CanvasStore(canvas_database)
+    scope = _scope()
+    [note], _, _ = await store.append(scope, [{"kind": "note", "content": "v1"}])
+    for number in range(2, 6):
+        await store.update(scope, note["id"], {"kind": "note", "content": f"v{number}"})
+    history = await store.versions(scope, note["id"])
+    assert [entry["version"] for entry in history["versions"]] == [5, 4, 3]
+
+
+async def test_removing_clearing_and_replacing_drop_versions(canvas_database):
+    store = CanvasStore(canvas_database)
+    scope = _scope()
+    [kept, dropped], _, _ = await store.append(scope, [{"kind": "note", "content": "a"}, {"kind": "note", "content": "b"}])
+    await store.update(scope, dropped["id"], {"kind": "note", "content": "b2"})
+    await store.remove(scope, dropped["id"])
+    assert await _version_count(canvas_database, dropped["id"]) == 0
+    assert await _version_count(canvas_database, kept["id"]) == 1
+    await store.append(scope, [{"kind": "note", "content": "c"}], mode="replace")
+    assert await _version_count(canvas_database, kept["id"]) == 0
+    await store.clear(scope)
+    assert await _version_count(canvas_database) == 0
+
+
+async def test_eviction_drops_versions(canvas_database, monkeypatch):
+    monkeypatch.setattr("nodes.tool.canvas._store.CANVAS_MAX_ITEMS", 2)
+    store = CanvasStore(canvas_database)
+    scope = _scope()
+    [oldest], _, _ = await store.append(scope, [{"kind": "note", "content": "1"}])
+    await store.append(scope, [{"kind": "note", "content": "2"}, {"kind": "note", "content": "3"}])
+    assert await _version_count(canvas_database, oldest["id"]) == 0
+    assert await _version_count(canvas_database) == 2
+
+
+async def test_a_board_saved_before_versions_gets_them(canvas_database):
+    store = CanvasStore(canvas_database)
+    scope = _scope()
+    [note], _, _ = await store.append(scope, [{"kind": "note", "content": "old"}])
+    # The table as it was before items had versions.
+    async with canvas_database.engine.begin() as connection:
+        await connection.exec_driver_sql("ALTER TABLE canvas_items RENAME TO canvas_items_new")
+        await connection.exec_driver_sql(
+            "CREATE TABLE canvas_items (id VARCHAR(64) PRIMARY KEY, board_id VARCHAR(80), kind VARCHAR(10), "
+            "title VARCHAR(300), ref JSON, url VARCHAR(2048), content TEXT, language VARCHAR(40), "
+            "source VARCHAR(10), position INTEGER, created_at DATETIME)"
+        )
+        await connection.exec_driver_sql(
+            "INSERT INTO canvas_items SELECT id, board_id, kind, title, ref, url, content, language, source, position, created_at "
+            "FROM canvas_items_new"
+        )
+        await connection.exec_driver_sql("DROP TABLE canvas_items_new")
+    CanvasStore._initialized_engines.discard(canvas_database.engine)
+
+    [listed] = (await store.list(scope))["items"]
+    assert (listed["id"], listed["version"], listed["updated_at"]) == (note["id"], 1, None)
+    updated, _ = await store.update(scope, note["id"], {"kind": "note", "content": "new"})
+    assert updated["version"] == 2
 
 
 def test_truncate_note_caps_with_visible_marker():
@@ -367,6 +481,66 @@ async def test_display_replace_mode_clears_board(
     assert "replaced" in result["message"]
 
 
+async def test_display_update_id_revises_an_item(tmp_path, op_database, captured_events):
+    node, ctx = _node(), _ctx(tmp_path)
+    first = await node.display(ctx, CanvasParams(content="# Plan\nDraft", title="Plan"))
+    item_id = first["added"][0]["id"]
+    result = await node.display(ctx, CanvasParams(content="# Plan\nFinal", update_id=item_id))
+    assert result["added"] == [{"id": item_id, "kind": "note", "title": "Plan", "version": 2}]
+    assert "version 2" in result["message"]
+    [item] = (await CanvasStore(op_database).list(CanvasScope(owner_id="owner", workflow_id="wf-op", node_id="canvas-node")))["items"]
+    assert (item["version"], item["content"]) == (2, "# Plan\nFinal")
+    assert len(captured_events) == 2
+
+
+async def test_display_update_id_takes_one_item_of_its_kind(tmp_path, op_database, captured_events):
+    node, ctx = _node(), _ctx(tmp_path)
+    item_id = (await node.display(ctx, CanvasParams(content="note")))["added"][0]["id"]
+    with pytest.raises(NodeUserError, match="one item"):
+        await node.display(ctx, CanvasParams(content="x", url="https://example.com", update_id=item_id))
+    with pytest.raises(NodeUserError, match="note"):
+        await node.display(ctx, CanvasParams(url="https://example.com", update_id=item_id))
+    with pytest.raises(NodeUserError):
+        await node.display(ctx, CanvasParams(content="x", update_id="missing"))
+
+
+@pytest.fixture
+def shown_documents(monkeypatch):
+    shown = []
+
+    async def _show(database, stream, *, artifact):
+        shown.append({"stream": stream, **artifact})
+
+    monkeypatch.setattr("services.chat.parts.show_artifact", _show)
+    return shown
+
+
+async def test_a_note_the_answering_agent_writes_shows_in_its_reply(tmp_path, op_database, captured_events, shown_documents):
+    stream = {"run_id": "r_1", "session_id": "wf-op", "workflow_id": "wf-op"}
+    node, ctx = _node(), _ctx(tmp_path, raw={"_tool_config": object(), "chat_stream": stream})
+    item_id = (await node.display(ctx, CanvasParams(content="## Weekly report\nAll good.")))["added"][0]["id"]
+    await node.display(ctx, CanvasParams(content="## Weekly report\nAll better.", update_id=item_id, language="python"))
+    assert shown_documents == [
+        {"stream": stream, "workflow_id": "wf-op", "canvas_node_id": "canvas-node", "item_id": item_id, "version": 1, "title": "Weekly report", "format": "markdown"},
+        {"stream": stream, "workflow_id": "wf-op", "canvas_node_id": "canvas-node", "item_id": item_id, "version": 2, "title": "Weekly report", "format": "code"},
+    ]
+
+
+async def test_only_notes_in_a_chat_run_show_in_the_reply(tmp_path, op_database, captured_events, shown_documents):
+    (tmp_path / "chart.png").write_bytes(b"\x89PNG fake")
+    stream = {"run_id": "r_1", "session_id": "wf-op", "workflow_id": "wf-op"}
+    await _node().display(_ctx(tmp_path, raw={"chat_stream": stream}), CanvasParams(paths=["chart.png"], url="https://example.com"))
+    await _node().display(_ctx(tmp_path), CanvasParams(content="no run"))
+    assert shown_documents == []
+
+
+async def test_a_markdown_note_is_a_document_not_code(tmp_path, op_database, captured_events, shown_documents):
+    stream = {"run_id": "r_1", "session_id": "wf-op", "workflow_id": "wf-op"}
+    ctx = _ctx(tmp_path, raw={"chat_stream": stream})
+    await _node().display(ctx, CanvasParams(content="Plain words", language="Markdown"))
+    assert [(shown["title"], shown["format"]) for shown in shown_documents] == [("Plain words", "markdown")]
+
+
 def test_collect_connected_refs_dedupes_and_caps():
     ref = {"kind": "file", "path": "a/b.png", "filename": "b.png"}
     payload = {
@@ -535,6 +709,26 @@ async def test_handler_round_trip_list_remove_clear(
         {"workflow_id": "wf-h", "node_id": "canvas-h"}, _FakeSocket()
     )
     assert final["items"] == []
+
+
+async def test_handler_reads_versions(canvas_database, handler_env, handler_events):
+    handler_env(_graph())
+    store = CanvasStore(canvas_database)
+    scope = CanvasScope(owner_id="owner", workflow_id="wf-h", node_id="canvas-h")
+    [note], _, _ = await store.append(scope, [{"kind": "note", "content": "one"}])
+    await store.update(scope, note["id"], {"kind": "note", "content": "two"})
+    where = {"workflow_id": "wf-h", "node_id": "canvas-h", "item_id": note["id"]}
+
+    listed = await handle_canvas_versions(where, _FakeSocket())
+    assert (listed["success"], listed["latest"], [entry["version"] for entry in listed["versions"]]) == (True, 2, [2, 1])
+    first = await handle_canvas_version({**where, "version": 1}, _FakeSocket())
+    assert (first["success"], first["item"]["content"], first["item"]["latest"]) == (True, "one", 2)
+
+    assert (await handle_canvas_version({**where, "version": 9}, _FakeSocket()))["success"] is False
+    assert (await handle_canvas_version({**where, "version": "1"}, _FakeSocket()))["success"] is False
+    assert (await handle_canvas_versions({**where, "item_id": ""}, _FakeSocket()))["success"] is False
+    # The same preamble as the other handlers.
+    assert (await handle_canvas_versions(where, _FakeSocket(path="/ws/internal")))["success"] is False
 
 
 # ---------------------------------------------------------------------------
