@@ -48,7 +48,11 @@ cd server
 python -m services.temporal.worker
 ```
 
-This invokes `run_standalone_worker()` from `services/temporal/worker.py`.
+This invokes `run_standalone_worker()` from `services/temporal/worker.py`. It also starts the chat relay
+(`services/chat/relay.py`): the worker has no sockets of its own, so the chat run events and the `chat.updated` /
+`approval_lifecycle` broadcasts its activities make go to the backend over `/ws/internal`
+([Chat Protocol → Standalone workers](./chat_protocol.md#standalone-workers)). Other broadcasts from its activities
+(node status, agent progress) still reach only its own process.
 
 ## System Architecture
 

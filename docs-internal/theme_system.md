@@ -327,7 +327,7 @@ Wave 15 added structural classNames across the React tree so the handoff CSS sel
 | Sidebar | `.sidebar` | WorkflowSidebar |
 | Component palette | `.palette` | ComponentPalette |
 | Console / chat panel | `.chat` | ConsolePanel (root) |
-| Chat turns (Home and Dev) | `.chat-msg .chat-msg-user` on the owner's bubble; `.chat-msg .chat-msg-bot` on a reply's text only; `.chat-turn-user`, `.chat-turn-bot` on each turn; `.chat-composer` on the message box | features/chat (`UserTurn`, `AssistantTurn`, `Composer`) |
+| Chat turns (Home and Dev) | `.chat-msg .chat-msg-user` on the owner's bubble; `.chat-msg .chat-msg-bot` on a reply's text only; `.chat-turn-user`, `.chat-turn-bot` on each turn; `.chat-composer` on the message box; `.chat-approval` on a draft's card; `.chat-genui` on a generated interface | features/chat (`UserTurn`, `AssistantTurn`, `Composer`, `approval/ApprovalCard`, `turns/GeneratedUiBlock`) |
 | Status bar | `.statusbar`, `.pip` (connection dot) | StatusBar |
 | Modal | `.modal`, `.modal-frame`, `.modal-head` | Modal |
 | Collapsible section | `.cat`, `.cat-head`, `.cat-body` | CollapsibleSection |

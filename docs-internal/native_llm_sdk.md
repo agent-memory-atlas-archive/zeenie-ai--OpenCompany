@@ -267,6 +267,29 @@ either way, only later. How each declared provider streams:
 
 Turning streaming on for another provider means declaring the flag after a
 recorded-stream test shows its response is unchanged (`tests/llm/test_streaming.py`).
+None has a recording yet. Each needs one stream recorded with a real key (a
+request with tool calls and, where the model reasons, reasoning on). Checked
+against each vendor's docs (2026-10-04), this is what stands in the way:
+
+- **Gemini** (`generate_content_stream`): its thinking guide says a client must
+  send thought parts back exactly as received, and a stream arrives as text
+  fragments, with the signature possibly on a part of its own. The streamed
+  parts therefore cannot be folded into the parts the plain call returns
+  (`content` joins parts with a newline; tool-call ids fall back to the part's
+  index), and keeping them as received changes `provider_state`. A recording
+  decides between merging them and relaxing the contract for `provider_state`.
+- **OpenRouter** (an `OpenAIProvider`): streamed `reasoning_details` entries
+  carry `index` only optionally and repeat `id` and `format` in every delta. The
+  SDK's accumulator fails on an entry without `index` and joins repeated
+  strings ("anthropic-claude-v1anthropic-claude-v1"), which would corrupt the
+  details replayed on the next tool turn. It needs its own fold first.
+- **OpenAI-compatible providers** go through the same chat-completions path and
+  need `stream_options.include_usage`, or the response would report no usage.
+  DeepSeek documents it, along with `reasoning_content` deltas, and is the
+  nearest. Groq's reference does not say where streamed usage goes (top-level
+  or `x_groq.usage`). For Mistral, Kimi, Cerebras, xAI and Sarvam, the docs
+  read did not settle it either. A user-named endpoint (`openai_compatible`)
+  can be any server, so it does not stream.
 
 ## Registry, Unifier, and Lazy SDK Clients
 

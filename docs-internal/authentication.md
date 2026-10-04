@@ -231,9 +231,10 @@ Recorded explicitly because each of these is easy to assume is handled.
   Docker and by `company deploy`), or any web page open on the same machine,
   could run a `shell` node. The handshake now requires the
   `X-OpenCompany-Internal-Token` header, an HMAC of `SECRET_KEY`
-  (`internal_socket_token` in `services/authz/ws_surface.py`); both worker
-  clients (`services/temporal/activities.py`, `ws_client.py`) send it, and any
-  new internal client must too. A loopback-address check would not do: a
+  (`internal_socket_token` in `services/authz/ws_surface.py`); the worker
+  clients (`services/temporal/activities.py`, `ws_client.py`, and a standalone
+  worker's chat relay, `services/chat/relay.py`) send it, and any new internal
+  client must too. A loopback-address check would not do: a
   reverse proxy on the same host makes public traffic arrive from 127.0.0.1,
   and a page's socket to `localhost` is itself loopback. Even with the token
   the socket reaches only the deny-by-default allowlist

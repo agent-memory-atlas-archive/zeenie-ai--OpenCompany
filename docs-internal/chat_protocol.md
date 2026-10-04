@@ -58,8 +58,9 @@ internal socket, load the workflow, and compare its owner with the socket's exec
   (`data: {session_id, hub_epoch, name, value}`, no `run_id`); the client then takes fresh snapshots. Text deltas
   are batched before they are published (see [Streaming, steps and Stop](#streaming-steps-and-stop)), not merged in
   the queue.
-- Delivery is in-process: events published by an activity on a worker in another process do not reach sockets here
-  yet (a relay is planned).
+- Publishers call `publish_run_event` (`services/chat/hub.py`), which delivers in-process. A standalone worker
+  (`python -m services.temporal.worker`) has no sockets, so it relays instead; see
+  [Standalone workers](#standalone-workers).
 - `chat.updated` remains an identity-only broadcast (`{workflow_id, session_id, role}`) that tells every open thread
   to refetch `get_chat_messages`.
 
@@ -176,6 +177,34 @@ tool_call_id?, ui_part_id?, agent_node_id?, deployment_state?}`. `status` is `pe
 | `canvas_version` | `nodes/tool/canvas` | `{workflow_id, node_id, item_id, version}` | `{success, item: CanvasItem-at-that-version & {latest}}` |
 | `dictation_status` | `nodes/speech` | `{session_id}` | `{success, available, provider}` |
 | `transcribe_audio` | `nodes/speech` | `{session_id, path, language?}` (`path` under `uploads/`) | `{success, text, language, provider}`; `speech_unavailable` |
+
+### Worker relay (`server/services/chat/relay.py`)
+
+Internal: the backend accepts it on `/ws/internal` only (the worker token, `services/authz/ws_surface.py`
+`INTERNAL_SOCKET_HANDLERS`), and a client socket gets `access_denied`. The worker sends it without a `request_id`.
+
+| Handler | Request | Response |
+|---|---|---|
+| `chat_run_publish` | `{items}` (at most 500): `{kind: "run_event", run_id, session_id, workflow_id, suffix, fields, event_key}`, `{kind: "broadcast", type: "chat.updated" \| "approval_lifecycle", data: <CloudEvent>, session_id?}`, `{kind: "resync", session_ids}` | `{success, published, refused}`; `invalid_items` |
+
+## Standalone workers
+
+The hub delivers to the sockets of the process it runs in. The backend's embedded workers share that process, but
+a standalone worker (`run_standalone_worker`, for horizontal scaling) does not. It starts a relay at boot
+(`start_relay`), and from then on `publish_run_event`, `announce_chat_updated` (`services/chat_thread.py`) and
+`broadcast_approval_change` (`services/approvals/events.py`) queue what they would have published. One writer sends
+the queue in order over the worker's own `/ws/internal` connection as `chat_run_publish` frames, at most
+`hub.relay_batch_size` items to a frame (`server/config/chat_defaults.json`), reconnecting with backoff when the
+backend restarts. The backend publishes each run event into its own hub, so `seq`, `hub_epoch` and the `event_key`
+dedupe are the backend's, exactly as for its own events. It sends each broadcast to its sockets only when the
+CloudEvent type matches the wire key.
+
+Nothing waits on the relay, and nothing is resent. Past `hub.relay_queue_size` queued items an event is dropped, and
+so is a frame the connection lost. The next frame that gets through ends with a `resync` item for the sessions
+those belonged to, and the backend sends their subscribers `opencompany.resync`. Their clients take fresh
+snapshots, in which a stored terminal state wins. The rows are the record: text deltas a resync cannot restore are in
+the saved reply. Other broadcasts from a standalone worker's activities (node status, agent progress, Canvas and
+Memory updates) still reach only that process.
 
 ## Messages
 
@@ -439,6 +468,12 @@ What an employee sends to someone waits for the owner's OK while its workflow as
   the outcome (`approvals.record_outcome`): `sent`, `not_sent`, or `unknown` when the activity broke off. The node's
   activity runs only under that claim. The first time the drafts are listed after a start, sends that never started
   are started again and sends that never reported end `failed` with an unknown outcome.
+- **At most once.** Temporal runs a tool activity again only when an attempt broke off (the worker stopped, a
+  timeout); a failure the node reports comes back as a result and is not retried. A later attempt of an agent's call
+  that sends (Ask first off, or no rule) therefore does not send again (`tool_calls.resend_refusal`, checked in
+  `BaseNode.as_activity` after the gate): the model reads `SendOutcomeUnknown` (it may have gone out), and a call
+  answering the owner in the chat is recorded with outcome `unknown`, so the card offers Try again behind a
+  confirmation. Held calls are drafts, made once per call, and still retry.
 - **The employee hears how it went**: an `[update]{...}[/update]` note (`approval:<id>`) at the start of its next
   turn in the chat, for a send that went, failed or was discarded.
 - **In the chat.** A draft made answering the owner is recorded on the run (`parts.approvals`) and shown at once (an
