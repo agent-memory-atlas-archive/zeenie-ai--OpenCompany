@@ -102,6 +102,9 @@ An editor adopts them as they are:
   library skills used to be wiped);
 - ids the canvas already has are skipped, because the same batch can
   arrive twice (a retried write announces it again);
+- a `delete_edge` takes that edge out (an employee's upgrade puts a gate
+  between an agent and its reply, in place of the edge between them);
+  one already gone is skipped;
 - `set_node_parameters` goes to the parameter cache, not the graph.
 
 Unlike `save_workflow` this never replaces the graph, so it cannot drop what
@@ -161,6 +164,7 @@ failures (toast, log, retry, etc.).
 | Auto-add Skill on tool connect | WS request `evaluate_auto_skill` (frontend on edge connect/disconnect). The handler reads the wired Master Skill's saved row, so its `set_node_parameters` op is that whole row with only `skills_config` changed | `server/services/auto_skill.py` |
 | Agent Builder runtime tools | `apply_graph_additions`, then the persisted `workflow_ops_apply` push (mid-execution, from the agent's tool call) | `server/nodes/tool/agent_builder/__init__.py` |
 | Turn on Talk (any employee on Home, hired or built in Dev mode) | `apply_graph_additions`, then the persisted push | `server/services/employees/handlers.py` |
+| Upgrading an employee an older builder made (on Apply, Turn on Talk, Start) | `apply_graph_additions` with `removed_edges`, then the persisted push | `server/services/employees/upgrade.py` |
 | Vertex managed agent cloud-tool nodes | whole-graph `database.save_workflow`, then a push that is NOT persisted (the editor saves the parameter rows) | `server/nodes/agent/vertex_managed_agent/_ops.py` |
 
 ## Two delivery modes

@@ -322,12 +322,19 @@ the client's `HIRE_PAYLOAD_KEYS` must match, locked by
    on one Skills node (`masterSkill`) with each skill's text copied in, so a
    later change to the library never alters an employee already hired. A
    skill named `skill`, or one ending in `-personality`, is left out: it would
-   take over the Skill tool, or replace the whole system message. With "Ask me before
-   sending anything" on, a reply goes through `approvalGate`, and tools that
-   send or spend money are left off, except one that declares
-   `ask_first_params`: the "Web browser" app's browser stays on with
-   `interaction: read_only`, so it can read pages and hands any change to the
-   owner through `request_user`. The Web browser app has nothing to connect
+   take over the Skill tool, or replace the whole system message. The rule is
+   live (builder version 3, `LIVE_RULE_BUILDER_VERSION`): every app reply goes
+   through `approvalGate`, which reads it each time; the apps' tools are all
+   attached, and while the owner asks first a call that sends is held for
+   them, Stripe is refused and the browser reads only, per call. The talk
+   agent alone also gets its talk tools: generated UI in the chat (`chatUi`,
+   "Show in chat") and a way to send through each of the hire's apps (the
+   registry's `talk_send`: WhatsApp, WhatsApp Business, Telegram, Discord,
+   Gmail, Outlook, email), so the owner can ask it to send something; never on
+   a worker strangers write to. The instructions read the same with the rule
+   on or off (a test holds them byte for byte). An older tool that declares
+   `ask_first_params` and no approval spec would still be attached in that
+   form. The Web browser app has nothing to connect
    (its catalogue entry's `connected_check` is `builtin`); its Connectors
    panel manages optional login profiles. Every node type must pass
    `node_allowlist.is_hire_allowed` ([Node Allowlist](./node_allowlist.md));
@@ -336,9 +343,8 @@ the client's `HIRE_PAYLOAD_KEYS` must match, locked by
    [persist_new_workflow](../server/services/workflow_storage/persist.py)
    (shared with workflow import);
 5. records on the row the apps the graph actually uses (`built.app_ids`), so
-   an app the hire named but left out (a tool that sends while they ask
-   first) never shows as one to connect; summaries read apps off the graph
-   the same way;
+   an app the hire named but left out never shows as one to connect;
+   summaries read apps off the graph the same way;
 6. answers `{employee, started, missing_apps, needs_ai, unsupported_apps, warnings, idempotent}`
    and, when every app is connected and an AI model exists, starts the
    employee in the background. Errors: `invalid_request`, `too_large`,
@@ -606,11 +612,12 @@ asks, within the rule Hire applies
 ([policy.py](../server/services/employees/policy.py)):
 
 - **Tools**: the ones every hire gets (web search, checklist, clock, Memory,
-  Canvas) and the app registry's. While "Ask me before sending anything" is
-  on, nothing that sends or spends, except a tool with `ask_first_params` in
-  that form (the browser, read-only). Every type must pass `is_hire_allowed`,
-  and an app's tool needs the app connected. A refusal is one plain sentence
-  the agent passes on.
+  Canvas) and the app registry's. A tool that sends or spends comes whole:
+  while "Ask me before sending anything" is on, each call waits for the owner
+  (or is refused, or reads only), per call. Only one that cannot wait (no
+  approval spec) stays off, or comes in its `ask_first_params` form. Every
+  type must pass `is_hire_allowed`, and an app's tool needs the app
+  connected. A refusal is one plain sentence the agent passes on.
 - **Skills**: from the owner's library (Settings > Skills, on or off for new
   hires) and the Discover folder (`server/skills/employee/`), with their text
   copied in; never `skill` or a `*-personality` skill.
@@ -650,14 +657,16 @@ unless it was approved, and the recipient always comes from the run's
 trigger. Full contract: [Chat Protocol, Approvals](./chat_protocol.md#approvals)
 and [approvalGate](./node-logic-flows/workflow_triggers/approvalGate.md).
 
-The rule also limits what an employee may add to itself from Talk (nothing
-that sends or spends; see [Adding tools and skills from Talk](#adding-tools-and-skills-from-talk)),
-and a talk agent that asks first is told it cannot send or spend anything for
-the owner, only write it for them to send. The summary's `asks_first` follows
-the live rule (for a workflow built in Dev mode with no rule, whether it has an
-approval gate), shown in a line under the employee's page. A graph built
-before the live rule (`builder_version` below 3) needs Apply for a changed rule
-to cover everything: `set_ask_first` says so (`needs_apply`).
+The summary's `asks_first` follows the live rule (for a workflow built in Dev
+mode with no rule, whether it has an approval gate), shown in a line under the
+employee's page. A graph an older builder made (`builder_version` below 3) is
+upgraded on Apply, Turn on Talk and Start
+([upgrade.py](../server/services/employees/upgrade.py)): an ungated app reply
+gets a gate (the edge from the agent now goes to the gate, and the reply reads
+the gate's text and recipient; one saved mutation with a `delete_edge` op, so
+an editor with it open follows), the tools asking first left out come in, a
+browser saved read-only is saved whole, and the talk agent gets its talk
+tools. Until then `set_ask_first` answers `needs_apply`.
 
 ## "Done today"
 
