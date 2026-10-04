@@ -1,6 +1,6 @@
 # Reusable validation workflow. Called by ci.yml and release.yml.
-# Jobs: build-and-lint (client build + lint), backend-tests, cli-tests,
-# test-build-start (cross-OS build + start smoke test).
+# Jobs: build-and-lint (client build, lint, tests, JS dependency audit),
+# backend-tests, cli-tests, test-build-start (cross-OS build + start smoke test).
 
 name: Predeploy
 
@@ -27,6 +27,16 @@ jobs:
         run: bun run --filter react-flow-client typecheck
       - name: Frontend tests (vitest)
         run: bun run --filter react-flow-client test
+      # GitHub's dependency graph cannot read bun.lock, so no Dependabot alert
+      # covers the JS trees and these audits are the only check. Each script
+      # carries its ignore list; docs-internal/ci_cd.md ("Dependency update
+      # policy") says why each entry is there. desktop/ has its own lockfile,
+      # which bun audits without installing it.
+      - name: Audit JS dependencies
+        run: bun run audit:deps
+      - name: Audit desktop JS dependencies
+        working-directory: desktop
+        run: bun run audit:deps
 
   backend-tests:
     name: Backend tests

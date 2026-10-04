@@ -16,7 +16,7 @@ OpenCompany/
 │   ├── models/             # SQLModel definitions
 │   ├── nodes/              # Plugin folders (one per node; the WhatsApp bridge is the
 │   │                       #   `edgymeow` package `bun add`ed under DATA_DIR/packages/, not in-tree)
-│   └── requirements.txt
+│   └── uv.lock             # Locked Python dependencies (`uv sync` installs from it)
 ├── scripts/                # Install lifecycle helpers, run by bun (install/preinstall/postinstall)
 └── package.json            # Workspace root; bun@1.4.0 scripts wrapping `python -m cli`
 ```
@@ -240,17 +240,15 @@ PYTHON_BACKEND_PORT=6678
 ```
 
 ### Python dependencies fail
-The server is uv-managed — prefer `uv sync` from `server/` (creates `server/.venv` against the committed `uv.lock`; after editing `pyproject.toml` run `uv lock` and commit the result, CI checks it with `uv lock --check`). The pip fallback works too:
+The server is uv-managed — prefer `uv sync` from `server/` (creates `server/.venv` against the committed `uv.lock`; after editing `pyproject.toml` run `uv lock` and commit the result, CI checks it with `uv lock --check`). The pip fallback installs the same pins from an export of the lock:
 ```bash
 cd server
+uv export --frozen --no-emit-project --no-hashes --no-dev -o requirements.txt
 python -m venv venv
 source venv/bin/activate  # or venv\Scripts\activate on Windows
 pip install -r requirements.txt
 ```
-`server/requirements.txt` is an exact-pin export of the lock — regenerate after dependency changes with:
-```bash
-uv export --frozen --no-emit-project --no-hashes --no-dev -o requirements.txt
-```
+The export is never committed (`.gitignore` lists it): a tracked copy drifts from the lock, and GitHub files a second Dependabot alert against it that cannot close.
 
 ### Database issues
 SQLite databases are created automatically under `DATA_DIR`
