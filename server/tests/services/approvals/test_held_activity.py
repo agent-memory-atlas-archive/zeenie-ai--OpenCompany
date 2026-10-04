@@ -136,6 +136,19 @@ async def test_a_later_attempt_still_holds_or_runs_what_does_not_send(harness, s
     assert result["success"] is True
 
 
+async def test_a_later_browser_attempt_resumes_instead_of_refusing(harness, service):
+    # The browser's later attempt resumes a wait the worker cut short
+    # (NodeWaitInterrupted); Ask first restricts it rather than holding it.
+    browsing = {"operation": "click", "ref": "e3"}
+    call = context(node_id="wf:browser:1", node_data=dict(browsing), tool_args=dict(browsing))
+    for rule in (None, False, True):
+        if rule is not None:
+            await rules.set_ask_first(harness.database, "wf", rule)
+        result = await attempt(2).run(get_node_class("browser").as_activity(), call)
+        assert result["success"] is True, rule
+    assert service.execute_node.await_count == 3
+
+
 async def test_the_first_attempt_sends_as_before(harness, service):
     await rules.set_ask_first(harness.database, "wf", False)
     result = await attempt(1).run(get_node_class("whatsappSend").as_activity(), context())

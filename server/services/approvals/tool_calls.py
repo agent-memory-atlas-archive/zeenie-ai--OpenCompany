@@ -24,7 +24,9 @@ sent the message, so a later attempt of a call that sends does not send it
 again (:func:`resend_refusal`): the model reads that it may have gone out,
 and with Ask first off the chat's record says so (``outcome: unknown``). The
 owner's approved sends already run with no retry
-(services/temporal/approved_tool_call_workflow.py).
+(services/temporal/approved_tool_call_workflow.py). A tool that Ask first
+restricts instead of holding (the browser) keeps its own retries: its later
+attempt resumes a wait the worker cut short (``NodeWaitInterrupted``).
 
 What a node sends as (its locked ``server_controlled_fields``: the account,
 the mailbox) never comes from the model, so the row keeps the call's
@@ -317,7 +319,7 @@ def resend_refusal(context: Mapping[str, Any], node_cls: Any, node_data: Mapping
         return None
     if context.get("approval_execution") is None and not is_agent_tool_call(context):
         return None
-    if not spec.sends(node_data):
+    if spec.restrict_while_asking or not spec.sends(node_data):
         return None
     return {"success": False, "error": RESEND_MESSAGE, "error_type": "SendOutcomeUnknown"}
 
