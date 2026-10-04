@@ -100,6 +100,11 @@ def _resolve_apps(request: HireEmployeeRequest, connected: List[str]) -> tuple:
     return known, unsupported
 
 
+async def owner_values_for(auth_service: Any) -> Dict[str, str]:
+    """The owner's own addresses (for reports to them, and sending as them)."""
+    return await _owner_values(Connections(auth_service), auth_service)
+
+
 async def _owner_values(connections: Connections, auth_service: Any) -> Dict[str, str]:
     """The owner's own addresses, for reports sent to them."""
     values: Dict[str, str] = {}
@@ -347,4 +352,4 @@ async def handle_hire_employee(data: Dict[str, Any], websocket: WebSocket) -> Di
         raise
 
 
-__all__ = ["handle_hire_employee", "payload_hash"]
+__all__ = ["handle_hire_employee", "owner_values_for", "payload_hash"]

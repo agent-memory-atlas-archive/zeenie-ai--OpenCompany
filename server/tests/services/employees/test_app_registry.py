@@ -86,7 +86,7 @@ def _substitute(value):
 
 def _templates():
     for app in get_apps().values():
-        for role in ("trigger", "reply", "notify_owner"):
+        for role in ("trigger", "reply", "notify_owner", "talk_send"):
             template = getattr(app, role)
             if template is not None:
                 yield app, role, template
@@ -109,6 +109,9 @@ def test_template_params_are_real_fields_with_valid_values(app, role, template):
     unknown = set(template.params) - set(params_model.model_fields)
     assert not unknown, f"{template.type} has no params {sorted(unknown)}"
     sample = {key: _substitute(value) for key, value in template.params.items()}
+    if role == "talk_send":
+        # The model fills in who it goes to and what it says.
+        sample = {**{name: "sample" for name, field in params_model.model_fields.items() if field.is_required()}, **sample}
     params_model.model_validate(sample)
 
 
@@ -121,6 +124,8 @@ def test_placeholders_name_real_fields(app, role, template):
     for source in sources:
         for match in _placeholders(source):
             scope, field = match.group(1), match.group(2)
+            # The agent the owner talks to sends from no trigger's run.
+            assert not (role == "talk_send" and scope != "owner"), f"{app.id}.talk_send uses {match.group(0)}"
             if scope == "trigger":
                 assert trigger_type in TRIGGER_EMITS, f"{app.id} uses ${{trigger.*}} without a known trigger"
                 assert field in TRIGGER_EMITS[trigger_type], f"{trigger_type} emits no `{field}`"
@@ -185,6 +190,20 @@ def test_the_web_browser_is_an_app_that_turns_read_only_under_ask_first():
     assert app_for_node_type("browser").id == "web"
     for name in ("Web browser", "browser", "Chrome", "our website", "the internet"):
         assert resolve_app(name).id == "web", name
+
+
+def test_what_the_talk_agent_sends_with_waits_for_the_owner():
+    """A talk_send tool is a tool whose every call waits for the owner while
+    they ask first: its plugin declares an approval spec."""
+    from services.plugin.approval import approval_spec
+
+    sending = {app.id: app.talk_send for app in get_apps().values() if app.talk_send is not None}
+    assert {"whatsapp", "whatsapp_business", "telegram", "discord", "gmail", "outlook", "email"} <= set(sending)
+    for app_id, template in sending.items():
+        node_cls = get_node_class(template.type)
+        assert node_cls.usable_as_tool, f"{app_id}: {template.type} is not a tool"
+        spec = approval_spec(node_cls)
+        assert spec is not None and spec.sends({**template.params, "operation": template.params.get("operation", "send")}), app_id
 
 
 def test_node_types_map_back_to_one_app():

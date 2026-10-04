@@ -71,7 +71,7 @@ from services.employees.llm import LLMChoice
 from services.approvals.contract import APPROVAL_GATE_TYPE, NO_REPLY, approved_edge_condition, send_condition
 from services.employees.policy import BASE_TOOLS, SKILL_TOOL_ENTRY, SKILL_TOOL_NAME, check_skill, check_tool
 from services.employees.prompt import Delivery, OwnerProfile, PromptInputs, build_system_message
-from services.employees.talk import TalkAgent, plan_talk_line, talk_agent_label, talk_state
+from services.employees.talk import TalkAgent, TalkTool, plan_talk_line, talk_agent_label, talk_state
 from services.graph_build import (
     CONTEXT_TYPE,
     Edge,
@@ -89,11 +89,16 @@ from services.graph_build import (
     tool_edge,
 )
 
-BUILDER_VERSION = 2
+BUILDER_VERSION = 3
 #: The first builder whose graphs follow the live Ask first rule (every app
 #: reply behind a gate, sending tools attached and held per call). Older
 #: graphs need Apply for a changed rule to take full effect.
 LIVE_RULE_BUILDER_VERSION = 3
+#: Generated UI in the chat: a talk tool every hire's talk agent gets.
+CHAT_UI_TYPE = "chatUi"
+CHAT_UI_LABEL = "Show in chat"
+#: The approval gate's label in front of an app reply.
+GATE_LABEL = "Check before sending"
 
 AGENT_TYPE = "aiAgent"
 CHAT_TRIGGER_TYPE = "chatTrigger"
@@ -565,7 +570,10 @@ def _plan_reply(
     fields = _REPLY_FIELDS.get(template.type)
     subject = ref(trigger.key, "subject")
     subject = f"Re: {subject}" if app.id in _MAIL_APPS else f"Reply from {inputs.request.name}"
-    if not inputs.request.rules.ask_first:
+    # Every reply that can wait for the owner goes through the gate, which
+    # reads the live Ask first rule; one that cannot is sent as written only
+    # while the owner does not ask first.
+    if fields is None and not inputs.request.rules.ask_first:
         try:
             params = _substitute(
                 dict(template.params), {"reply_text": ref(agent_key, "response"), "reply_subject": subject}, trigger.key, inputs.owner_values
@@ -575,7 +583,7 @@ def _plan_reply(
             return None
         return _DeliveryPlan(role="reply", app=app, node_type=template.type, label=labels.take(f"Reply on {app.name}"), params=params)
 
-    # Asking first: the reply waits behind the gate, or does not happen.
+    # The reply waits behind the gate while the owner asks first, or does not happen.
     if fields is None:
         warnings.append(f"{app.name} replies cannot wait for your approval yet, so they are off")
         return None
@@ -585,7 +593,7 @@ def _plan_reply(
     except _Unresolved:
         warnings.append(f"{app.name} replies cannot find who to answer, so they are off")
         return None
-    gate_label = labels.take("Check before sending")
+    gate_label = labels.take(GATE_LABEL)
     gate_key = label_key(gate_label)
     gate_params: Dict[str, Any] = {
         "channel": app.name,
@@ -662,6 +670,49 @@ def _plan_app_tools(inputs: BuildInputs, trigger: _TriggerPlan, warnings: List[s
     return plans
 
 
+# ----- what only the agent the owner talks to gets -----
+
+
+def talk_tools(
+    apps: Sequence[AppSpec],
+    *,
+    owner_values: Mapping[str, str],
+    allowed: Callable[[str], bool],
+    warnings: Optional[List[str]] = None,
+) -> List[TalkTool]:
+    """Generated UI in the chat, and a way to send through each of the
+    hire's apps when the owner asks (``talk_send``). Every send waits for the
+    owner while they ask first, so asking first never takes them away."""
+    tools: List[TalkTool] = []
+    if allowed(CHAT_UI_TYPE):
+        tools.append(TalkTool(CHAT_UI_TYPE, CHAT_UI_LABEL))
+    for app in apps:
+        template = app.talk_send
+        if template is None or not allowed(template.type):
+            continue
+        params = fill_params(template.params, None, owner_values)
+        if params is None:
+            if warnings is not None:
+                warnings.append(f"They can't send on {app.name} for you until you {_connect(app)}.")
+            continue
+        tools.append(TalkTool(template.type, template.label or f"Send on {app.name}", params))
+    return tools
+
+
+def fill_params(params: Mapping[str, Any], trigger_key: Optional[str], owner_values: Mapping[str, str]) -> Optional[Dict[str, Any]]:
+    """A template's parameters with their placeholders filled in (``${trigger.*}``
+    from the trigger node ``trigger_key`` names, ``${owner.*}`` from the owner's
+    own addresses); None when one cannot be."""
+    try:
+        return _substitute(dict(params), {}, trigger_key, owner_values)
+    except _Unresolved:
+        return None
+
+
+def _plan_talk_tools(inputs: BuildInputs, warnings: List[str]) -> List[TalkTool]:
+    return talk_tools(inputs.apps, owner_values=inputs.owner_values, allowed=inputs.allowed, warnings=warnings)
+
+
 # ----- the whole graph -----
 
 
@@ -678,6 +729,8 @@ def build_employee_graph(inputs: BuildInputs) -> BuiltEmployee:
 
     app_tools = _plan_app_tools(inputs, trigger, warnings)
     browser_tools = [plan for plan in app_tools if plan.tool.role == "browser"]
+    talk_tools = _plan_talk_tools(inputs, warnings)
+    sends = any(tool.type != CHAT_UI_TYPE for tool in talk_tools)
 
     def instructions(delivery_mode: Delivery, *, delivery_app: Optional[str] = None, has_builder: bool = False) -> str:
         return build_system_message(
@@ -692,6 +745,7 @@ def build_employee_graph(inputs: BuildInputs) -> BuiltEmployee:
                 has_browser=bool(browser_tools),
                 browser_read_only=bool(browser_tools) and all(plan.read_only for plan in browser_tools),
                 has_builder=has_builder,
+                has_send_tools=delivery_mode == "talk" and sends,
             )
         )
 
@@ -791,6 +845,7 @@ def build_employee_graph(inputs: BuildInputs) -> BuiltEmployee:
         agent=talk_agent,
         hired=True,
         report_from=roles["agent"] if trigger.kind == "schedule" else None,
+        talk_tools=talk_tools,
     )
     roles.update(plan.role_ids(graph.place(plan.additions)))
 
@@ -810,6 +865,8 @@ def build_employee_graph(inputs: BuildInputs) -> BuiltEmployee:
 __all__ = [
     "APPROVED_CONDITION",
     "BUILDER_VERSION",
+    "CHAT_UI_TYPE",
+    "GATE_LABEL",
     "LIVE_RULE_BUILDER_VERSION",
     "BuildError",
     "BuildInputs",
@@ -817,6 +874,8 @@ __all__ = [
     "LibrarySkill",
     "SEND_CONDITION",
     "build_employee_graph",
+    "fill_params",
+    "talk_tools",
     "label_key",
     "ref",
     "schedule_params",

@@ -104,30 +104,24 @@ class TestTools:
         assert await database.get_node_parameters("7:currentTimeTool:1") == {"timezone": "Asia/Kolkata"}
 
     @pytest.mark.parametrize(
-        "node_type,app,at_stake",
-        [("googleCalendar", "Google Calendar", "can send things on your behalf"), ("stripeAction", "Stripe", "can spend money")],
+        "node_type,params",
+        [
+            ("googleCalendar", {"operation": "list", "calendar_id": "primary", "send_updates": "none"}),
+            ("stripeAction", {"command": ""}),
+            ("browser", {"interaction": "full"}),
+        ],
     )
-    async def test_asking_first_refuses_what_sends_or_spends(self, builder, database, node_type, app, at_stake):
+    async def test_asking_first_adds_what_sends_or_spends_whole(self, builder, database, node_type, params):
+        # Each call waits for the owner (Stripe is refused, the browser reads
+        # only) while they ask first, decided per call: services/approvals.
         await save_graph(database, employee_graph())
         await hire(database, ask_first=True)
-        builder.connected = ["google_calendar", "stripe"]
+        builder.connected = ["google_calendar", "stripe", "web"]
 
         result = await call("add_tool", talk(), node_type=node_type)
 
-        rule = load_genui_catalog()["ask_first_label"]
-        assert result.summary == f'{app} {at_stake}, so it stays off while "{rule}" is on.'
-        assert result.operations == []
-        assert builder.frames == [] and await saved(database) == employee_graph()
-
-    async def test_the_browser_is_added_read_only_while_asking_first(self, builder, database):
-        await save_graph(database, employee_graph())
-        await hire(database, ask_first=True)
-        builder.connected = ["web"]
-
-        result = await call("add_tool", talk(), node_type="browser")
-
-        assert await database.get_node_parameters("7:browser:1") == {"interaction": "read_only"}
-        assert result.summary.startswith("Added Browser.")
+        assert result.summary.startswith("Added "), result.summary
+        assert await database.get_node_parameters(f"7:{node_type}:1") == params
 
     async def test_an_app_that_is_not_connected_is_refused(self, builder, database):
         await save_graph(database, employee_graph())
@@ -295,14 +289,17 @@ class TestCatalogue:
         result = await call("inspect_canvas", talk())
 
         tools = {entry["type"]: entry for entry in result.available_tools}
-        assert {"duckduckgoSearch", "writeTodos", "currentTimeTool", "simpleMemory", "canvas", "browser", "googleSheets"} == set(tools)
+        # Asking first takes nothing away: what sends waits per call.
+        from services.employees.apps import get_apps
+
+        app_tools = {tool.type for app in get_apps().values() for tool in app.tools}
+        assert {"duckduckgoSearch", "writeTodos", "currentTimeTool", "simpleMemory", "canvas"} | app_tools == set(tools)
         assert tools["browser"] == {
             "type": "browser",
             "display_name": "Browser",
             "description": tools["browser"]["description"],
             "app": "Web browser",
             "connected": True,
-            "read_only": True,
         }
         assert tools["googleSheets"]["connected"] is False
         assert result.available_agents == []

@@ -1,7 +1,8 @@
 """Adding to a saved workflow from the server, in one transaction.
 
 ``apply_graph_additions`` is how the server grows a workflow that someone
-may have open in the editor (Turn on Talk, the Agent Builder). One write
+may have open in the editor (Turn on Talk, the Agent Builder, an employee's
+upgrade, which may also take out the edge a new node takes the place of). One write
 transaction (``database.run_runtime_mutation``) reads ``workflow.data``,
 places the batch against it (``services.graph_build.add_to_graph``: ids and
 labels allocated against the graph as it is at that moment), appends the
@@ -86,6 +87,8 @@ async def apply_graph_additions(
             raise _WorkflowMissing()
         placed = add_to_graph(workflow_id, workflow.data or {}, additions)
         operations: List[Dict[str, Any]] = []
+        for edge in placed.removed_edges:
+            operations.append(workflow_ops.delete_edge(str(edge.get("id"))))
         refs = {node_id: ref for ref, node_id in placed.node_ids.items()}
         for node in placed.nodes:
             data = {key: value for key, value in node["data"].items() if key != "label"}
@@ -111,7 +114,7 @@ async def apply_graph_additions(
                     condition=(edge.get("data") or {}).get("condition"),
                 )
             )
-        if placed.nodes or placed.edges:
+        if placed.nodes or placed.edges or placed.removed_edges:
             workflow.data = deepcopy(placed.graph)
             workflow.updated_at = datetime.now(timezone.utc)
         for node_id, parameters in placed.parameters.items():

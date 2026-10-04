@@ -29,7 +29,7 @@ at a time.
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import WebSocket
 
@@ -37,12 +37,14 @@ from services.authz.ws_surface import execution_principal
 from services.deployment.control import serialize_control
 from services.deployment.restart import pending_changes, restart_with_latest_graph
 from services.employees import store
+from services.employees.apps import get_app
+from services.employees.builder import CHAT_UI_TYPE, talk_tools
 from services.employees.context import SETTINGS_USER_ID
 from services.employees.graph_index import CANVAS_NODE_TYPE, MEMORY_NODE_TYPE, TODO_NODE_TYPE, index_graph
-from services.employees.policy import asks_first
 from services.employees.prompt import OwnerProfile, PromptInputs, build_system_message, request_from_employee, talk_addendum
 from services.employees.summaries import employee_usage, get_employee_detail, get_employee_summary, list_employee_summaries
-from services.employees.talk import TalkAgent, TalkState, plan_talk_line, sources, talk_agent_label, talk_state
+from services.employees.talk import TalkAgent, TalkState, TalkTool, plan_talk_line, sources, talk_agent_label, talk_state
+from services.employees.upgrade import upgrade_employee
 from services.graph_build import TOOLS_INPUT
 from services.plugin.base import NodeUserError
 from services.plugin.ws import ws_response
@@ -96,7 +98,17 @@ async def _answer(database: Any, auth_service: Any, workflow_id: str, error: Opt
     return {"success": True, "employee": employee}
 
 
-async def _new_talk_agent(database: Any, workflow: Any, row: Any, state: TalkState) -> TalkAgent:
+async def _talk_tools_for(auth_service: Any, row: Any) -> List[TalkTool]:
+    """What only a hired employee's talk agent gets: generated UI, and
+    sending through its apps."""
+    from services.employees.hire import owner_values_for
+    from services.node_allowlist import is_hire_allowed
+
+    apps = [app for app in (get_app(app_id) for app_id in row.apps or []) if app is not None]
+    return talk_tools(apps, owner_values=await owner_values_for(auth_service), allowed=is_hire_allowed)
+
+
+async def _new_talk_agent(database: Any, workflow: Any, row: Any, state: TalkState, *, sends: bool = False) -> TalkAgent:
     """The talk agent a whole line adds, on the worker's model. A hired
     employee's instructions are written again from its hire; one built in
     the editor keeps the worker's own, with a note that this is Talk."""
@@ -124,8 +136,9 @@ async def _new_talk_agent(database: Any, workflow: Any, row: Any, state: TalkSta
                 has_todos=TODO_NODE_TYPE in types,
                 has_canvas=CANVAS_NODE_TYPE in types,
                 has_browser=browser,
-                browser_read_only=browser and asks_first(row),
+                browser_read_only=browser and await _browser_read_only(database, tools & set(index.browser_ids)),
                 has_builder=True,
+                has_send_tools=sends,
             )
         )
     model = {key: worker[key] for key in ("provider", "model") if key in worker}
@@ -138,6 +151,8 @@ async def _enable_talk(database: Any, auth_service: Any, workflow_id: str, *, ke
         return {"success": False, "error": "not_found", "workflow_id": workflow_id}
     if serialize_control(await database.get_latest_workflow_control(workflow_id))["state"] in _TRANSITIONAL_STATES:
         return await _answer(database, auth_service, workflow_id, "conflict")
+    if await upgrade_employee(database, auth_service, workflow_id):
+        workflow = await database.get_workflow(workflow_id) or workflow
     row = await store.get_by_workflow(database, workflow_id)
     roles = dict(row.node_roles or {}) if row is not None else {}
     graph = workflow.data or {}
@@ -146,13 +161,17 @@ async def _enable_talk(database: Any, auth_service: Any, workflow_id: str, *, ke
         return await _answer(database, auth_service, workflow_id, "unsupported")
 
     schedule = row is not None and (row.trigger or {}).get("kind") == "schedule"
+    tools = await _talk_tools_for(auth_service, row) if row is not None else []
     plan = plan_talk_line(
         graph,
         state,
         workflow_id=workflow_id,
-        agent=await _new_talk_agent(database, workflow, row, state) if state.line is None else None,
+        agent=await _new_talk_agent(database, workflow, row, state, sends=any(tool.type != CHAT_UI_TYPE for tool in tools))
+        if state.line is None
+        else None,
         hired=row is not None,
         report_from=roles.get("agent") if schedule else None,
+        talk_tools=tools,
     )
     node_ids: Dict[str, str] = {}
     added = False
@@ -181,8 +200,18 @@ async def _enable_talk(database: Any, auth_service: Any, workflow_id: str, *, ke
 async def _apply_changes(database: Any, auth_service: Any, workflow_id: str, *, key: str, owner: str) -> Dict[str, Any]:
     if await database.get_workflow(workflow_id) is None:
         return {"success": False, "error": "not_found", "workflow_id": workflow_id}
+    await upgrade_employee(database, auth_service, workflow_id)
     restarted = await restart_with_latest_graph(workflow_id, owner_id=owner, key=key)
     return await _answer(database, auth_service, workflow_id, restarted.error)
+
+
+async def _browser_read_only(database: Any, browser_ids: Any) -> bool:
+    """Whether the worker's browser was saved read-only (an older hire);
+    otherwise it reads only per call, while the owner asks first."""
+    for node_id in browser_ids:
+        if (await database.get_node_parameters(node_id) or {}).get("interaction") == "read_only":
+            return True
+    return False
 
 
 def _request_ids(data: Dict[str, Any]) -> tuple:

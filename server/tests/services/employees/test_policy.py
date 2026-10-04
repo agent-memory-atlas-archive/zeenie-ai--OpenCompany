@@ -43,29 +43,37 @@ def test_an_app_tool_comes_with_its_registry_label_and_params():
     assert decision.read_only is False
 
 
-def test_asking_first_leaves_out_what_sends_or_spends():
+def test_a_tool_whose_calls_wait_for_the_owner_stays_while_asking_first():
+    # Each call that sends is held for the owner (Stripe refused, the browser
+    # read-only), decided per call from the live rule: services/approvals.
+    calendar = check_tool("googleCalendar", employee=ASKING_FIRST, connected={"google_calendar"}, allowed=EVERYTHING)
+    assert calendar.allowed and not calendar.read_only
+    assert dict(calendar.params) == {"operation": "list", "calendar_id": "primary", "send_updates": "none"}
+    assert check_tool("stripeAction", employee=ASKING_FIRST, connected={"stripe"}, allowed=EVERYTHING).allowed
+    browser = check_tool("browser", employee=ASKING_FIRST, connected={"web"}, allowed=EVERYTHING)
+    assert browser.allowed and not browser.read_only and browser.role == "browser"
+    assert dict(browser.params) == {"interaction": "full"}
+    assert check_tool("googleSheets", employee=ASKING_FIRST, connected={"google_sheets"}, allowed=EVERYTHING).allowed
+
+
+def test_a_sending_tool_that_cannot_wait_stays_off_while_asking_first(monkeypatch):
+    import services.employees.policy as policy
+
+    monkeypatch.setattr(policy, "approval_spec", lambda _node_cls: None)
     rule = load_genui_catalog()["ask_first_label"]
     calendar = check_tool("googleCalendar", employee=ASKING_FIRST, connected={"google_calendar"}, allowed=EVERYTHING)
     assert (calendar.allowed, calendar.code) == (False, "asks_first")
     assert calendar.reason == f'Google Calendar can send things on your behalf, so it stays off while "{rule}" is on.'
     stripe = check_tool("stripeAction", employee=ASKING_FIRST, connected={"stripe"}, allowed=EVERYTHING)
     assert stripe.reason == f'Stripe can spend money, so it stays off while "{rule}" is on.'
-    sheets = check_tool("googleSheets", employee=ASKING_FIRST, connected={"google_sheets"}, allowed=EVERYTHING)
-    assert sheets.allowed  # it writes, but sends nothing
-
-
-def test_the_browser_stays_read_only_while_asking_first():
-    decision = check_tool("browser", employee=ASKING_FIRST, connected={"web"}, allowed=EVERYTHING)
-    assert decision.allowed and decision.read_only and decision.role == "browser"
-    assert dict(decision.params) == {"interaction": "read_only"}
+    # One the app makes safe comes in that form.
+    browser = check_tool("browser", employee=ASKING_FIRST, connected={"web"}, allowed=EVERYTHING)
+    assert browser.allowed and browser.read_only and dict(browser.params) == {"interaction": "read_only"}
     full = check_tool("browser", employee=NOT_ASKING_FIRST, connected={"web"}, allowed=EVERYTHING)
     assert dict(full.params) == {"interaction": "full"} and not full.read_only
-
-
-def test_asking_first_is_decided_before_the_allowlist():
-    # Hire skips such a tool with a warning instead of failing the hire.
-    decision = check_tool("stripeAction", employee=ASKING_FIRST, connected=None, allowed=lambda _node_type: False)
-    assert decision.code == "asks_first"
+    # Asking first is decided before the allowlist: Hire skips such a tool
+    # with a warning instead of failing the hire.
+    assert check_tool("stripeAction", employee=ASKING_FIRST, connected=None, allowed=lambda _node_type: False).code == "asks_first"
     refused = check_tool("stripeAction", employee=NOT_ASKING_FIRST, connected=None, allowed=lambda _node_type: False)
     assert (refused.code, refused.reason) == ("not_allowed", "Stripe isn't available to hired employees.")
 

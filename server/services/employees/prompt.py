@@ -99,6 +99,9 @@ class PromptInputs:
     browser_read_only: bool = False
     #: The Agent Builder tool, to add tools and skills when the owner asks.
     has_builder: bool = False
+    #: Tools to send through the hire's apps when the owner asks (the agent
+    #: the owner talks to only).
+    has_send_tools: bool = False
 
 
 def _clean(text: str) -> str:
@@ -146,18 +149,23 @@ def _owner_words(inputs: PromptInputs, owner: str) -> List[str]:
 
 def _rules(inputs: PromptInputs, owner: str) -> List[str]:
     """The ground rules and how the work goes out; never shortened."""
-    request = inputs.request
     subject = "The owner" if owner == "the owner" else owner
     out = ["Ground rules:"]
-    if request.rules.ask_first and inputs.delivery == "talk":
+    # The same words whether or not the owner asks first: the rule is read
+    # live when something would go out, and the instructions never change
+    # with it.
+    if inputs.delivery == "talk" and inputs.has_send_tools:
         out.append(
-            f"- {subject} checks everything before it goes out, so you cannot send or spend anything for them. When "
-            "something should go out, write it for them to send."
+            "- When something should go out to someone else (a message, an email), send it with your send tools. "
+            f"While {owner} asks to check first, it waits for their OK on a card here: when a tool says it is "
+            "waiting, tell them it is ready to check, and never send it again."
         )
-    elif request.rules.ask_first:
+    elif inputs.delivery == "talk":
+        out.append(f"- You cannot send anything to other people yourself. When something should go out, write it for {owner} to send.")
+    elif inputs.delivery == "reply":
         out.append(
-            f"- {subject} checks everything before it goes out: what you write is shown to them as a draft, and "
-            "they send it or discard it. Write every answer ready to send."
+            f"- Write every answer ready to send. While {owner} asks to check first, it is shown to them as a draft, "
+            "and they send it or discard it."
         )
     else:
         out.append("- Your answers go out as you write them, so write them ready to send.")
@@ -212,18 +220,15 @@ def _rules(inputs: PromptInputs, owner: str) -> List[str]:
         else:
             out.append(
                 f"- Before anything on a site that spends money, sends something for {owner} or cannot be undone, "
-                f"call request_user so {owner} can check it, unless they already told you to go ahead."
+                f"call request_user so {owner} can check it, unless they already told you to go ahead. While {owner} "
+                "asks to check first your browser can only read: to change anything on a site then, call request_user "
+                f"and say exactly what {owner} should do there."
             )
     if inputs.has_builder:
         out.append(
             f"- When {owner} asks you to take on something you have no tool or skill for, add it with the agent_builder "
             "tool: call inspect_canvas first to see what you can add, and add only what they asked for."
         )
-        if request.rules.ask_first:
-            out.append(
-                f"- While {owner} asks you to check with them first, you cannot add anything that sends or spends. If "
-                "they ask for that, tell them so plainly."
-            )
     if inputs.unsupported_apps:
         names = ", ".join(_clean(name) for name in inputs.unsupported_apps)
         out.append(

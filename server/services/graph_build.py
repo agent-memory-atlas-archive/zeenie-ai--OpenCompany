@@ -195,17 +195,34 @@ class ParamMerge:
 
 
 @dataclass(frozen=True)
+class EdgeRemoval:
+    """An edge of the graph to take out: from ``source`` into ``target``'s
+    ``target_handle`` (existing node ids). One a new node takes the place
+    of (a gate between an agent and its reply)."""
+
+    source: str
+    target: str
+    target_handle: str = MAIN_INPUT
+
+
+@dataclass(frozen=True)
 class GraphAdditions:
     """What to add to a saved graph, planned against the graph as it was
     read. Edge ends are refs or existing node ids; an edge the graph already
     has (same ends and handles) is skipped. Templates in the batch's
     parameters name the wanted labels' keys (``ref(label_key(label),
     field)``); when a label was taken in the meantime and gets a number,
-    they follow it (unless two new nodes wanted that label)."""
+    they follow it (unless two new nodes wanted that label).
+    ``removed_edges`` are taken out first; one the graph no longer has is
+    skipped."""
 
     nodes: Sequence[NewNode] = ()
     edges: Sequence[Edge] = ()
     merges: Sequence[ParamMerge] = ()
+    removed_edges: Sequence[EdgeRemoval] = ()
+
+    def __bool__(self) -> bool:
+        return bool(self.nodes or self.edges or self.merges or self.removed_edges)
 
 
 @dataclass(frozen=True)
@@ -223,6 +240,8 @@ class PlacedAdditions:
     parameters: Dict[str, Dict[str, Any]]
     #: Node id -> parameters to merge into its row.
     merges: Dict[str, Dict[str, Any]]
+    #: The edges taken out, in the saved-graph shape.
+    removed_edges: List[Dict[str, Any]] = field(default_factory=list)
 
 
 def _edge_identity(edge: Mapping[str, Any]) -> Tuple[str, str, str, str]:
@@ -265,7 +284,16 @@ def add_to_graph(workflow_id: str, graph: Mapping[str, Any], additions: GraphAdd
     ref reused or unknown, a Context companion that is not a Context, or an
     agent given a second Context."""
     nodes = list(graph.get("nodes") or [])
-    edges = list(graph.get("edges") or [])
+    removing = {(removal.source, removal.target, removal.target_handle) for removal in additions.removed_edges}
+    edges: List[Any] = []
+    removed_edges: List[Dict[str, Any]] = []
+    for edge in graph.get("edges") or []:
+        if isinstance(edge, Mapping):
+            source, _handle, target, target_handle = _edge_identity(edge)
+            if (source, target, target_handle or MAIN_INPUT) in removing:
+                removed_edges.append(dict(edge))
+                continue
+        edges.append(edge)
     existing = [node for node in nodes if isinstance(node, Mapping)]
     existing_ids = {str(node.get("id")) for node in existing if node.get("id")}
     labels = Labels(template_key(node) for node in existing)
@@ -339,6 +367,7 @@ def add_to_graph(workflow_id: str, graph: Mapping[str, Any], additions: GraphAdd
         edges=placed_edges,
         parameters=parameters,
         merges=merges,
+        removed_edges=removed_edges,
     )
 
 
@@ -347,6 +376,7 @@ __all__ = [
     "CONTEXT_OUTPUT",
     "CONTEXT_TYPE",
     "Edge",
+    "EdgeRemoval",
     "GraphAdditions",
     "Labels",
     "MAIN_INPUT",

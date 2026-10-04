@@ -4,7 +4,8 @@ One entry per app a hire can name ("WhatsApp", "Gmail", "Google Calendar"):
 the credential provider that decides whether it is connected, and how the
 app maps onto workflow nodes (the trigger that starts the employee, the
 node that replies to whoever wrote in, the node that reports to the owner,
-and the tools handed to the agent). The graph builder reads the templates;
+the tools handed to the agent, and how the agent the owner talks to sends
+through it). The graph builder reads the templates;
 the summaries read connection state and phrases.
 
 Names from the model's setup screen are matched by :func:`resolve_app`:
@@ -80,10 +81,15 @@ class AppSpec:
     tools: Tuple[ToolTemplate, ...]
     side_effects: str
     phrases: Mapping[str, str]
+    #: How the agent the owner talks to sends through this app when the
+    #: owner asks it to (the model fills in who and what). Wired to that
+    #: agent only, never to a worker strangers write to; every call waits
+    #: for the owner while they ask first (services/approvals/tool_calls.py).
+    talk_send: Optional[NodeTemplate] = None
 
     @property
     def node_types(self) -> frozenset:
-        types = {t.type for t in (self.trigger, self.reply, self.notify_owner) if t is not None}
+        types = {t.type for t in (self.trigger, self.reply, self.notify_owner, self.talk_send) if t is not None}
         types.update(tool.type for tool in self.tools)
         return frozenset(types)
 
@@ -161,6 +167,7 @@ def _parse(raw: Mapping[str, Any]) -> Dict[str, AppSpec]:
             trigger=_template(app_id, "trigger", entry.get("trigger"), TriggerTemplate),
             reply=_template(app_id, "reply", entry.get("reply")),
             notify_owner=_template(app_id, "notify_owner", entry.get("notify_owner")),
+            talk_send=_template(app_id, "talk_send", entry.get("talk_send")),
             tools=tools,
             side_effects=effect,
             phrases=MappingProxyType({str(k): str(v) for k, v in (entry.get("phrases") or {}).items()}),

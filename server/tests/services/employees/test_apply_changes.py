@@ -99,3 +99,37 @@ async def test_changes_to_one_employee_run_one_at_a_time(harness, monkeypatch):
     release.set()
     await asyncio.gather(first, second)
     assert order == ["start k1", "end k1", "start k2", "end k2"]
+
+
+async def test_an_employee_an_older_builder_made_is_upgraded_first(harness):
+    from services.employees import store
+    from tests.services.employees.test_upgrade import GRAPH, PARAMS, ROLES
+
+    database = harness.database
+    assert await database.save_workflow(workflow_id="7", name="Maya", slug="Maya_7", data=GRAPH)
+    for node_id, params in PARAMS.items():
+        assert await database.save_node_parameters(node_id, params)
+    row, _ = await store.reserve(
+        database,
+        owner_id="owner",
+        idempotency_key="k7",
+        payload_hash="h",
+        fields={"role": "Receptionist", "apps": ["whatsapp", "web"], "rules": {"ask_first": False, "items": []}, "builder_version": 2},
+    )
+    await store.mark_ready(database, row.id, workflow_id="7", node_roles=ROLES)
+
+    result = await apply()
+
+    assert result["success"] is True and harness.calls == [("7", "owner", "k1")]
+    employee = await store.get_by_workflow(database, "7")
+    assert employee.builder_version == 3
+    gate = employee.node_roles["gate"]
+    graph = (await database.get_workflow("7")).data
+    assert any(node["id"] == gate and node["type"] == "approvalGate" for node in graph["nodes"])
+    assert not any(edge["source"] == "7:aiAgent:1" and edge["target"] == "7:whatsappSend:1" for edge in graph["edges"])
+    assert (await database.get_node_parameters("7:whatsappSend:1"))["message"] == "{{checkbeforesending.text}}"
+    assert (await database.get_node_parameters("7:browser:1"))["interaction"] == "full"
+    # Once is enough: the next Apply adds nothing.
+    nodes_before = len(graph["nodes"])
+    await apply(key="k2")
+    assert len((await database.get_workflow("7")).data["nodes"]) == nodes_before

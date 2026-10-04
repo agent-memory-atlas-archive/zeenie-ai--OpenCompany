@@ -92,6 +92,11 @@ async def handle_start_employee(data: Dict[str, Any], websocket: WebSocket) -> D
     if summary["needs_ai"]:
         return {"success": False, "error": "needs_ai"}
     await heal_agent_models(database, auth_service, Connections(auth_service), workflow_id)
+    # An employee an older builder made comes up to the live Ask first rule
+    # before it runs (services/employees/upgrade.py).
+    from services.employees.upgrade import upgrade_employee
+
+    await upgrade_employee(database, auth_service, workflow_id)
     expected = data.get("expected_revision")
     expected_revision = int(expected) if expected is not None else None
     latest = await database.get_latest_workflow_control(workflow_id)

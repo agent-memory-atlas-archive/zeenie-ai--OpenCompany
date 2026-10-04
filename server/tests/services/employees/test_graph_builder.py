@@ -1,7 +1,10 @@
-"""The graph behind a hired employee: the right trigger, tools that respect
-"ask me first", replies that go to whoever wrote in (behind the gate when
-asking first), reports to the owner, Talk (the owner's own line to them),
-warnings an owner can act on, and a graph the real validator accepts."""
+"""The graph behind a hired employee: the right trigger, its tools (those
+that send wait for the owner per call while they ask first), replies that
+go to whoever wrote in (always behind the gate, which reads the live rule),
+reports to the owner, Talk (the owner's own line to them, whose agent alone
+can send and show interfaces), instructions that read the same with the
+rule on or off, warnings an owner can act on, and a graph the real
+validator accepts."""
 
 from __future__ import annotations
 
@@ -97,15 +100,36 @@ async def test_whatsapp_receptionist_asks_before_replying():
     await assert_valid(built)
 
 
-async def test_without_asking_first_the_agent_replies_directly():
+async def test_without_asking_first_the_reply_still_goes_through_the_gate():
+    # The gate reads the live rule: with it off the draft goes straight
+    # through, and turning it on later needs no rebuild.
+    asking = build_employee_graph(inputs(hire(), "whatsapp", connected={"whatsapp"}))
     built = build_employee_graph(inputs(hire(rules={"ask_first": False}), "whatsapp", connected={"whatsapp"}))
-    assert "gate" not in built.node_roles
+    assert "gate" in built.node_roles
+    gate_key = label_key(node(built, "gate")["data"]["label"])
     reply = built.parameters[built.node_roles["reply"]]
-    trigger_key = label_key(node(built, "trigger")["data"]["label"])
-    assert reply["phone"] == "{{" + trigger_key + ".sender_phone}}"
-    assert reply["message"] == "{{maya.response}}"
-    assert [e["data"]["condition"] for e in edges_between(built, "agent", "reply")] == [SEND_CONDITION]
+    assert reply["message"] == "{{" + gate_key + ".text}}"
+    assert [e["data"]["condition"] for e in edges_between(built, "gate", "reply")] == [APPROVED_CONDITION]
+    assert (built.nodes, built.edges, built.parameters) == (asking.nodes, asking.edges, asking.parameters)
     await assert_valid(built)
+
+
+@pytest.mark.parametrize(
+    ("request_patch", "apps"),
+    [
+        ({}, ("whatsapp",)),
+        ({"apps": ["Telegram"], "trigger": {"kind": "schedule", "every": "day"}, "sends_via": "Telegram"}, ("telegram",)),
+        ({"apps": ["Web browser"], "trigger": None}, ("web",)),
+    ],
+)
+def test_the_instructions_read_the_same_with_the_rule_on_or_off(request_patch, apps):
+    def instructions(ask_first):
+        built = build_employee_graph(
+            inputs(hire(**request_patch, rules={"ask_first": ask_first, "items": []}), *apps, connected=set(apps))
+        )
+        return {role: built.parameters[built.node_roles[role]]["system_message"] for role in ("agent", "talk_agent") if role in built.node_roles}
+
+    assert instructions(True) == instructions(False)
 
 
 async def test_gmail_inbox_replies_with_a_subject():
@@ -137,8 +161,9 @@ async def test_a_scheduled_briefer_reports_through_the_app_it_named():
     assert node(built, "notify")["type"] == "telegramSend" and notify["recipient_type"] == "self"
     assert "context" in built.node_roles
     assert [e["data"]["condition"] for e in edges_between(built, "agent", "notify")] == [SEND_CONDITION]
-    # Asking first: the Stripe tool (it can move money) stays off.
-    assert "stripeAction" not in {n["type"] for n in built.nodes}
+    # Asking first: the Stripe tool stays, and each call is refused while
+    # they ask first (services/approvals/tool_calls.py).
+    assert "stripeAction" in {n["type"] for n in built.nodes}
     # Recorded as it runs, and the owner is told it moved.
     assert built.trigger == {"kind": "schedule", "every": "day", "at": "08:00"}
     assert "they'll work every day at 08:00 (you asked for every day at 08:15)" in " ".join(built.warnings)
@@ -153,18 +178,14 @@ async def test_money_tools_come_back_when_not_asking_first():
     await assert_valid(built)
 
 
-async def test_the_browser_stays_read_only_while_asking_first():
+async def test_the_browser_reads_only_per_call_while_asking_first():
+    # Its node is saved whole; while they ask first each call runs read-only.
     request = hire(apps=["Web browser"], steps=[{"title": "Check prices online", "role": "agent"}], trigger=None)
     built = build_employee_graph(inputs(request, "web"))
-    assert built.parameters[built.node_roles["browser"]]["interaction"] == "read_only"
-    instructions = built.parameters[built.node_roles["agent"]]["system_message"]
-    assert "request_user" in instructions and "can only read pages" in instructions
-    await assert_valid(built)
-
-    request = hire(apps=["Web browser"], steps=[{"title": "Check prices online", "role": "agent"}], trigger=None, rules={"ask_first": False})
-    built = build_employee_graph(inputs(request, "web"))
     assert built.parameters[built.node_roles["browser"]]["interaction"] == "full"
-    assert "can only read pages" not in built.parameters[built.node_roles["agent"]]["system_message"]
+    instructions = built.parameters[built.node_roles["agent"]]["system_message"]
+    assert "request_user" in instructions and "your browser can only read" in instructions
+    await assert_valid(built)
 
 
 async def test_no_apps_means_they_answer_in_talk():
@@ -265,13 +286,19 @@ async def test_an_app_event_hire_gets_a_talk_line_beside_its_work():
     assert (talk["prompt"], talk["provider"], talk["model"]) == ("{{talk.message}}", "openai", "gpt-x")
     assert "talks to you in Talk" in talk["system_message"] and "agent_builder" in talk["system_message"]
     assert "agent_builder" not in built.parameters[roles["agent"]]["system_message"]
-    # Its own Context; the worker's tools are shared, the Agent Builder is
-    # the talk agent's alone (strangers write to the worker).
+    # Its own Context; the worker's tools are shared, the Agent Builder,
+    # generated UI and sending on WhatsApp are the talk agent's alone
+    # (strangers write to the worker).
     assert node(built, "talk_context")["data"]["agentNodeId"] == roles["talk_agent"]
     worker_tools = {e["source"] for e in built.edges if e["target"] == roles["agent"] and e["targetHandle"] == "input-tools"}
     talk_tools = {e["source"] for e in built.edges if e["target"] == roles["talk_agent"] and e["targetHandle"] == "input-tools"}
-    assert talk_tools == worker_tools | {roles["builder"]}
-    assert roles["builder"] not in worker_tools
+    only_talk = {n["type"]: n for n in built.nodes if n["id"] in talk_tools - worker_tools}
+    assert set(only_talk) == {"agentBuilder", "chatUi", "whatsappSend"}
+    assert worker_tools <= talk_tools
+    send = built.parameters[only_talk["whatsappSend"]["id"]]
+    assert send == {"recipient_type": "phone", "message_type": "text", "format_markdown": True}
+    assert "send it with your send tools" in talk["system_message"]
+    assert "send tools" not in built.parameters[roles["agent"]]["system_message"]
     assert built.parameters[roles["talk_reply"]] == {"message": "{{talkwithmaya.response}}"}
     assert "report_post" not in roles
     await assert_valid(built)
@@ -394,3 +421,20 @@ def test_the_canvas_needs_the_allowlist():
     with pytest.raises(BuildError) as raised:
         build_employee_graph(inputs(hire(), "whatsapp", connected={"whatsapp"}, allowed=lambda node_type: node_type != "canvas"))
     assert raised.value.code == "not_allowed"
+
+
+async def test_the_talk_agent_sends_email_as_the_owner_set_it_up():
+    request = hire(apps=["Email"], steps=[{"title": "Brief me", "role": "agent"}], trigger={"kind": "schedule", "every": "day"}, sends_via="Email")
+    owner = {"email_provider": "gmail", "email_address": "alex@example.com"}
+    built = build_employee_graph(inputs(request, "email", owner_values=owner))
+    talk_agent = built.node_roles["talk_agent"]
+    wired = {e["source"] for e in built.edges if e["target"] == talk_agent and e["targetHandle"] == "input-tools"}
+    [send] = [n for n in built.nodes if n["id"] in wired and n["type"] == "emailSend"]
+    # Who and what come from the model; which account sends never does.
+    assert built.parameters[send["id"]] == {"provider": "gmail", "body_type": "text"}
+    await assert_valid(built)
+
+    # Without the owner's account set up, the talk agent cannot send email yet.
+    built = build_employee_graph(inputs(request, "email", owner_values={}))
+    assert "emailSend" not in {n["type"] for n in built.nodes}
+    assert "They can't send on Email for you until you connect Email in Settings > Connectors." in built.warnings

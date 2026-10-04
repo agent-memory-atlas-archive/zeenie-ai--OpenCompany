@@ -30,9 +30,10 @@ and never disturbs the work path.
   canvas are shared), and its reply.
 
 A hired employee also gets what the Hire builder gives: the Agent Builder
-tool on its talk agent (never on a worker that strangers write to), and,
-for a schedule worker, "Post to Talk", which puts its reports in the
-thread. Replies and reports go out only when the agent had something to
+tool on its talk agent, with the talk tools (generated UI in the chat, and
+sending through the hire's apps; never on a worker that strangers write
+to), and, for a schedule worker, "Post to Talk", which puts its reports in
+the thread. Replies and reports go out only when the agent had something to
 say (``send_condition``: not NO_REPLY).
 
 Pure: no I/O, never imports ``nodes/``; built on services/graph_build.py,
@@ -43,7 +44,7 @@ wire nodes the same way.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Literal, Mapping, Optional, Tuple
+from typing import Any, Dict, List, Literal, Mapping, Optional, Sequence, Tuple
 
 from services.approvals.contract import send_condition
 from services.graph_build import (
@@ -212,6 +213,53 @@ class TalkAgent:
 
 
 @dataclass(frozen=True)
+class TalkTool:
+    """A tool only the agent the owner talks to gets: generated UI in the
+    chat, and sending through the hire's apps (``talk_send``). Never wired
+    to a worker strangers write to."""
+
+    type: str
+    label: str
+    params: Mapping[str, Any] = field(default_factory=dict)
+    #: The ``node_roles`` key it is recorded under, if any.
+    role: Optional[str] = None
+
+
+def _talk_tool_additions(
+    view: _View, talk_agent: str, wired: Sequence[str], talk_tools: Sequence[TalkTool], start: Tuple[float, float]
+) -> Tuple[List[NewNode], List[Edge], Dict[str, str]]:
+    """The talk tools ``talk_agent`` lacks (by type), in a row from
+    ``start``, each wired to it alone."""
+    have = {view.type_of(tool) for tool in wired}
+    nodes: List[NewNode] = []
+    edges: List[Edge] = []
+    roles: Dict[str, str] = {}
+    x, y = start
+    for index, tool in enumerate(talk_tools):
+        if tool.type in have:
+            continue
+        have.add(tool.type)
+        name = f"talk_tool_{index}"
+        nodes.append(NewNode(name, tool.type, tool.label, dict(tool.params), (x, y)))
+        edges.append(tool_edge(name, talk_agent))
+        if tool.role:
+            roles[tool.role] = name
+        x += 170
+    return nodes, edges, roles
+
+
+def plan_talk_tools(graph: Optional[Mapping[str, Any]], talk_agent: str, talk_tools: Sequence[TalkTool]) -> TalkPlan:
+    """The talk tools an existing talk agent lacks (an employee hired before
+    they came), below the graph."""
+    view = _View(graph)
+    if talk_agent not in view.nodes:
+        return TalkPlan()
+    x = _position(view.nodes[talk_agent])[0]
+    nodes, edges, roles = _talk_tool_additions(view, talk_agent, view.sources(talk_agent, TOOLS_INPUT), talk_tools, (x - 240, view.lowest + 180))
+    return TalkPlan(GraphAdditions(nodes=tuple(nodes), edges=tuple(edges)), roles)
+
+
+@dataclass(frozen=True)
 class TalkPlan:
     additions: GraphAdditions = field(default_factory=GraphAdditions)
     #: ``node_roles`` key -> a ref in ``additions`` or an existing node id.
@@ -241,13 +289,15 @@ def plan_talk_line(
     agent: Optional[TalkAgent] = None,
     hired: bool = False,
     report_from: Optional[str] = None,
+    talk_tools: Sequence[TalkTool] = (),
 ) -> TalkPlan:
     """What turns ``state`` on; no additions when it already is, only the
     roles of the line there. ``agent`` describes the talk agent a whole
     line adds. ``hired`` adds the Agent Builder tool to the talk agent;
-    ``report_from`` (a hired schedule worker) adds Post to Talk after that
-    agent. Raises ValueError for an unsupported state, or a whole line
-    without ``agent``."""
+    ``talk_tools`` are added to it too, and to it alone; ``report_from`` (a
+    hired schedule worker) adds Post to Talk after that agent. Raises
+    ValueError for an unsupported state, or a whole line without
+    ``agent``."""
     view = _View(graph)
     if state.state == "unsupported":
         raise ValueError("this graph has no agent the owner could talk to")
@@ -290,6 +340,12 @@ def plan_talk_line(
         nodes.append(NewNode("builder", BUILDER_TYPE, BUILDER_LABEL, position=builder_at))
         edges.append(tool_edge("builder", talk_agent))
         roles["builder"] = "builder"
+    extra_nodes, extra_edges, extra_roles = _talk_tool_additions(
+        view, talk_agent, tools, talk_tools, (builder_at[0] - 170 * max(1, len(talk_tools)), builder_at[1])
+    )
+    nodes += extra_nodes
+    edges += extra_edges
+    roles.update(extra_roles)
     reports_go_elsewhere = report_from in view.nodes and report_from != roles["talk_agent"]
     if reports_go_elsewhere and not any(view.type_of(node) == REPLY_TYPE for node in view.targets(report_from)):
         x, y = _position(view.nodes[report_from])
@@ -314,8 +370,10 @@ __all__ = [
     "TalkLine",
     "TalkPlan",
     "TalkState",
+    "TalkTool",
     "find_talk_line",
     "plan_talk_line",
+    "plan_talk_tools",
     "sources",
     "talk_agent_label",
     "talk_state",

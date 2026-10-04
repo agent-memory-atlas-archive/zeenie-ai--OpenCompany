@@ -6,10 +6,14 @@ or one of the tools every hire gets (``BASE_TOOLS``). ``check_tool``
 decides, in this order:
 
 1. is it one of those at all;
-2. the "ask me first" ground rule: nothing that can send or spend
-   (``allowed_when_asking_first``), unless the app declares
-   ``ask_first_params`` that make it safe, in which case it is given in
-   that form (the browser reads, and hands any change to the owner);
+2. the "ask me first" ground rule: a tool that can send or spend is given
+   when each call can wait for the owner (its plugin declares an
+   ``approval`` spec, services/plugin/approval.py: while the owner asks
+   first a call that sends is held for them, Stripe is refused and the
+   browser reads only, all decided per call from the live rule); otherwise
+   nothing that can send or spend (``allowed_when_asking_first``), unless
+   the app declares ``ask_first_params`` that make it safe, in which case
+   it is given in that form;
 3. the Hire allowlist (``node_allowlist.is_hire_allowed``);
 4. its app is connected, when the caller says what is connected (the Hire
    builder does not: a hire may name an app it will connect later, and
@@ -33,6 +37,7 @@ from services import node_allowlist
 from services.employees.apps import AppSpec, ToolTemplate, allowed_when_asking_first, get_apps
 from services.employees.genui_catalog import load_genui_catalog
 from services.node_registry import get_node_class
+from services.plugin.approval import approval_spec
 from services.skill_runtime import is_personality_skill
 
 #: The Skill tool's own entry on a Skills node.
@@ -144,7 +149,7 @@ def check_tool(
     label = tool.label or app.name
     params = dict(tool.params)
     read_only = False
-    if asks_first(employee) and not allowed_when_asking_first(tool.side_effects):
+    if asks_first(employee) and not allowed_when_asking_first(tool.side_effects) and approval_spec(get_node_class(node_type)) is None:
         if not tool.ask_first_params:
             rule = load_genui_catalog()["ask_first_label"]
             return _refused(

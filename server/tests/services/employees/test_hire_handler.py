@@ -246,12 +246,15 @@ async def test_an_unexpected_error_leaves_the_key_free_to_retry(harness, monkeyp
     assert retried["success"] is True, retried
 
 
-async def test_an_app_left_out_while_they_ask_first_is_not_one_to_connect(harness):
-    # Stripe's only tool can spend money, so asking first leaves it out.
+async def test_an_app_that_spends_stays_while_they_ask_first(harness):
+    # Stripe's only tool can spend money: it stays, and each call is refused
+    # while they ask first (services/approvals/tool_calls.py).
     result = await hire.handle_hire_employee(payload(idempotency_key="hire-stripe", apps=["Stripe"]), SOCKET)
     assert result["success"] is True, result
-    assert result["missing_apps"] == [] and result["employee"]["apps"] == []
-    assert any("Stripe" in warning for warning in result["warnings"])
+    assert [app["app_id"] for app in result["employee"]["apps"]] == ["stripe"]
+    assert [app["app_id"] for app in result["missing_apps"]] == ["stripe"]
+    assert not any("stays off" in warning for warning in result["warnings"])
     row = await store.get_by_workflow(harness.database, result["employee"]["workflow_id"])
-    assert row.apps == []
-    assert result["started"] is True
+    assert row.apps == ["stripe"]
+    # An app to connect first: they start once it is.
+    assert result["started"] is False
