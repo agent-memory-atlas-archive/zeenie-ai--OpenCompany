@@ -160,6 +160,20 @@ async def runs_by_id(database: Any, run_ids: List[str]) -> Dict[str, ChatRun]:
         return {run.run_id: run for run in result.scalars().all()}
 
 
+async def ui_part_of_run(database: Any, run_id: str) -> Optional[str]:
+    """The interface whose button started the run (its owner message
+    carries the press, ``meta.ui_event``), if one did."""
+    run = await get_run(database, run_id)
+    if run is None or not run.user_message_uid:
+        return None
+    async with database.get_session() as session:
+        result = await session.execute(select(ChatMessage).where(ChatMessage.uid == run.user_message_uid))
+        message = result.scalar_one_or_none()
+    event = (message.meta or {}).get("ui_event") if message is not None else None
+    part_id = event.get("part_id") if isinstance(event, dict) else None
+    return part_id if isinstance(part_id, str) and part_id else None
+
+
 async def session_run_ids(database: Any, session_id: str) -> List[str]:
     """Every run of a session, live or ended."""
     async with database.get_session() as session:
@@ -722,5 +736,6 @@ __all__ = [
     "runs_by_id",
     "session_run_ids",
     "start_run",
+    "ui_part_of_run",
     "sweep",
 ]

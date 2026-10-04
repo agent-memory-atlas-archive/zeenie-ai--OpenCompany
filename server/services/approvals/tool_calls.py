@@ -220,12 +220,27 @@ async def hold(database: Any, context: Mapping[str, Any], node_cls: Any, spec: A
     """The held call's row: created once, found again on a retry."""
     fields = _row_fields(context, node_cls, spec, node_data)
     fields["expires_at"] = _utcnow() + timedelta(hours=DEFAULT_TIMEOUT_HOURS)
+    fields["ui_part_id"] = await _ui_part(database, fields.get("run_id"))
     row, created = await store.get_or_create(database, idempotency_key=call_key(context), fields=fields)
     if created:
         logger.info("Held a call for the owner", approval_id=row.id, workflow_id=row.workflow_id, channel=row.channel)
         await notify_approval_changed(change_of(row, "requested"))
     await _show_in_chat(database, context, row)
     return row
+
+
+async def _ui_part(database: Any, run_id: Any) -> Any:
+    """The interface whose button started the run, for "Linked to the form
+    above" on the card."""
+    if not isinstance(run_id, str) or not run_id:
+        return None
+    try:
+        from services.chat.ledger import ui_part_of_run
+
+        return await ui_part_of_run(database, run_id)
+    except Exception:  # noqa: BLE001 - the card shows without the link
+        logger.warning("Could not read which interface started a run", run_id=run_id, exc_info=True)
+        return None
 
 
 async def _show_in_chat(database: Any, context: Mapping[str, Any], row: Any) -> None:

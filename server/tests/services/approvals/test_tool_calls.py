@@ -235,3 +235,24 @@ async def test_clearing_the_chat_cancels_its_drafts(harness, nodes_loaded, monke
 
 async def _async(value):
     return value
+
+
+async def test_a_call_made_after_a_button_press_is_linked_to_its_form(harness, nodes_loaded, monkeypatch):
+    from services.chat import ledger, parts
+
+    async def show_approval(database, stream, **_):
+        return None
+
+    monkeypatch.setattr(parts, "show_approval", show_approval)
+    await rules.set_ask_first(harness.database, "wf", True)
+    press = {"part_id": "ui_quote", "element_id": "send", "action": "sendQuote", "params": {}}
+    pressed = await ledger.admit_message(
+        harness.database, session_id="wf", workflow_id="wf", execution_id="gen-1", text="Send the quote",
+        track=True, kind="action", message_kind="action", meta={"ui_event": press},
+    )
+    stream = {"run_id": pressed.run.run_id, "session_id": "wf", "workflow_id": "wf"}
+    await tool_calls.check(call(chat_stream=stream, chat_run_id=pressed.run.run_id), get_node_class("whatsappSend"))
+    (row,) = await store.list_approvals(harness.database, status="pending")
+    assert row.ui_part_id == "ui_quote"
+    # A call in a run the owner's own words started has no form to link.
+    assert await ledger.ui_part_of_run(harness.database, "r_missing") is None
