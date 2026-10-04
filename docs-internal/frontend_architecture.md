@@ -91,7 +91,7 @@ client/src/
 │   │   ├── alert.tsx        # + success/warning/info variants we added
 │   │   ├── accordion.tsx    # Radix accordion
 │   │   ├── dialog.tsx       # Radix dialog (Modal.tsx re-exports via thin wrapper)
-│   │   ├── tooltip.tsx / dropdown-menu.tsx
+│   │   ├── tooltip.tsx / dropdown-menu.tsx / popover.tsx / command.tsx
 │   │   ├── select.tsx       # Radix select (no search; grouped items via SelectGroup/SelectLabel)
 │   │   ├── input.tsx / textarea.tsx / switch.tsx / checkbox.tsx / label.tsx / slider.tsx
 │   │   ├── collapsible.tsx / tabs.tsx / alert-dialog.tsx / card.tsx / progress.tsx
@@ -330,7 +330,8 @@ All under [components/ui/](../client/src/components/ui/). Editable — add varia
 | Button | `Button` (CVA) | Variants: `default | secondary | ghost | outline | destructive | link` + Normal-mode `invert | quiet | chip` (ours). Sizes: `default | xs | sm | lg | icon | icon-xs | icon-sm | icon-lg` + `pill | chip` (ours). `buttonVariants` in `components/ui/button.tsx` is authoritative |
 | Badge | `Badge` | + `success | warning | info` (ours) |
 | Alert | `Alert + AlertTitle + AlertDescription` | + `success | warning | info` (ours) |
-| Overlay | `Dialog`, `AlertDialog`, `Tooltip`, `DropdownMenu` | Radix |
+| Overlay | `Dialog`, `AlertDialog`, `Tooltip`, `DropdownMenu`, `Popover` | Radix |
+| Lists | `Command` (the chat's slash menu; driven from another field it controls `value` and filters itself) | cmdk |
 | Toggle | `Toggle`, `ToggleGroup + ToggleGroupItem` | Radix. Variants `default | segmented | chips` (ours); the CVA in `components/ui/toggle.tsx` is authoritative |
 | Disclosure | `Accordion`, `Collapsible`, `Tabs` | Radix |
 | Inputs | `Input`, `Textarea`, `Select`, `Switch`, `Checkbox`, `Slider`, `Label` | Radix (Select/Switch/Checkbox/Slider) |

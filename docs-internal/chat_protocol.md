@@ -119,7 +119,7 @@ All are WebSocket request/response handlers with snake_case payloads. Failures a
 
 | Handler | Request | Response |
 |---|---|---|
-| `send_chat_message` | `{session_id, message, role: "user", timestamp?, client_message_id?, attachments?: FileRef[], options?: {web?}, ui_event?: {part_id, element_id, action, params}}` | `{success, message_id, run_id, delivery: "now" \| "queued", timestamp}`; `run_id` is null when the message starts no run |
+| `send_chat_message` | `{session_id, message, role: "user", timestamp?, client_message_id?, attachments?: [{path}], options?: {web?: bool}, ui_event?: {part_id, element_id, action, params}}` | `{success, message_id, run_id, delivery: "now" \| "queued", timestamp}`; `run_id` is null when the message starts no run; `attachment_rejected` for files that cannot go (see [Attachments](#attachments)) |
 | `get_chat_messages` | `{session_id, limit?, all_generations?}` | `{success, protocol_version, session_id, messages, thread: {active_leaf_id, revision}, active_runs: [RunSnapshot]}` |
 | `chat_subscribe` | `{session_id}` | `{success, session_id, hub_epoch, active_runs: [RunSnapshot]}` |
 | `chat_unsubscribe` | `{session_id}` | `{success, session_id, hub_epoch}` |
@@ -130,7 +130,7 @@ All are WebSocket request/response handlers with snake_case payloads. Failures a
 | `regenerate_chat_reply` | `{session_id, message_id, expected_revision?}` (the latest answer, or the owner's last message when its run gave none) | `{success, message_id, run_id, delivery}` (`message_id`: the owner's message answered again) |
 | `switch_chat_branch` | `{session_id, message_id, expected_revision?}` (a message beside one on the path) | `{success, leaf_id}` |
 | `set_chat_feedback` | `{session_id, message_id, value: "up" \| "down" \| null}` | `{success, message_id, value, reaches: ["next_turn", "memory"?]}` (`[]` when taken back) |
-| `get_chat_context` | `{session_id}` | `{success, commands, suggestions, capabilities, genui_catalog, limits, ask_first: {value, editable, replies_gated}}` |
+| `get_chat_context` | `{session_id}` | `{success, session_id, commands: [{command, description, fill, suggest}], capabilities: {attachments, web}, limits: {max_attachments, max_upload_bytes}}` |
 | `clear_chat_messages` | `{session_id}` | `{success}`; also clears runs, parts, snapshots, notes and feedback, and makes the employee forget the conversation |
 
 `send_chat_message` with the same `client_message_id` (1 to 100 letters, digits or `_.:-`) returns the message
@@ -173,8 +173,9 @@ tool_call_id?, ui_part_id?, agent_node_id?, deployment_state?}`. `status` is `pe
 | Handler | Owner | Request | Response |
 |---|---|---|---|
 | `canvas_versions` | `nodes/tool/canvas` | `{workflow_id, node_id, item_id}` | `{success, versions: [{version, title, created_at, source, size_bytes}], latest}` |
-| `canvas_version` | `nodes/tool/canvas` | `{workflow_id, node_id, item_id, version}` | `{success, item_id, version, title, content, language, created_at, filename}` |
-| `transcribe_audio` | `nodes/speech` | `{workflow_id, audio: FileRef, language?}` | `{success, text, provider, model, duration_seconds}` |
+| `canvas_version` | `nodes/tool/canvas` | `{workflow_id, node_id, item_id, version}` | `{success, item: CanvasItem-at-that-version & {latest}}` |
+| `dictation_status` | `nodes/speech` | `{session_id}` | `{success, available, provider}` |
+| `transcribe_audio` | `nodes/speech` | `{session_id, path, language?}` (`path` under `uploads/`) | `{success, text, language, provider}`; `speech_unavailable` |
 
 ## Messages
 
@@ -382,6 +383,14 @@ editor's console pane (`ConsoleChat`, compact, scope `live`) are the two hosts.
   until its saved reply lands in the thread, so the streamed answer and the reply stay one element.
 - **Stop** (`data/stop.ts`): the Stop button, or Esc anywhere in the pane, sends `stop_chat_run` for the lane's run
   and applies the answer to the store at once; the run's events take it from there.
+- **The box's extras** (`composer/`): Attach, a paste and a drop on the chat (`DropOverlay`) all call
+  `addAttachments` (`composer/attachments.ts`), which uploads each file at once into the box
+  (`state/attachmentStore.ts`, chips with progress and Remove); Send waits while one uploads and sends the finished
+  ones' paths. The microphone (`VoiceRecorder`, MediaRecorder with live levels) shows when `dictation_status` says a
+  provider can transcribe. A draft that is one word starting with `/` opens `SlashMenu` (Popover over cmdk; focus
+  stays in the box, which carries `aria-controls` and `aria-activedescendant`). The Web chip keeps the employee off
+  web search for the next messages (`composerStore.web`). In an empty chat, commands marked `suggest` show as cards
+  that fill the box. Cmd/Ctrl+K focuses the box on Home; the editor's palette has Focus Chat.
 - **Changing the conversation** (`data/branches.ts`, `thread/turnActions.ts`): under the owner's message a hover bar
   (`turns/UserTurn.tsx`: time, ‹ 1 / 2 › between versions, Edit, Copy; Edit opens `turns/UserEditBox.tsx` in place,
   Enter sends, Esc cancels, ArrowUp in an empty box edits the last message); under a finished answer
@@ -446,6 +455,28 @@ What an employee sends to someone waits for the owner's OK while its workflow as
 - **Broadcast.** `approval_lifecycle` (source `opencompany://services/approvals`, type
   `com.opencompany.approval.<stage>`: requested, decided, undone, restored, sending, sent, failed, expired,
   cancelled), identity only, with the chat run when there is one.
+
+## Attachments
+
+`services/chat/attachments.py`. The chat uploads each file first (`POST /api/workspace/{workflow_id}/uploads`, which
+stores it under `uploads/`) and sends only the paths with the message. The server rebuilds each reference from the
+file itself (name, type, size, address), refusing a path outside `uploads/`, a file no longer there, or more than six
+(`attachment_rejected`); only a workflow's chat takes files, and a message may be files alone. The message keeps the
+references (`attachments` on the wire), the chat trigger's output carries them, and an edit keeps the original's.
+
+The agent answering the run reads them after the owner's words as
+`[attachments]{"files": [{path, name, type, bytes}]}[/attachments]` (`services/chat/guide.py` `chat_turn`), so its
+file tools can open them. Images also travel on the opening user message as ref-only image blocks
+(`agent.prepare_payload` `user_images` -> `agent_workflow._owner_message`), hydrated per provider call for a provider
+that declares `vision.user_images` (`llm_defaults.json`: Anthropic, OpenAI, Gemini; each encoder's own shape) and named
+with their workspace path for any other.
+
+**Web off** (`options.web: false`, kept on the run) leaves the tools in the `search` group out of that run
+(`agent_activities._without_web_tools`). **Dictation** (`nodes/speech/_handlers.py`): the first provider in
+`speech_defaults.json` `dictation.providers` with a stored key transcribes a recording the chat uploaded, and the
+recording is deleted. **Commands** come from `chat_defaults.json` `commands.generic` and the employee's apps
+(`employee_apps.json` `commands`, found through the saved graph's node types); `{name}` is the workflow's name, and
+`suggest` puts a command in an empty chat. `capabilities.web` is whether the saved graph has a search tool.
 
 ## Branches
 
@@ -549,6 +580,7 @@ and server tests alike:
 | `invalid_request` | send, save | A malformed field (`detail` says which): an empty message, a role other than the owner's, or a bad `client_message_id`. |
 | `read_failed` | get_chat_messages, chat_subscribe | The thread could not be read. Never answered as an empty thread. |
 | `not_found` | get_chat_run, stop_chat_run | No such run. |
+| `attachment_rejected` | send | A file outside `uploads/`, gone, or more than six; `detail` says which. |
 | `not_stoppable` | stop_chat_run | The run ended before Stop reached it; `state` says how. |
 | `revision_conflict` | edit, regenerate, switch | `expected_revision` is not the thread's revision. |
 | `conflict` | set_ask_first | `expected_revision` is stale. |

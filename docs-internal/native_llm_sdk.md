@@ -644,3 +644,14 @@ those encoders land, so bytes are never hydrated only to be dropped.
 Text-only providers keep the `visionAnalyze` delegate tool as their vision
 path (see [data_node.md](data_node.md)). Locked by
 `tests/llm/test_media_blocks.py`.
+
+**Images in the owner's message** (October 2026): images the owner attaches to
+a chat message ride the opening user message as the same ref-only blocks
+(`media.image_blocks`; [chat_protocol.md → Attachments](chat_protocol.md#attachments)).
+They have their own gate, `vision.user_images` (`provider_supports_user_images`),
+because their encoders came first: Anthropic puts image blocks ahead of the
+text, OpenAI sends `image_url` parts (a data URL) on Chat Completions and
+`input_image` parts on Responses, Gemini sends `inline_data` parts. A provider
+without the flag reads the user message with each image named and its
+workspace path, so the employee can open it with a tool. Tool-result images
+keep `vision.enabled`. Locked by `tests/llm/test_user_images.py`.

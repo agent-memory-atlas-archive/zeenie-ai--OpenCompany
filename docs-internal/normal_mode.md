@@ -472,6 +472,16 @@ sending and drafts belong to the chat (wire and client rules in
 - **Stop.** While the run works, Send is Stop, and Esc stops it too: the
   answer so far stays, marked "You stopped this reply." A message still
   waiting for Resume is withdrawn the same way.
+- **The box's extras**: Attach (or paste, or drop files anywhere on the
+  page) adds up to six files, uploaded at once and sent with the next message
+  (a message can be files alone); the employee reads where they are in its
+  workspace, and a model that can view images sees the pictures. Dictate
+  shows when a speech provider has a key, and puts what was said in the box.
+  Typing `/` lists commands (generic ones and those the employee's apps add,
+  `employee_apps.json` `commands`), and an empty conversation suggests a few.
+  Web (when the employee has a search tool) keeps them off the web for the
+  next messages. Cmd/Ctrl+K puts the cursor in the box. See
+  [chat_protocol.md → Attachments](./chat_protocol.md#attachments).
 - **Changing the conversation** (between runs): the owner's message has Edit
   (in place; ArrowUp in an empty box edits the last one) and ‹ 1 / 2 ›
   between their edits of it; the latest answer has Try again, and ‹ 1 / 2 ›

@@ -253,6 +253,11 @@ The first multipart endpoint in the repo, on either side of the wire.
   otherwise `file`, so script-bearing types such as SVG and HTML are plain
   files. The media type comes from the stored filename, the same signal the
   file route serves by. `coerce_file_param` accepts both.
+- The chat uses it for attachments and dictation. It sends only the stored
+  path back; `services/chat/attachments.py` rebuilds the reference from the
+  file under `uploads/` (refusing anything else), and dictation
+  (`nodes/speech/_handlers.py`) transcribes a recording there and deletes it.
+  Neither trusts a reference the client sends.
 
 ### Auth
 
