@@ -57,7 +57,15 @@
         "waiting": "Waiting for new WhatsApp messages",
         "working": "Answering a WhatsApp message",
         "reporting": "Sending you an update on WhatsApp"
-      }
+      },
+      "commands": [
+        {
+          "command": "/draft",
+          "description": "Draft a WhatsApp reply",
+          "fill": "Draft a WhatsApp reply to ",
+          "suggest": false
+        }
+      ]
     },
     "whatsapp_business": {
       "name": "WhatsApp Business",
@@ -258,7 +266,15 @@
         "waiting": "Checking your inbox for new email",
         "working": "Reading a new email",
         "reporting": "Emailing you an update"
-      }
+      },
+      "commands": [
+        {
+          "command": "/inbox",
+          "description": "Summarize unread email",
+          "fill": "Summarize my unread email.",
+          "suggest": true
+        }
+      ]
     },
     "outlook": {
       "name": "Outlook",
@@ -317,7 +333,15 @@
         "waiting": "Checking your Outlook inbox",
         "working": "Reading a new email",
         "reporting": "Emailing you an update"
-      }
+      },
+      "commands": [
+        {
+          "command": "/inbox",
+          "description": "Summarize unread email",
+          "fill": "Summarize my unread email.",
+          "suggest": true
+        }
+      ]
     },
     "email": {
       "name": "Email",
@@ -399,7 +423,15 @@
       "side_effects": "send",
       "phrases": {
         "working": "Checking your calendar"
-      }
+      },
+      "commands": [
+        {
+          "command": "/schedule",
+          "description": "Check a day in the calendar",
+          "fill": "What does tomorrow look like?",
+          "suggest": true
+        }
+      ]
     },
     "google_drive": {
       "name": "Google Drive",

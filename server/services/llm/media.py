@@ -1,12 +1,19 @@
-"""Tool-result images: refs in durable state, bytes only at the provider boundary.
+"""Images for the model: refs in durable state, bytes only at the provider boundary.
 
 A tool opts in by returning ``llm_media: [{"ref": <FileRef kind=image>,
 "detail": "auto"}]``. The agent loop attaches ref-only image ContentBlocks to
-the tool message (durable, ~450 B each). ``hydrate_image_blocks`` runs once
-per LLM step on throwaway copies, loading bytes through the contained media
-reader and fitting them to a budget; provider encoders then emit the
-official wire shapes. Originals are never mutated, so nothing downstream of
-the journal ever sees bytes.
+the tool message (durable, ~450 B each). Images the owner attaches to a chat
+message ride the same way on that user message (``image_blocks``).
+``hydrate_image_blocks`` runs once per LLM step on throwaway copies, loading
+bytes through the contained media reader and fitting them to a budget;
+provider encoders then emit the official wire shapes. Originals are never
+mutated, so nothing downstream of the journal ever sees bytes.
+
+Two gates, because the encoders came at different times: images in a tool
+result need ``vision.enabled``, images in the owner's message
+``vision.user_images`` (``llm_defaults.json``). A model behind neither reads a
+text placeholder; in the owner's message it names the file's workspace path,
+so the employee can open it with a tool that can.
 """
 
 from __future__ import annotations
@@ -36,6 +43,29 @@ def provider_supports_vision(provider: str, model: str = "") -> bool:
         LLM_DEFAULTS.get("providers", {}).get(provider, {}).get("vision", {})
     )
     return bool(vision.get("enabled"))
+
+
+def provider_supports_user_images(provider: str, model: str = "") -> bool:
+    """Capability gate for images in the owner's message: ``vision.user_images``.
+    Unknown means False, like :func:`provider_supports_vision`."""
+    del model
+    vision = (
+        LLM_DEFAULTS.get("providers", {}).get(provider, {}).get("vision", {})
+    )
+    return bool(vision.get("user_images"))
+
+
+def image_blocks(refs: Sequence[Any], *, detail: str = "auto") -> List[ContentBlock]:
+    """Ref-only image blocks for images the owner attached (FileRef dumps
+    with an image type in :data:`IMAGE_MIME_ALLOWLIST`); others are left out."""
+    blocks: List[ContentBlock] = []
+    for ref in refs:
+        if not isinstance(ref, dict) or ref.get("mime_type") not in IMAGE_MIME_ALLOWLIST:
+            continue
+        if not ref.get("workflow_id") or not ref.get("path"):
+            continue
+        blocks.append(ContentBlock(type="image", source={"kind": "file_ref", "ref": dict(ref), "detail": detail}))
+    return blocks
 
 
 def image_blocks_from_tool_result(result: Any) -> List[ContentBlock]:
@@ -101,12 +131,17 @@ async def hydrate_image_blocks(
     if not any(_ref_blocks(message) for message in messages):
         return list(messages)
 
-    capable = provider_supports_vision(provider, model)
+    in_results = provider_supports_vision(provider, model)
+    in_owner_messages = provider_supports_user_images(provider, model)
     hydrated: List[Message] = []
     for message in messages:
         if not _ref_blocks(message):
             hydrated.append(message)
             continue
+        if message.role == "user" and not in_owner_messages:
+            hydrated.append(_described(message, model))
+            continue
+        capable = in_owner_messages if message.role == "user" else in_results
         blocks: List[ContentBlock] = []
         for block in message.blocks:
             if not _is_ref_block(block):
@@ -145,6 +180,22 @@ async def hydrate_image_blocks(
                 blocks.append(_placeholder(ref, f"unavailable: {exc}"))
         hydrated.append(replace(message, blocks=blocks))
     return hydrated
+
+
+def _described(message: Message, model: str) -> Message:
+    """The owner's message for a model that cannot view its images: each
+    image named in the text instead, with where it is in the workspace."""
+    notes = []
+    for block in _ref_blocks(message):
+        ref = dict((block.source or {}).get("ref") or {})
+        notes.append(
+            _placeholder(
+                ref,
+                f"the current model ({model}) cannot view images; it is at {ref.get('path')} in the workspace",
+            ).text
+        )
+    content = "\n\n".join(part for part in (message.content, "\n".join(notes)) if part)
+    return replace(message, content=content, blocks=[ContentBlock(type="text", text=content)])
 
 
 def _is_ref_block(block: ContentBlock) -> bool:
@@ -192,6 +243,8 @@ __all__ = [
     "LLM_MEDIA_KEY",
     "LLM_MEDIA_MAX_PER_RESULT",
     "hydrate_image_blocks",
+    "image_blocks",
+    "provider_supports_user_images",
     "image_blocks_from_tool_result",
     "provider_supports_vision",
 ]

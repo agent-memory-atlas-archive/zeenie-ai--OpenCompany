@@ -187,6 +187,20 @@ def _native_message(
     )
 
 
+def _owner_message(content: str, images: Any) -> Dict[str, Any]:
+    """The run's opening user message: the prompt, and the images the owner
+    attached as ref-only image blocks (hydrated per provider call,
+    ``services/llm/media.py``)."""
+
+    from services.llm.media import image_blocks
+    from services.llm.protocol import ContentBlock, Message, message_to_wire
+
+    blocks = image_blocks(images if isinstance(images, list) else [])
+    if not blocks:
+        return _native_message(role="user", content=content)
+    return message_to_wire(Message(role="user", content=content, blocks=[ContentBlock(type="text", text=content), *blocks]))
+
+
 def _append_tool_result_message(
     messages: List[Dict[str, Any]],
     *,
@@ -773,9 +787,7 @@ class AgentWorkflow:
                 if isinstance(wire, dict) and wire.get("role") != "system"
             )
             if user_prompt:
-                messages.append(
-                    _native_message(role="user", content=user_prompt)
-                )
+                messages.append(_owner_message(user_prompt, payload.get("user_images")))
         else:
             if system:
                 messages.append(_native_message(role="system", content=system))
@@ -790,9 +802,7 @@ class AgentWorkflow:
                 )
 
             if user_prompt:
-                messages.append(
-                    _native_message(role="user", content=user_prompt)
-                )
+                messages.append(_owner_message(user_prompt, payload.get("user_images")))
 
         # Map LLM tool name -> {node_type, version, task_queue, node_id,
         # parameters} so the workflow can schedule the right activity

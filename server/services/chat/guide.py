@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, List, Mapping, Tuple
+from typing import Any, Dict, List, Mapping, Tuple
 
 from core.logging import get_logger
 from services.chat.stream import FOLLOWUPS_OPEN
@@ -34,7 +34,9 @@ CHAT_REPLY_GUIDE = (
     "[ui-event]{...}[/ui-event] is a button they pressed in an interface you showed (with what they picked), and "
     "[ui-state]{...}[/ui-state] is what they set in one without pressing anything; treat both as the owner's choice. "
     "[update]{...}[/update] says what became of something you did (a draft sent or not, a part of the chat the owner "
-    "went back from), and [feedback]{...}[/feedback] is how the owner rated one of your answers; learn from it.\n"
+    "went back from), and [feedback]{...}[/feedback] is how the owner rated one of your answers; learn from it. "
+    "[attachments]{...}[/attachments] after their words lists the files they attached, with their paths in your "
+    "workspace.\n"
     "- A search result numbered n is a source: cite the ones you rely on as [n] right after what they support.\n"
     "- When a few short next questions would help the owner, end your reply with "
     '<followups>["...", "..."]</followups>: at most 3, each a short question in the owner\'s own words. The chat '
@@ -67,7 +69,26 @@ async def chat_turn(database: Any, chat_stream: Mapping[str, Any], *, system_mes
     if claimed:
         lines = notes_prompt(claimed)
         prompt = f"{lines}\n\n{prompt}" if prompt else lines
+    from services.chat.attachments import attachments_line
+
+    attached = attachments_line(await run_attachments(database, chat_stream))
+    if attached:
+        prompt = f"{prompt}\n\n{attached}" if prompt else attached
     return system, prompt
+
+
+async def run_attachments(database: Any, chat_stream: Mapping[str, Any]) -> List[Dict[str, Any]]:
+    """The files the owner attached to the message the run answers (none
+    when it cannot be read: the turn goes on without them)."""
+    from services.chat import ledger
+
+    try:
+        run = await ledger.get_run(database, str(chat_stream["run_id"]))
+        message = await ledger.saved_message(database, run.user_message_uid) if run and run.user_message_uid else None
+    except Exception:  # noqa: BLE001
+        logger.warning("Chat attachments could not be read for a turn", run_id=chat_stream.get("run_id"), exc_info=True)
+        return []
+    return [dict(item) for item in (message.attachments or []) if isinstance(item, dict)] if message is not None else []
 
 
 def _items(body: str) -> List[str]:
@@ -99,4 +120,12 @@ def split_followups(text: str) -> Tuple[str, List[str]]:
     return visible, _items(inner)
 
 
-__all__ = ["CHAT_REPLY_GUIDE", "FOLLOWUPS_CLOSE", "MAX_FOLLOWUPS", "chat_turn", "split_followups", "with_chat_guide"]
+__all__ = [
+    "CHAT_REPLY_GUIDE",
+    "FOLLOWUPS_CLOSE",
+    "MAX_FOLLOWUPS",
+    "chat_turn",
+    "run_attachments",
+    "split_followups",
+    "with_chat_guide",
+]

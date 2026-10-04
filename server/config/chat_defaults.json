@@ -19,5 +19,34 @@
   "branches": {
     "max_snapshots_per_session": 50,
     "max_snapshot_bytes": 1048576
+  },
+  "commands": {
+    "_comment": "Slash commands every workflow's chat offers (get_chat_context); an employee's apps add theirs (employee_apps.json commands). fill is the text the command puts in the message box; suggest also shows it in an empty chat. {name} is the employee's name.",
+    "generic": [
+      {
+        "command": "/summarize",
+        "description": "Summarize this conversation",
+        "fill": "Summarize what we’ve agreed so far.",
+        "suggest": false
+      },
+      {
+        "command": "/remember",
+        "description": "Teach {name} something",
+        "fill": "Remember that ",
+        "suggest": false
+      },
+      {
+        "command": "/today",
+        "description": "What {name} did today",
+        "fill": "What have you done today?",
+        "suggest": true
+      },
+      {
+        "command": "/plan",
+        "description": "Plan something step by step",
+        "fill": "Make a plan for ",
+        "suggest": false
+      }
+    ]
   }
 }

@@ -256,7 +256,17 @@ class GeminiProvider:
                 continue
 
             role = "model" if m.role == "assistant" else "user"
-            contents.append({"role": role, "parts": [{"text": m.content}]})
+            parts: List[Dict[str, Any]] = [{"text": m.content}] if m.content or m.role != "user" else []
+            if m.role == "user":
+                # Images the owner attached, as inline data parts.
+                parts.extend(
+                    {"inline_data": {"mime_type": block.source["media_type"], "data": base64.b64decode(block.source["data_b64"])}}
+                    for block in m.blocks or []
+                    if block.type == "image"
+                    and isinstance(block.source, dict)
+                    and block.source.get("kind") == "bytes"
+                )
+            contents.append({"role": role, "parts": parts or [{"text": m.content}]})
             index += 1
 
         system = "\n\n".join(system_parts) if system_parts else None

@@ -30,6 +30,26 @@ _RESPONSES_TERMINAL_EVENTS = frozenset({"response.completed", "response.incomple
 logger = get_logger(__name__)
 
 
+def _image_sources(m: Message) -> List[Dict[str, Any]]:
+    """The message's hydrated images (``source`` dicts with ``data_b64``)."""
+    return [
+        block.source
+        for block in m.blocks or []
+        if block.type == "image"
+        and isinstance(block.source, dict)
+        and block.source.get("kind") == "bytes"
+    ]
+
+
+def _data_url(source: Dict[str, Any]) -> str:
+    return f"data:{source['media_type']};base64,{source['data_b64']}"
+
+
+def _detail(source: Dict[str, Any]) -> str:
+    detail = str(source.get("detail") or "auto")
+    return detail if detail in ("low", "high", "auto") else "auto"
+
+
 class OpenAIProvider:
     provider_name = "openai"
 
@@ -370,6 +390,16 @@ class OpenAIProvider:
                             result[key] = payload[key]
             return result
 
+        images = _image_sources(m) if m.role == "user" else []
+        if images:
+            # Images the owner attached: Chat Completions takes them as
+            # image_url parts (a data URL) beside the text.
+            parts: List[Dict[str, Any]] = [{"type": "text", "text": m.content}] if m.content else []
+            parts.extend(
+                {"type": "image_url", "image_url": {"url": _data_url(source), "detail": _detail(source)}}
+                for source in images
+            )
+            return {"role": "user", "content": parts}
         return {"role": m.role, "content": m.content}
 
     def _to_api_tool(self, tool: ToolDef) -> Dict[str, Any]:
@@ -452,6 +482,19 @@ class OpenAIProvider:
                 )
                 continue
 
+            images = _image_sources(message) if message.role == "user" else []
+            if images:
+                # Images the owner attached: Responses takes them as
+                # input_image parts beside input_text.
+                content: List[Dict[str, Any]] = (
+                    [{"type": "input_text", "text": message.content}] if message.content else []
+                )
+                content.extend(
+                    {"type": "input_image", "image_url": _data_url(source), "detail": _detail(source)}
+                    for source in images
+                )
+                items.append({"role": "user", "content": content})
+                continue
             items.append(
                 {"role": message.role, "content": message.content}
             )

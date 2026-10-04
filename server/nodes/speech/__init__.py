@@ -28,12 +28,13 @@ Layout::
     _credentials.py                         speech-only credentials
     _base.py                                shared node helpers
     _option_loaders.py                      dropdown loaders
+    _handlers.py                            dictation for the chat (dictation_status, transcribe_audio)
 """
 
 from __future__ import annotations
 
 from services.node_output_schemas import register_output_schema
-from services.ws_handler_registry import register_option_loader
+from services.ws_handler_registry import register_option_loader, register_ws_handlers
 
 from ._option_loaders import (
     load_speech_formats,
@@ -57,6 +58,12 @@ register_option_loader("speechVoices", load_speech_voices)
 register_option_loader("speechLanguages", load_speech_languages)
 register_option_loader("speechFormats", load_speech_formats)
 register_option_loader("speechSampleRates", load_speech_sample_rates)
+
+# Dictation for the chat's message box: whether it can work, and turning a
+# recording into text.
+from ._handlers import WS_HANDLERS  # noqa: E402
+
+register_ws_handlers(WS_HANDLERS)
 
 __all__ = [
     "SpeechToTextNode",

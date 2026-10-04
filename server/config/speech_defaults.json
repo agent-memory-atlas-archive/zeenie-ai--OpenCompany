@@ -210,5 +210,9 @@
         "billed_unit": "seconds"
       }
     }
+  },
+  "dictation": {
+    "_comment": "Dictation in the chat's message box (nodes/speech/_handlers.py): the first of these speech-to-text providers with a stored key transcribes a recording (webm/opus from the browser). The microphone shows only when one has a key.",
+    "providers": ["openai", "groq", "deepgram"]
   }
 }

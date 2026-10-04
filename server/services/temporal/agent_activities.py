@@ -912,6 +912,32 @@ async def store_agent_output(payload: Dict[str, Any]) -> Dict[str, Any]:
     return {"stored": True}
 
 
+async def _without_web_tools(database: Any, context: Dict[str, Any], tool_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """The tools, without the web search ones when the owner turned Web off
+    for the message the chat run answers (``options.web``)."""
+    from services.chat.stream import chat_run_id_of
+
+    run_id = chat_run_id_of(context)
+    if not run_id or not tool_data:
+        return tool_data
+    try:
+        from services.chat.ledger import get_run
+
+        run = await get_run(database, run_id)
+    except Exception:  # noqa: BLE001 - the run keeps its tools
+        activity.logger.warning("Chat run options could not be read for %s", run_id, exc_info=True)
+        return tool_data
+    if run is None or (run.options or {}).get("web", True) is not False:
+        return tool_data
+    from services.node_registry import get_node_class
+
+    def searches(tool: Dict[str, Any]) -> bool:
+        cls = get_node_class(str(tool.get("node_type") or ""))
+        return cls is not None and "search" in tuple(getattr(cls, "group", ()) or ())
+
+    return [tool for tool in tool_data if not searches(tool)]
+
+
 async def _record_chat_cursor(
     database: Any, context: Dict[str, Any], *, node_id: str, generation: int, stored: List[Dict[str, Any]]
 ) -> None:
@@ -1333,7 +1359,7 @@ async def prepare_agent_payload(context: Dict[str, Any]) -> Dict[str, Any]:
     tools_payload: List[Dict[str, Any]] = []
     from services.skill_runtime import skill_tool_info
 
-    effective_tool_data = list(tool_data or [])
+    effective_tool_data = await _without_web_tools(database, context, list(tool_data or []))
     progressive_skill_tool = skill_tool_info(skill_data or [], node_id)
     if progressive_skill_tool:
         effective_tool_data.append(progressive_skill_tool)
@@ -1516,6 +1542,12 @@ async def prepare_agent_payload(context: Dict[str, Any]) -> Dict[str, Any]:
         system_message, prompt = await chat_turn(
             database, chat_stream, system_message=system_message, prompt=prompt
         )
+        from services.chat.attachments import image_refs
+        from services.chat.guide import run_attachments
+
+        user_images = image_refs(await run_attachments(database, chat_stream))
+    else:
+        user_images = []
 
     return {
         # The chat run this agent works for (stops when the owner presses
@@ -1532,6 +1564,9 @@ async def prepare_agent_payload(context: Dict[str, Any]) -> Dict[str, Any]:
         "temperature": temperature,
         "system_message": system_message,
         "user_prompt": prompt,
+        # Images the owner attached to the message this run answers: the
+        # opening user message carries them (services/llm/media.py).
+        "user_images": user_images,
         "tools": tools_payload,
         "memory_node_id": memory_node_id,
         "memory_content": memory_content,

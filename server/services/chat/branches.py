@@ -493,6 +493,7 @@ class _Edit(_Operation):
             execution_id=self.live_root,
             uid=self.uid,
             run_id=run.run_id,
+            attachments=list(original.attachments or []),
             meta={**self.meta, "edit_of": original.uid},
             after=original.parent_uid,
         )

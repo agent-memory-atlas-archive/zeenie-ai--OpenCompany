@@ -251,8 +251,10 @@ _TOOL = '{"type": "browser", "side_effects": "money", %s}'
         '{"name": "X", "provider_id": "p", "side_effects": "dangerous"}',
         '{"name": "X", "provider_id": "p", "side_effects": "money", "tools": [%s]}' % (_TOOL % '"ask_first_params": ["read_only"]'),
         '{"name": "X", "provider_id": "p", "side_effects": "money", "tools": [%s]}' % (_TOOL % '"role": ""'),
+        '{"name": "X", "provider_id": "p", "side_effects": "read", "commands": {"command": "/x"}}',
+        '{"name": "X", "provider_id": "p", "side_effects": "read", "commands": [{"command": "Inbox"}]}',
     ],
-    ids=["bad side effect", "ask_first_params not an object", "empty role"],
+    ids=["bad side effect", "ask_first_params not an object", "empty role", "commands not a list", "command without a slash"],
 )
 def test_a_malformed_registry_fails_loudly(tmp_path, monkeypatch, app_json):
     bad = tmp_path / "employee_apps.json"
@@ -265,3 +267,11 @@ def test_a_malformed_registry_fails_loudly(tmp_path, monkeypatch, app_json):
     finally:
         monkeypatch.undo()
         apps_module.reload_apps()
+
+
+def test_apps_add_slash_commands_to_the_chat():
+    commands = {command["command"]: dict(command) for app in get_apps().values() for command in app.commands}
+    assert commands["/inbox"] == {"command": "/inbox", "description": "Summarize unread email", "fill": "Summarize my unread email.", "suggest": True}
+    assert set(commands) >= {"/draft", "/inbox", "/schedule"}
+    for command in commands.values():
+        assert re.fullmatch(r"/[a-z0-9-]{1,30}", command["command"]) and command["fill"]

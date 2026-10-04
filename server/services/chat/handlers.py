@@ -31,6 +31,7 @@ from core.container import container
 from core.logging import get_logger
 from services.chat import branches, ledger, reducer
 from services.chat.access import ChatAccessDenied, authorize_session, session_id_of
+from services.chat.attachments import MAX_ATTACHMENTS, AttachmentRefused, check_attachments
 from services.chat.feedback import FeedbackRefused, feedback_for, set_feedback
 from services.chat.events import MESSAGE_WIRE_ROUTING_KEY, dispatch_chat_message_received
 from services.chat.hub import get_chat_hub
@@ -182,18 +183,29 @@ async def _ui_event(database: Any, session_id: str, raw: Any) -> Dict[str, Any]:
 
 
 async def _dispatch(
-    session_id: str, workflow_id: Optional[str], *, message_uid: str, prompt: str, run_id: Optional[str], timestamp: str
+    session_id: str,
+    workflow_id: Optional[str],
+    *,
+    message_uid: str,
+    prompt: str,
+    run_id: Optional[str],
+    timestamp: str,
+    attachments: Optional[List[Dict[str, Any]]] = None,
 ) -> None:
     """Send the owner's message to the workflow's chat triggers: the run it
-    starts is the event's id, so the trigger's child workflow is the run's."""
+    starts is the event's id, so the trigger's child workflow is the run's.
+    Its attachments ride along (the trigger's output carries them)."""
     event_data: Dict[str, Any] = {"message": prompt, "timestamp": timestamp, "session_id": session_id, "message_id": message_uid}
     if run_id is not None:
         event_data["run_id"] = run_id
+    if attachments:
+        event_data["attachments"] = list(attachments)
     await dispatch_chat_message_received(event_data, workflow_id=workflow_id, event_id=run_id)
     logger.info("Chat message dispatched", session_id=session_id, run_id=run_id)
 
 
-@ws_handler("message")
+# ``message`` is checked below: a message may be only files.
+@ws_handler()
 async def handle_send_chat_message(data: Dict[str, Any], websocket: WebSocket) -> Dict[str, Any]:
     """Save the owner's message, start its run, and dispatch it. Answers
     ``{message_id, run_id, delivery, timestamp}``; ``run_in_progress`` (with
@@ -203,9 +215,16 @@ async def handle_send_chat_message(data: Dict[str, Any], websocket: WebSocket) -
     With ``ui_event`` the message is a button pressed in an interface the
     employee showed: checked against that interface, saved as the owner's
     message reading the button's label (kind ``action``), and sent to the
-    employee as a ``[ui-event]`` line naming the press."""
+    employee as a ``[ui-event]`` line naming the press.
+
+    ``attachments`` are files the chat uploaded under the workspace's
+    ``uploads/`` (``services/chat/attachments.py``: rebuilt from the files,
+    at most six; refused with ``attachment_rejected``); a message may be
+    only files. ``options.web: false`` keeps the employee off web search for
+    this message."""
     message = data.get("message")
-    if not isinstance(message, str) or not message.strip():
+    raw_attachments = data.get("attachments")
+    if not isinstance(message, str) or not (message.strip() or raw_attachments):
         return {"success": False, "error": "invalid_request", "detail": "message must be text"}
     if data.get("role", "user") != "user":
         return {"success": False, "error": "invalid_request", "detail": "send_chat_message sends the owner's messages"}
@@ -216,6 +235,15 @@ async def handle_send_chat_message(data: Dict[str, Any], websocket: WebSocket) -
         scope = await authorize_session(database, websocket, session_id)
     except ChatAccessDenied:
         return dict(_DENIED)
+
+    attachments: List[Dict[str, Any]] = []
+    if raw_attachments:
+        if scope.workflow_id is None:
+            return {"success": False, "error": "invalid_request", "detail": "files can be attached only in a workflow's chat"}
+        try:
+            attachments = await check_attachments(database, scope.workflow_id, raw_attachments)
+        except AttachmentRefused as exc:
+            return {"success": False, "error": "attachment_rejected", "detail": str(exc)}
 
     press: Optional[Dict[str, Any]] = None
     if data.get("ui_event") is not None:
@@ -251,6 +279,8 @@ async def handle_send_chat_message(data: Dict[str, Any], websocket: WebSocket) -
             message_kind="action" if press is not None else "text",
             client_message_id=data.get("client_message_id"),
             meta=press["meta"] if press is not None else None,
+            options=_options(data.get("options")),
+            attachments=attachments or None,
         )
     except ledger.RunInProgress as exc:
         return {"success": False, "error": "run_in_progress", "run_id": exc.run.run_id}
@@ -270,6 +300,7 @@ async def handle_send_chat_message(data: Dict[str, Any], websocket: WebSocket) -
             prompt=press["prompt"] if press is not None else message,
             run_id=run.run_id if run is not None else None,
             timestamp=timestamp,
+            attachments=attachments,
         )
 
     response: Dict[str, Any] = {
@@ -445,6 +476,73 @@ async def handle_chat_ui_state(data: Dict[str, Any], websocket: WebSocket) -> Di
     return {"success": True, "part_id": part_id, "state_revision": updated["state_revision"]}
 
 
+def _options(raw: Any) -> Dict[str, Any]:
+    """The per-message choices kept on the run: ``web`` (a bool) only."""
+    if isinstance(raw, dict) and isinstance(raw.get("web"), bool):
+        return {"web": raw["web"]}
+    return {}
+
+
+@ws_handler()
+async def handle_get_chat_context(data: Dict[str, Any], websocket: WebSocket) -> Dict[str, Any]:
+    """What the session's message box offers: slash commands (the generic
+    ones in ``chat_defaults.json`` and those its employee's apps add,
+    ``employee_apps.json``; ``{name}`` is the workflow's name), whether files
+    can be attached (a workflow's chat), whether the Web chip has web search
+    to turn off (a search tool in the saved graph), and the limits."""
+    from services.chat.config import load_chat_config
+    from services.employees.apps import app_for_node_type
+    from services.media.limits import MEDIA_MAX_UPLOAD_BYTES
+    from services.node_registry import get_node_class
+
+    session_id = session_id_of(data)
+    database = container.database()
+    try:
+        scope = await authorize_session(database, websocket, session_id)
+    except ChatAccessDenied:
+        return dict(_DENIED)
+    saved = await database.get_workflow(scope.workflow_id) if scope.workflow_id is not None else None
+    graph = (getattr(saved, "data", None) or {}) if saved is not None else {}
+    name = str(getattr(saved, "name", "") or "the employee")
+    node_types = [str(node.get("type") or "") for node in graph.get("nodes") or [] if isinstance(node, dict)]
+
+    configured = (load_chat_config().get("commands") or {}).get("generic") or []
+    commands: List[Dict[str, Any]] = []
+    seen: set = set()
+
+    def add(command: Any) -> None:
+        if not isinstance(command, dict) or command.get("command") in seen or not scope.workflow_id:
+            return
+        seen.add(command.get("command"))
+        commands.append(
+            {
+                "command": str(command.get("command")),
+                "description": str(command.get("description") or "").replace("{name}", name),
+                "fill": str(command.get("fill") or "").replace("{name}", name),
+                "suggest": bool(command.get("suggest")),
+            }
+        )
+
+    for node_type in node_types:
+        app = app_for_node_type(node_type)
+        for command in app.commands if app is not None else ():
+            add(dict(command))
+    for command in configured:
+        add(command)
+
+    def searches(node_type: str) -> bool:
+        cls = get_node_class(node_type)
+        return cls is not None and "search" in tuple(getattr(cls, "group", ()) or ())
+
+    return {
+        "success": True,
+        "session_id": session_id,
+        "commands": commands,
+        "capabilities": {"attachments": scope.workflow_id is not None, "web": any(searches(t) for t in node_types)},
+        "limits": {"max_attachments": MAX_ATTACHMENTS, "max_upload_bytes": MEDIA_MAX_UPLOAD_BYTES},
+    }
+
+
 def _expected_revision(data: Dict[str, Any]) -> Optional[int]:
     value = data.get("expected_revision")
     if value is None:
@@ -504,7 +602,13 @@ async def _answer_branch(database: Any, moved: "branches.Moved", context: Dict[s
     await announce_chat_updated(moved.session_id, role)
     message, run = moved.result["message"], moved.result["run"]
     await _dispatch(
-        moved.session_id, moved.workflow_id, message_uid=message["uid"], prompt=moved.result["prompt"], run_id=run.run_id, timestamp=timestamp,
+        moved.session_id,
+        moved.workflow_id,
+        message_uid=message["uid"],
+        prompt=moved.result["prompt"],
+        run_id=run.run_id,
+        timestamp=timestamp,
+        attachments=list(message.get("attachments") or []),
     )
     response: Dict[str, Any] = {"success": True, "message_id": message["uid"], "run_id": run.run_id}
     if context.get("delivery") is not None:
@@ -687,6 +791,7 @@ WS_HANDLERS = {
     "regenerate_chat_reply": handle_regenerate_chat_reply,
     "switch_chat_branch": handle_switch_chat_branch,
     "set_chat_feedback": handle_set_chat_feedback,
+    "get_chat_context": handle_get_chat_context,
     "clear_chat_messages": handle_clear_chat_messages,
     "save_chat_message": handle_save_chat_message,
 }

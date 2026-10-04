@@ -238,7 +238,15 @@ class AnthropicProvider:
         hydrated images ride along (the documented image-in-tool-result
         shape). Ref-only blocks render nothing here — hydration either
         produced bytes or a text placeholder before compile time."""
-        images = [
+        images = AnthropicProvider._image_parts(m)
+        if not images:
+            return m.content
+        return [{"type": "text", "text": m.content}, *images]
+
+    @staticmethod
+    def _image_parts(m: Message) -> List[Dict[str, Any]]:
+        """The message's hydrated images as Anthropic image blocks."""
+        return [
             {
                 "type": "image",
                 "source": {
@@ -252,9 +260,6 @@ class AnthropicProvider:
             and isinstance(block.source, dict)
             and block.source.get("kind") == "bytes"
         ]
-        if not images:
-            return m.content
-        return [{"type": "text", "text": m.content}, *images]
 
     def _to_api_message(self, m: Message) -> Dict[str, Any]:
         role = "assistant" if m.role == "assistant" else "user"
@@ -302,6 +307,12 @@ class AnthropicProvider:
                 )
             return {"role": "assistant", "content": content}
 
+        images = self._image_parts(m) if m.role == "user" else []
+        if images:
+            # Images the owner attached, ahead of their words (Anthropic's
+            # recommended order).
+            text = [{"type": "text", "text": m.content}] if m.content else []
+            return {"role": "user", "content": [*images, *text]}
         return {"role": role, "content": m.content}
 
     @staticmethod

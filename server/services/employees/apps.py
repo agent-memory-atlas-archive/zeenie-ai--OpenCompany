@@ -86,6 +86,9 @@ class AppSpec:
     #: agent only, never to a worker strangers write to; every call waits
     #: for the owner while they ask first (services/approvals/tool_calls.py).
     talk_send: Optional[NodeTemplate] = None
+    #: Slash commands this app adds to the employee's chat
+    #: (``{command, description, fill, suggest}``; get_chat_context).
+    commands: Tuple[Mapping[str, Any], ...] = ()
 
     @property
     def node_types(self) -> frozenset:
@@ -171,8 +174,35 @@ def _parse(raw: Mapping[str, Any]) -> Dict[str, AppSpec]:
             tools=tools,
             side_effects=effect,
             phrases=MappingProxyType({str(k): str(v) for k, v in (entry.get("phrases") or {}).items()}),
+            commands=_commands(app_id, entry.get("commands")),
         )
     return apps
+
+
+_COMMAND = re.compile(r"^/[a-z0-9-]{1,30}$")
+
+
+def _commands(app_id: str, raw: Any) -> Tuple[Mapping[str, Any], ...]:
+    """An app's slash commands: ``{command, description, fill, suggest}``."""
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise AppRegistryError(f"{app_id}.commands must be a list")
+    commands = []
+    for item in raw:
+        if not isinstance(item, dict) or not isinstance(item.get("command"), str) or not _COMMAND.match(item["command"]):
+            raise AppRegistryError(f"{app_id}.commands: each needs a `command` like /schedule")
+        commands.append(
+            MappingProxyType(
+                {
+                    "command": item["command"],
+                    "description": str(item.get("description") or ""),
+                    "fill": str(item.get("fill") or ""),
+                    "suggest": bool(item.get("suggest")),
+                }
+            )
+        )
+    return tuple(commands)
 
 
 _apps: Optional[Dict[str, AppSpec]] = None
