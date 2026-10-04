@@ -62,7 +62,7 @@ from core.logging import get_logger
 from models.chat import LIVE_STATES, TERMINAL_STATES, ChatRun
 from models.database import ChatMessage
 from services.chat.config import runs_setting, steps_setting
-from services.chat.hub import get_chat_hub
+from services.chat.hub import publish_run_event
 from services.chat_thread import delivery_for
 
 logger = get_logger(__name__)
@@ -370,7 +370,7 @@ async def post_reply(
 
 def _publish(run: ChatRun, suffix: str, fields: Dict[str, Any], event_key: str) -> None:
     try:
-        get_chat_hub().publish(
+        publish_run_event(
             run_id=run.run_id,
             session_id=run.session_id,
             workflow_id=run.workflow_id,

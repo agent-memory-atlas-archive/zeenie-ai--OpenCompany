@@ -235,6 +235,10 @@ def test_allowlist_is_exactly_what_the_worker_needs():
     assert INTERNAL_SOCKET_HANDLERS == {
         "execute_node",
         "execute_ai_node",
+        # A standalone worker's chat events (services/chat/relay.py): it
+        # publishes into the hub, reads nothing, writes no row, and refuses
+        # every other socket (tests/services/chat/test_relay.py).
+        "chat_run_publish",
         "ping",
     }, "widening this set grants unauthenticated access — justify it in review"
 

@@ -72,9 +72,9 @@ def _stream_of(context: Mapping[str, Any]) -> Optional[Mapping[str, Any]]:
 
 def _publish(step: Step, suffix: str, fields: Dict[str, Any], event_key: str) -> None:
     try:
-        from services.chat.hub import get_chat_hub
+        from services.chat.hub import publish_run_event
 
-        get_chat_hub().publish(
+        publish_run_event(
             run_id=step.run_id,
             session_id=step.session_id,
             workflow_id=step.workflow_id,

@@ -78,10 +78,10 @@ async def run_parts(database: Any, run_id: str) -> List[ChatRunPart]:
 
 def _publish(stream: Mapping[str, Any], suffix: str, fields: Dict[str, Any], event_key: str) -> None:
     try:
-        from services.chat.hub import get_chat_hub
+        from services.chat.hub import publish_run_event
 
         workflow_id = stream.get("workflow_id")
-        get_chat_hub().publish(
+        publish_run_event(
             run_id=stream["run_id"],
             session_id=stream["session_id"],
             workflow_id=workflow_id if isinstance(workflow_id, str) else None,

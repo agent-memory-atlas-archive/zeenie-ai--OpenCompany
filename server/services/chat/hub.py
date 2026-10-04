@@ -20,8 +20,9 @@ go through ``StatusBroadcaster.broadcast``, which reaches every socket.
   follows: the client takes a fresh snapshot instead of reading a stream
   with a hole in it.
 
-Delivery is in-process. An activity on a worker in another process
-publishes into that process's hub, which no socket here reads.
+Publish through :func:`publish_run_event`. It delivers in-process, except on
+a standalone worker, where no socket is: there it hands the event to the relay
+(``services/chat/relay.py``), which sends it to the backend's hub.
 """
 
 from __future__ import annotations
@@ -229,6 +230,11 @@ class ChatRunHub:
             if subscriber is not None and session_id in subscriber.sessions:
                 subscriber.offer(frame)
 
+    def resync(self, session_id: str) -> None:
+        """Tell the session's subscribers to take a fresh snapshot: events
+        for it were lost before they reached this hub (the relay)."""
+        self._fan_out(session_id, self.resync_frame(session_id))
+
     def resync_frame(self, session_id: str) -> str:
         event = WorkflowEvent(
             id=f"resync:{uuid4().hex}",
@@ -254,6 +260,40 @@ def get_chat_hub() -> ChatRunHub:
     if _hub is None:
         _hub = ChatRunHub()
     return _hub
+
+
+def publish_run_event(
+    *,
+    run_id: str,
+    session_id: str,
+    workflow_id: Optional[str],
+    suffix: str,
+    fields: Optional[Mapping[str, Any]] = None,
+    event_key: Optional[str] = None,
+) -> Optional[WorkflowEvent]:
+    """Publish a run event where its subscribers are: this process's hub, or,
+    on a standalone worker, the backend's through the relay (None then)."""
+    from services.chat.relay import active_relay
+
+    relay = active_relay()
+    if relay is not None:
+        relay.offer_run_event(
+            run_id=run_id,
+            session_id=session_id,
+            workflow_id=workflow_id,
+            suffix=suffix,
+            fields=fields,
+            event_key=event_key,
+        )
+        return None
+    return get_chat_hub().publish(
+        run_id=run_id,
+        session_id=session_id,
+        workflow_id=workflow_id,
+        suffix=suffix,
+        fields=fields,
+        event_key=event_key,
+    )
 
 
 def reset_chat_hub_for_tests(hub: Optional[ChatRunHub] = None) -> Optional[ChatRunHub]:

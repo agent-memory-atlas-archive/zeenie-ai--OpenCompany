@@ -762,6 +762,11 @@ async def run_standalone_worker(
     ]
     registered_plugin_activities = collect_plugin_activities()
 
+    # No socket follows a chat here: its events go to the backend's hub.
+    from services.chat.relay import start_relay, stop_relay
+
+    start_relay()
+
     try:
         worker = Worker(
             client,
@@ -795,6 +800,7 @@ async def run_standalone_worker(
         await worker.run()
 
     finally:
+        await stop_relay()
         # Cleanup session on shutdown
         if not session.closed:
             await session.close()

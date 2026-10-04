@@ -42,9 +42,9 @@ Publish = Callable[..., Any]
 
 
 def _default_publish(**kwargs: Any) -> Any:
-    from services.chat.hub import get_chat_hub
+    from services.chat.hub import publish_run_event
 
-    return get_chat_hub().publish(**kwargs)
+    return publish_run_event(**kwargs)
 
 
 def segment_id(run_id: str, iteration: int, attempt: int) -> str:

@@ -14,6 +14,7 @@ imports ``nodes/``.
 - ``activities``: the Temporal activities MachinaWorkflow starts and
   finishes runs through.
 - ``watchdog``: the periodic sweep main.py runs.
+- ``relay``: a standalone worker's events, sent to the backend's hub.
 
 Thread rows (and ``chat.updated``) stay with ``services/chat_thread.py``.
 
@@ -28,6 +29,7 @@ from services.ws_handler_registry import register_ws_handlers as _register_ws_ha
 
 from .handlers import WS_HANDLERS as _CHAT_WS_HANDLERS
 from .hub import get_chat_hub
+from .relay import WS_HANDLERS as _RELAY_WS_HANDLERS
 
 
 def _drop_socket(websocket) -> None:
@@ -35,6 +37,7 @@ def _drop_socket(websocket) -> None:
 
 
 _register_ws_handlers(_CHAT_WS_HANDLERS)
+_register_ws_handlers(_RELAY_WS_HANDLERS)
 _register_disconnect_listener(_drop_socket)
 
 __all__ = ["get_chat_hub"]

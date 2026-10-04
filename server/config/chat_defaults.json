@@ -7,7 +7,10 @@
     "stop_grace_s": 45
   },
   "hub": {
-    "subscriber_queue_size": 512
+    "subscriber_queue_size": 512,
+    "_relay_comment": "A standalone worker sends its chat events to the backend's hub (services/chat/relay.py): at most relay_queue_size wait to go, relay_batch_size to a frame.",
+    "relay_queue_size": 4096,
+    "relay_batch_size": 200
   },
   "stream": {
     "flush_ms": 50,

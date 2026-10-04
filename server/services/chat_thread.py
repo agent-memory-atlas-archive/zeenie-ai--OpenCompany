@@ -109,11 +109,18 @@ def chat_updated(*, session_id: str, role: Optional[str]) -> WorkflowEvent:
 async def announce_chat_updated(session_id: str, role: Optional[str]) -> None:
     """Send ``chat.updated`` for a session: a message was added (``role``)
     or the thread was cleared (``role`` None). Never raises."""
+    from services.chat.relay import active_relay
     from services.status_broadcaster import get_status_broadcaster
 
     event = chat_updated(session_id=session_id, role=role)
+    data = event.model_dump(mode="json", exclude_none=True)
+    relay = active_relay()
+    if relay is not None:
+        # A standalone worker: the backend sends it (services/chat/relay.py).
+        relay.offer_broadcast(WIRE_KEY, data, session_id=session_id)
+        return
     try:
-        await get_status_broadcaster().broadcast({"type": WIRE_KEY, "data": event.model_dump(mode="json", exclude_none=True)})
+        await get_status_broadcaster().broadcast({"type": WIRE_KEY, "data": data})
     except Exception:
         logger.warning("chat.updated broadcast failed", session_id=session_id, exc_info=True)
 

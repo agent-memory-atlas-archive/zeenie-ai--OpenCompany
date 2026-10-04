@@ -62,10 +62,15 @@ def is_internal_caller(headers: Mapping[str, str], secret_key: str) -> bool:
 
 #: Everything the activity worker legitimately needs. Both execute
 #: handlers already carry their own ``/ws/internal`` identity branch.
+#: ``chat_run_publish`` is how a standalone worker's chat events reach the
+#: backend's sockets (``services/chat/relay.py``): it publishes run events
+#: and two identity-only broadcasts, reads nothing and writes no row, and
+#: refuses any socket but this one.
 INTERNAL_SOCKET_HANDLERS: frozenset[str] = frozenset(
     {
         "execute_node",
         "execute_ai_node",
+        "chat_run_publish",
         "ping",
     }
 )

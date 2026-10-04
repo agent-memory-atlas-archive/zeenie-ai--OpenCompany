@@ -6,7 +6,8 @@ or discarded), ``undone``, ``restored``, ``sending``, ``sent``, ``failed``,
 the message, never who it goes to. The client refetches the drafts it shows
 (``list_approvals`` / ``get_approvals``) through the authorized handlers.
 
-Broadcast directly: no Temporal consumer listens for these.
+Broadcast directly: no Temporal consumer listens for these. On a standalone
+worker the backend sends them (``services/chat/relay.py``).
 """
 
 from __future__ import annotations
@@ -36,10 +37,16 @@ def approval_lifecycle_event(change: ApprovalChange) -> WorkflowEvent:
 
 
 async def broadcast_approval_change(change: ApprovalChange) -> None:
+    from services.chat.relay import active_relay
     from services.status_broadcaster import get_status_broadcaster
 
     event = approval_lifecycle_event(change)
-    await get_status_broadcaster().broadcast({"type": WIRE_KEY, "data": event.model_dump(mode="json", exclude_none=True)})
+    data = event.model_dump(mode="json", exclude_none=True)
+    relay = active_relay()
+    if relay is not None:
+        relay.offer_broadcast(WIRE_KEY, data, session_id=change.workflow_id)
+        return
+    await get_status_broadcaster().broadcast({"type": WIRE_KEY, "data": data})
 
 
 __all__ = ["SOURCE", "WIRE_KEY", "approval_lifecycle_event", "broadcast_approval_change"]

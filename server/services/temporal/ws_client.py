@@ -23,7 +23,7 @@ from core.config import Settings
 logger = get_logger(__name__)
 
 
-def _default_ws_url() -> str:
+def internal_ws_url() -> str:
     """Resolve the activity-side WS URL from current ``Settings``.
 
     Deferred to first call so module import doesn't require the full env
@@ -46,7 +46,7 @@ class WSConnectionPool:
     """
 
     def __init__(self, url: Optional[str] = None, pool_size: int = 100):
-        self.url = url if url is not None else _default_ws_url()
+        self.url = url if url is not None else internal_ws_url()
         self.pool_size = pool_size
         self._session: Optional[aiohttp.ClientSession] = None
         self._lock = asyncio.Lock()
