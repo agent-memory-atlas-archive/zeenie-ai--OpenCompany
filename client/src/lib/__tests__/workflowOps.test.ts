@@ -292,6 +292,16 @@ describe('addSavedNodes / addSavedEdges', () => {
 
     expect(addSavedEdges([drawn], SAVED)).toEqual([drawn]);
   });
+
+  it('takes out the edges the batch took out', () => {
+    const direct: Edge = { id: 'e-agent-reply', source: '7:aiAgent:1', target: '7:whatsappSend:1', sourceHandle: 'output-main', targetHandle: 'input-main' };
+    const ops: WorkflowOperation[] = [{ type: 'delete_edge', edge_id: 'e-agent-reply' }, ...SAVED];
+
+    const edges = addSavedEdges([direct], ops);
+
+    expect(edges.map((edge) => edge.id)).toEqual(['e-7:duckduckgoSearch:1-output-tool-7:aiAgent:1-input-tools']);
+    expect(addSavedEdges(edges, ops)).toBe(edges);
+  });
 });
 
 // ----- add_edge --------------------------------------------------------------

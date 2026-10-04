@@ -214,13 +214,19 @@ export function addSavedNodes(nodes: Node[], ops: WorkflowOperation[]): Node[] {
 }
 
 /**
- * `edges` with the new edges of a saved batch, under the server's ids. An
- * edge already there (the same id, or the same ends and handles) is
- * skipped. Returns `edges` itself when nothing is new.
+ * `edges` as a saved batch left them: its new edges, under the server's
+ * ids, and without the ones it took out (`delete_edge`: a gate put between
+ * an agent and its reply takes that edge's place). An edge already there
+ * (the same id, or the same ends and handles) is skipped. Returns `edges`
+ * itself when nothing changed.
  */
 export function addSavedEdges(edges: Edge[], ops: WorkflowOperation[]): Edge[] {
   let next = edges;
   for (const op of ops) {
+    if (op.type === 'delete_edge') {
+      if (next.some(e => e.id === op.edge_id)) next = next.filter(e => e.id !== op.edge_id);
+      continue;
+    }
     if (op.type !== 'add_edge' || typeof op.source !== 'string' || typeof op.target !== 'string') continue;
     const edge = edgeFromOp(op, op.source, op.target);
     const known = next.some(e => e.id === edge.id || (
