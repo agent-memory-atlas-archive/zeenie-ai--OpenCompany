@@ -16,6 +16,12 @@
  * (data/approvals.ts). Ctrl/Cmd+Enter sends the newest one; the Ask first
  * chip beside the box changes the rule for everything they send.
  *
+ * Files go with a message where the chat allows them: Attach, a paste, or
+ * a drop anywhere on the chat (DropOverlay), all through one
+ * `addAttachments` (composer/attachments.ts). The box also dictates, offers
+ * slash commands and, in an empty chat, suggestions (data/chatContext.ts),
+ * and the Web chip keeps the employee off web search for the next messages.
+ *
  * The owner can change the conversation (data/branches.ts, TurnActions):
  * edit one of their messages in place (ArrowUp in an empty box edits the
  * last one), try the latest answer again, move between the versions of a
@@ -23,11 +29,26 @@
  * on its way or the employee is answering; a refusal says why.
  */
 
-import { useCallback, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type Ref } from 'react';
+import {
+  useCallback,
+  useImperativeHandle,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type DragEvent,
+  type KeyboardEvent,
+  type Ref,
+} from 'react';
 import { cn } from '@/lib/utils';
 import { ApprovalsContext, type ApprovalsValue } from './approval/context';
 import { StandaloneApprovals } from './approval/StandaloneApprovals';
 import { AskFirstChip } from './composer/AskFirstChip';
+import { addAttachments } from './composer/attachments';
+import { DropOverlay } from './composer/DropOverlay';
+import { Suggestions } from './composer/Suggestions';
+import { WebChip } from './composer/WebChip';
+import { canRecord, useChatContext, useDictation, type ChatCommand } from './data/chatContext';
 import {
   NO_APPROVALS,
   isOpenApproval,
@@ -53,6 +74,7 @@ import { useUiStateSync } from './data/uiState';
 import { Composer } from './composer/Composer';
 import { asksWhatItSays, type ChatUiActions } from './genui/actions';
 import type { ChatHost, ChatPaneHandle } from './host';
+import { useAttachmentStore } from './state/attachmentStore';
 import { newClientMessageId, useComposerStore } from './state/composerStore';
 import { ChatThread } from './thread/ChatThread';
 import { TurnActionsContext, type TurnActions } from './thread/turnActions';
@@ -136,9 +158,19 @@ export function ChatPane({ host, ref }: { host: ChatHost; ref?: Ref<ChatPaneHand
 
   const submit = () => {
     const store = useComposerStore.getState();
-    if (busy || !thread.data || !(store.drafts[sessionId]?.text ?? '').trim()) return;
+    const box = useAttachmentStore.getState().boxes[sessionId] ?? [];
+    const hasText = Boolean((store.drafts[sessionId]?.text ?? '').trim());
+    const hasFiles = box.some((item) => item.state === 'ready');
+    if (busy || !thread.data || box.some((item) => item.state === 'uploading') || !(hasText || hasFiles)) return;
     const draft = store.takeForSend(sessionId);
-    send.mutate({ ...draft, text: draft.text.trim() });
+    const attachments = useAttachmentStore.getState().takeReady(sessionId);
+    const web = store.web[sessionId];
+    send.mutate({
+      ...draft,
+      text: draft.text.trim(),
+      ...(attachments.length ? { attachments } : {}),
+      ...(web === false ? { options: { web: false } } : {}),
+    });
   };
 
   const stopAnswer = () => {
@@ -261,8 +293,70 @@ export function ChatPane({ host, ref }: { host: ChatHost; ref?: Ref<ChatPaneHand
     stopAnswer();
   };
 
+  // What the box offers here: files, dictation, commands, Web.
+  const contextQuery = useChatContext(sessionId);
+  const chatContext = contextQuery.data;
+  const dictationQuery = useDictation(sessionId, Boolean(workflowId) && composer === 'send' && canRecord());
+  const web = useComposerStore((state) => state.web[sessionId] !== false);
+  const addFiles = useCallback(
+    (files: File[]) => {
+      if (!workflowId) return;
+      void addAttachments(sessionId, workflowId, files).then((problem) => {
+        if (problem) notify(problem, 'info');
+      });
+    },
+    [sessionId, workflowId, notify],
+  );
+  const filesAllowed = Boolean(workflowId && chatContext?.attachments && composer !== 'closed');
+  const fillBox = useCallback(
+    (command: ChatCommand) => {
+      useComposerStore.getState().setText(sessionId, command.fill);
+      requestAnimationFrame(() => {
+        const box = boxRef.current;
+        if (!box) return;
+        box.focus();
+        box.setSelectionRange(command.fill.length, command.fill.length);
+      });
+    },
+    [sessionId],
+  );
+  const suggestions = useMemo(() => (chatContext?.commands ?? []).filter((command) => command.suggest), [chatContext]);
+
+  // A drop anywhere on the chat adds the files, as Attach does.
+  const [dragging, setDragging] = useState(false);
+  const dragDepth = useRef(0);
+  const carriesFiles = (event: DragEvent<HTMLElement>) => Array.from(event.dataTransfer?.types ?? []).includes('Files');
+  const dropHandlers = filesAllowed
+    ? {
+        onDragEnter: (event: DragEvent<HTMLElement>) => {
+          if (!carriesFiles(event)) return;
+          event.preventDefault();
+          dragDepth.current += 1;
+          setDragging(true);
+        },
+        onDragOver: (event: DragEvent<HTMLElement>) => {
+          if (carriesFiles(event)) event.preventDefault();
+        },
+        onDragLeave: () => {
+          dragDepth.current = Math.max(0, dragDepth.current - 1);
+          if (dragDepth.current === 0) setDragging(false);
+        },
+        onDrop: (event: DragEvent<HTMLElement>) => {
+          if (!carriesFiles(event)) return;
+          event.preventDefault();
+          dragDepth.current = 0;
+          setDragging(false);
+          addFiles(Array.from(event.dataTransfer.files));
+        },
+      }
+    : {};
+
   const askFirst = askFirstQuery.data?.askFirst;
-  const chips =
+  const webChip =
+    workflowId && chatContext?.web ? (
+      <WebChip on={web} name={persona.name} compact={compact} onChange={(next) => useComposerStore.getState().setWeb(sessionId, next)} />
+    ) : null;
+  const askFirstChip =
     workflowId && askFirstQuery.data ? (
       <AskFirstChip
         on={askFirst === true}
@@ -278,11 +372,24 @@ export function ChatPane({ host, ref }: { host: ChatHost; ref?: Ref<ChatPaneHand
         }
       />
     ) : null;
+  const chips =
+    webChip || askFirstChip ? (
+      <>
+        {webChip}
+        {askFirstChip}
+      </>
+    ) : null;
 
   return (
     <ApprovalsContext.Provider value={approvalsValue}>
     <TurnActionsContext.Provider value={turnActions}>
-    <section aria-label={`Chat with ${persona.name}`} onKeyDown={onKeyDown} className="flex min-h-0 w-full flex-1 flex-col">
+    <section
+      aria-label={`Chat with ${persona.name}`}
+      onKeyDown={onKeyDown}
+      {...dropHandlers}
+      className="relative flex min-h-0 w-full flex-1 flex-col"
+    >
+      {dragging && <DropOverlay name={persona.name} />}
       <ChatThread
         persona={persona}
         turns={turns}
@@ -298,7 +405,16 @@ export function ChatPane({ host, ref }: { host: ChatHost; ref?: Ref<ChatPaneHand
             </>
           ) : null
         }
-        emptyState={host.emptyState}
+        emptyState={
+          composer === 'send' && suggestions.length > 0 ? (
+            <div className="flex flex-col items-center gap-4">
+              {host.emptyState}
+              <Suggestions items={suggestions} onPick={fillBox} />
+            </div>
+          ) : (
+            host.emptyState
+          )
+        }
         liveNote={host.liveNote}
         compact={compact}
         canStop={composer !== 'closed'}
@@ -324,6 +440,9 @@ export function ChatPane({ host, ref }: { host: ChatHost; ref?: Ref<ChatPaneHand
               boxRef={boxRef}
               chips={chips}
               onEditLast={editLast}
+              onAddFiles={filesAllowed ? addFiles : undefined}
+              dictation={workflowId && dictationQuery.data ? { workflowId, notify } : null}
+              commands={chatContext?.commands}
             />
           )}
           {host.footnote && <p className="m-0 text-center text-xs text-fg-muted">{host.footnote}</p>}

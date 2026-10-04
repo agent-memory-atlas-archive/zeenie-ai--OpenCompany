@@ -367,6 +367,8 @@ const DashboardContent: React.FC = () => {
   // Console panel visibility from store (database-backed)
   const consolePanelVisible = useAppStore((state) => state.consolePanelVisible);
   const toggleConsolePanelVisible = useAppStore((state) => state.toggleConsolePanelVisible);
+  const setConsolePanelVisible = useAppStore((state) => state.setConsolePanelVisible);
+  const requestChatFocus = useAppStore((state) => state.requestChatFocus);
 
   // Context menu state for node right-click
   const [contextMenu, setContextMenu] = React.useState<{
@@ -1366,6 +1368,10 @@ const DashboardContent: React.FC = () => {
             toggleSidebar,
             toggleComponentPalette,
             toggleConsolePanel: toggleConsolePanelVisible,
+            focusChat: () => {
+              setConsolePanelVisible(true);
+              requestChatFocus();
+            },
           }}
         />
 

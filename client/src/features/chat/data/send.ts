@@ -12,12 +12,18 @@
  * after a failure in transit is the same message); `onRefused` decides what
  * to tell the owner (`ChatSendError`). Both run at the hook level, so they
  * still happen when the owner has moved to another conversation meanwhile.
+ *
+ * Files from the box (state/attachmentStore.ts) go as the paths their
+ * uploads returned; the server rebuilds them. A send that does not go
+ * through puts them back in the box too. `options.web: false` keeps the
+ * employee off web search for this message.
  */
 
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useWebSocketActions } from '@/contexts/WebSocketContext';
 import { queryKeys } from '@/lib/queryConfig';
 import { useChatRunStore } from '@/stores/chatRunStore';
+import { useAttachmentStore, type BoxAttachment } from '../state/attachmentStore';
 import { useComposerStore, type TakenDraft } from '../state/composerStore';
 import type { ChatMessage, ChatThreadData } from './schemas';
 import { chatThreadKey, type ThreadScope } from './thread';
@@ -66,7 +72,16 @@ export interface UiEventSend {
 
 /** What one send carries: the text shown as the owner's message, and for a
  *  button press, the press. */
-export type SendDraft = TakenDraft & { uiEvent?: UiEventSend };
+export type SendDraft = TakenDraft & {
+  uiEvent?: UiEventSend;
+  /** Finished uploads from the box. */
+  attachments?: BoxAttachment[];
+  options?: { web: boolean };
+};
+
+function refsOf(attachments: readonly BoxAttachment[] | undefined) {
+  return (attachments ?? []).flatMap((item) => (item.ref ? [item.ref] : []));
+}
 
 function localId(clientMessageId: string): string {
   return `local:${clientMessageId}`;
@@ -81,7 +96,7 @@ export function useSendChatMessage(sessionId: string, scope: ThreadScope, onRefu
     queryClient.setQueryData<ChatThreadData>(key, (data) => (data ? { ...data, messages: update(data.messages) } : data));
 
   return useMutation<SendResult, ChatSendError, SendDraft>({
-    mutationFn: async ({ text, clientMessageId, uiEvent }) => {
+    mutationFn: async ({ text, clientMessageId, uiEvent, attachments, options }) => {
       let reply: SendReply | undefined;
       try {
         reply = await sendRequest<SendReply>('send_chat_message', {
@@ -90,6 +105,8 @@ export function useSendChatMessage(sessionId: string, scope: ThreadScope, onRefu
           role: 'user',
           timestamp: new Date().toISOString(),
           client_message_id: clientMessageId,
+          ...(attachments?.length ? { attachments: refsOf(attachments).map((ref) => ({ path: ref.path })) } : {}),
+          ...(options ? { options } : {}),
           ...(uiEvent
             ? {
                 ui_event: {
@@ -113,7 +130,7 @@ export function useSendChatMessage(sessionId: string, scope: ThreadScope, onRefu
         delivery: reply.delivery === 'queued' ? 'queued' : reply.delivery === 'now' ? 'now' : null,
       };
     },
-    onMutate: async ({ text, clientMessageId, uiEvent }) => {
+    onMutate: async ({ text, clientMessageId, uiEvent, attachments }) => {
       await queryClient.cancelQueries({ queryKey: key });
       const pending: ChatMessage = {
         id: localId(clientMessageId),
@@ -126,7 +143,7 @@ export function useSendChatMessage(sessionId: string, scope: ThreadScope, onRefu
         runId: null,
         parentId: null,
         status: 'complete',
-        attachments: [],
+        attachments: refsOf(attachments),
         parts: {},
         clientMessageId,
         run: null,
@@ -137,7 +154,9 @@ export function useSendChatMessage(sessionId: string, scope: ThreadScope, onRefu
       };
       replace((messages) => [...messages.filter((message) => message.id !== pending.id), pending]);
     },
-    onSuccess: (result, { clientMessageId }) => {
+    onSuccess: (result, { clientMessageId, attachments }) => {
+      // The files are on the server now: the box's thumbnails can go.
+      for (const item of attachments ?? []) if (item.preview) URL.revokeObjectURL(item.preview);
       replace((messages) =>
         messages.map((message) =>
           message.id === localId(clientMessageId)
@@ -157,6 +176,7 @@ export function useSendChatMessage(sessionId: string, scope: ThreadScope, onRefu
       replace((messages) => messages.filter((message) => message.id !== localId(draft.clientMessageId)));
       // A button press is not the owner's writing: nothing goes back in the box.
       if (!draft.uiEvent) useComposerStore.getState().restore(sessionId, draft, error.transport);
+      if (draft.attachments?.length) useAttachmentStore.getState().restore(sessionId, draft.attachments);
       onRefused?.(error);
     },
     // The refetch swaps the local copy for the saved row.

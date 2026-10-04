@@ -146,6 +146,14 @@ describe('the thread', () => {
     expect(screen.getByRole('log', { name: 'Conversation with Maya' })).toBeEmptyDOMElement();
     expect(screen.getByText('Maya asks before sending anything on your behalf.')).toBeInTheDocument();
   });
+
+  it('puts the cursor in the message box on Cmd/Ctrl+K', async () => {
+    renderChat(employee());
+    const box = await screen.findByRole('textbox', { name: 'Message Maya' });
+    expect(box).not.toHaveFocus();
+    fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+    expect(box).toHaveFocus();
+  });
 });
 
 describe('sending', () => {

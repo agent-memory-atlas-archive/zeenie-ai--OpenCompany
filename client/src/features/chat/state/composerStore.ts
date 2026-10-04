@@ -23,6 +23,10 @@ export type TakenDraft = ComposerDraft & { clientMessageId: string };
 
 interface ComposerState {
   drafts: Record<string, ComposerDraft>;
+  /** Per session, whether the next message lets the employee search the
+   *  web (the Web chip; on unless turned off). */
+  web: Record<string, boolean>;
+  setWeb: (sessionId: string, on: boolean) => void;
   setText: (sessionId: string, text: string) => void;
   /** Empty the box and return what it held, with the id naming this send. */
   takeForSend: (sessionId: string) => TakenDraft;
@@ -42,6 +46,9 @@ export function newClientMessageId(): string {
 
 export const useComposerStore = create<ComposerState>((set, get) => ({
   drafts: {},
+  web: {},
+
+  setWeb: (sessionId, on) => set((state) => ({ web: { ...state.web, [sessionId]: on } })),
 
   setText: (sessionId, text) =>
     set((state) => {

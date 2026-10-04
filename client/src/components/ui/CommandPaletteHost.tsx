@@ -26,6 +26,7 @@ import {
   PanelLeftClose,
   PanelRightClose,
   Terminal,
+  MessageSquare,
   Palette as PaletteIcon,
   Download,
   Upload,
@@ -54,6 +55,9 @@ export interface CommandPaletteHandlers {
   toggleSidebar: () => void;
   toggleComponentPalette: () => void;
   toggleConsolePanel: () => void;
+  /** Open the console's Chat and put the cursor in its message box (the
+   *  editor's way to what ⌘K does on Home, where ⌘K is the palette). */
+  focusChat?: () => void;
 }
 
 const THEME_LABEL: Record<ThemeName, string> = {
@@ -192,6 +196,9 @@ export const CommandPaletteHost: React.FC<Props> = ({ open, onOpenChange, handle
         icon: KeyRound,
         onRun: handlers.openCredentials,
       },
+      ...(handlers.focusChat
+        ? [{ id: 'open.chat', label: 'Focus Chat', group: 'Open', icon: MessageSquare, onRun: handlers.focusChat }]
+        : []),
 
       // ── View toggles ───────────────────────────────────────────────
       {

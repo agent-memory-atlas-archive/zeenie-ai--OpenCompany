@@ -5,6 +5,9 @@
  * pointer, in a quieter pill. `chat-msg chat-msg-user` is the theme hook the
  * stylized themes paint.
  *
+ * Files sent with it show above it (images as thumbnails, other files as
+ * chips); a message that is only files has no bubble.
+ *
  * Under it, the hover bar: when they sent it, ‹ 1 / 2 › between their edits
  * of it, Edit (it opens in place; sending the edit starts a new branch of
  * the conversation), and Copy. Edit shows only where the server allows it
@@ -19,6 +22,7 @@ import { timeLabel } from '../thread/timeLabel';
 import { useTurnActions } from '../thread/turnActions';
 import { TurnMeta } from './TurnMeta';
 import { useCopied } from './useCopied';
+import { MessageAttachments } from './MessageAttachments';
 import { UserEditBox } from './UserEditBox';
 import { VersionStepper } from './VersionStepper';
 
@@ -28,9 +32,11 @@ export function UserTurn({ message, now, latest, compact }: { message: ChatMessa
   const pressed = message.kind === 'action';
   const editing = Boolean(actions && actions.editingId === message.id);
   const canEdit = Boolean(actions && message.editable && !pressed && !message.pending);
+  const hasText = message.text.trim().length > 0;
 
   return (
     <div data-turn="user" data-message={message.id} className="chat-turn-user group/turn flex flex-col items-end gap-1.5">
+      {message.attachments.length > 0 && <MessageAttachments attachments={message.attachments} />}
       {editing && actions ? (
         <UserEditBox
           initial={message.text}
@@ -50,7 +56,7 @@ export function UserTurn({ message, now, latest, compact }: { message: ChatMessa
           <span className="sr-only">Pressed </span>
           <span className="font-medium text-fg-default">{message.text}</span>
         </p>
-      ) : (
+      ) : !hasText ? null : (
         <p
           className={cn(
             'chat-msg chat-msg-user m-0 max-w-[85%] rounded-draft rounded-br-sm border border-border-default bg-bg-elevated whitespace-pre-wrap text-fg-default wrap-anywhere',
@@ -81,7 +87,7 @@ export function UserTurn({ message, now, latest, compact }: { message: ChatMessa
                 <Pencil aria-hidden className="size-3.5" strokeWidth={1.9} />
               </Button>
             )}
-            {!pressed && (
+            {!pressed && hasText && (
               <Button
                 variant="quiet"
                 size="icon-sm"

@@ -17,13 +17,15 @@
  *   setup cannot answer gets a note instead of the box.
  * - A document they wrote opens from its card in the reply on the
  *   Workspace's Canvas tab, at that version.
+ * - Cmd/Ctrl+K puts the cursor in the message box.
  */
 
 import { Monitor } from 'lucide-react';
+import { useEffect, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { ActionButton } from '@/components/ui/action-button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { ChatPane, useLaneRun, type ComposerMode } from '@/features/chat';
+import { ChatPane, useLaneRun, type ChatPaneHandle, type ComposerMode } from '@/features/chat';
 import { invalidateEmployees } from '../data/employees';
 import { stateNoticeText, talkMode, talkNoticeText } from '../data/presentation';
 import type { EmployeeSummary } from '../data/schemas';
@@ -112,6 +114,19 @@ export function EmployeeChat({
   const mode = talkMode(employee.control);
   const composer: ComposerMode = employee.talk.state !== 'on' || mode === 'start' ? 'closed' : mode;
 
+  // Cmd/Ctrl+K puts the cursor in the message box (on Home only: in the
+  // editor it opens the command palette, which has Focus Chat).
+  const pane = useRef<ChatPaneHandle>(null);
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key.toLowerCase() !== 'k' || !(event.metaKey || event.ctrlKey) || event.shiftKey || event.altKey) return;
+      event.preventDefault();
+      pane.current?.focusComposer();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   const onSendRefused = (code: string) => {
     if (code === 'not_running') {
       invalidateEmployees(queryClient);
@@ -127,6 +142,7 @@ export function EmployeeChat({
 
   return (
     <ChatPane
+      ref={pane}
       host={{
         kind: 'home',
         sessionId: workflowId,
