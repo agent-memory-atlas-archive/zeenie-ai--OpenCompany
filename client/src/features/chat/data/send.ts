@@ -130,6 +130,9 @@ export function useSendChatMessage(sessionId: string, scope: ThreadScope, onRefu
         parts: {},
         clientMessageId,
         run: null,
+        siblings: null,
+        editable: false,
+        feedback: null,
         pending: true,
       };
       replace((messages) => [...messages.filter((message) => message.id !== pending.id), pending]);

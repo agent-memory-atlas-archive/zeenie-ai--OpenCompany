@@ -4,7 +4,7 @@
  * Send, which becomes Stop while the employee is answering. Enter sends,
  * Shift+Enter starts a new line, and the Enter that confirms an input
  * method's composition never sends (lib/composerKeys). Esc stops an answer
- * (ChatPane).
+ * (ChatPane); ArrowUp in an empty box edits the owner's last message.
  *
  * What is written lives in the composer store per conversation, so it
  * survives switching to another employee and back. While the employee is
@@ -37,15 +37,27 @@ export interface ComposerProps {
   boxRef: RefObject<HTMLTextAreaElement | null>;
   /** Chips beside the button (Ask first). */
   chips?: ReactNode;
+  /** ArrowUp in an empty box: edit the owner's last message. False when
+   *  there is none to edit, so the key does what it always does. */
+  onEditLast?: () => boolean;
 }
 
-export function Composer({ sessionId, name, ready, busy, onSend, onStop, stopping = false, compact, boxRef, chips }: ComposerProps) {
+export function Composer({ sessionId, name, ready, busy, onSend, onStop, stopping = false, compact, boxRef, chips, onEditLast }: ComposerProps) {
   const draft = useComposerDraft(sessionId);
   const setText = useComposerStore((state) => state.setText);
   useAutoGrow(boxRef, draft.text);
   const canSend = ready && !busy && draft.text.trim().length > 0;
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (
+      event.key === 'ArrowUp' &&
+      !draft.text &&
+      !(event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) &&
+      onEditLast?.()
+    ) {
+      event.preventDefault();
+      return;
+    }
     if (!isSendKey(event)) return;
     event.preventDefault();
     if (canSend) onSend();

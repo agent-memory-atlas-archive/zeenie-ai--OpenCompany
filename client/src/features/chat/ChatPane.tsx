@@ -15,6 +15,12 @@
  * reply that made it, or after the conversation for the employee's own work
  * (data/approvals.ts). Ctrl/Cmd+Enter sends the newest one; the Ask first
  * chip beside the box changes the rule for everything they send.
+ *
+ * The owner can change the conversation (data/branches.ts, TurnActions):
+ * edit one of their messages in place (ArrowUp in an empty box edits the
+ * last one), try the latest answer again, move between the versions of a
+ * message or an answer, and rate an answer. Each waits while a message is
+ * on its way or the employee is answering; a refusal says why.
  */
 
 import { useCallback, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type Ref } from 'react';
@@ -33,6 +39,13 @@ import {
   type DecideInput,
 } from './data/approvals';
 import { useConversation } from './data/conversation';
+import {
+  useEditChatMessage,
+  useRegenerateChatReply,
+  useSetChatFeedback,
+  useSwitchChatBranch,
+  type ChatBranchError,
+} from './data/branches';
 import { liveApprovalIds, savedApprovalIds } from './data/parts';
 import { useSendChatMessage, type ChatSendError } from './data/send';
 import { useStopChatRun } from './data/stop';
@@ -42,6 +55,8 @@ import { asksWhatItSays, type ChatUiActions } from './genui/actions';
 import type { ChatHost, ChatPaneHandle } from './host';
 import { newClientMessageId, useComposerStore } from './state/composerStore';
 import { ChatThread } from './thread/ChatThread';
+import { TurnActionsContext, type TurnActions } from './thread/turnActions';
+import { branchRefusalText, feedbackThanks } from './turns/runCopy';
 
 export function ChatPane({ host, ref }: { host: ChatHost; ref?: Ref<ChatPaneHandle> }) {
   const { sessionId, scope, persona, composer, notify, onSendRefused, compact = false } = host;
@@ -58,8 +73,66 @@ export function ChatPane({ host, ref }: { host: ChatHost; ref?: Ref<ChatPaneHand
   );
   const send = useSendChatMessage(sessionId, scope, onRefused);
   const stop = useStopChatRun(sessionId, () => notify('Couldn’t stop the reply. Try again.', 'error'));
-  const busy = send.isPending || lane !== null;
+
+  // Changing the conversation: edit, try again, another version, a rating.
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingIn, setEditingIn] = useState(sessionId);
+  if (editingIn !== sessionId) {
+    setEditingIn(sessionId);
+    setEditingId(null);
+  }
+  const branchRefused = useCallback(
+    (error: ChatBranchError) => {
+      if (error.code === 'not_running' && onSendRefused) {
+        onSendRefused('not_running');
+        return;
+      }
+      const quiet = error.code === 'revision_conflict' || error.code === 'run_in_progress';
+      notify(branchRefusalText(error.code, persona.name), quiet ? 'info' : 'error');
+    },
+    [notify, onSendRefused, persona.name],
+  );
+  const edit = useEditChatMessage(sessionId, scope, branchRefused);
+  const regenerate = useRegenerateChatReply(sessionId, scope, branchRefused);
+  const switchBranch = useSwitchChatBranch(sessionId, scope, branchRefused);
+  const feedback = useSetChatFeedback(sessionId, scope, () => notify('Your rating didn’t save. Try again.', 'error'));
+  const changing = edit.isPending || regenerate.isPending || switchBranch.isPending;
+
+  const busy = send.isPending || lane !== null || changing;
   const stopping = lane?.state === 'stopping' || stop.isPending;
+
+  const editMutate = edit.mutate;
+  const regenerateMutate = regenerate.mutate;
+  const switchMutate = switchBranch.mutate;
+  const feedbackMutate = feedback.mutate;
+  const turnActions = useMemo<TurnActions>(
+    () => ({
+      sessionId,
+      editingId,
+      busy,
+      startEdit: (messageId) => setEditingId(messageId),
+      cancelEdit: () => setEditingId(null),
+      saveEdit: (messageId, text) =>
+        editMutate({ messageId, text, clientMessageId: newClientMessageId() }, { onSuccess: () => setEditingId(null) }),
+      switchTo: (messageId) => switchMutate({ messageId }),
+      regenerate: (messageId) => regenerateMutate({ messageId }),
+      rate: (messageId, value) =>
+        feedbackMutate(
+          { messageId, value },
+          { onSuccess: (reaches) => value && notify(feedbackThanks(persona.name, reaches), 'success') },
+        ),
+    }),
+    [sessionId, editingId, busy, editMutate, switchMutate, regenerateMutate, feedbackMutate, notify, persona.name],
+  );
+
+  // ArrowUp in an empty box edits the owner's last message, when it can be.
+  const editLast = () => {
+    if (busy) return false;
+    const last = [...turns].reverse().find((turn) => turn.kind === 'user');
+    if (!last || last.kind !== 'user' || !last.message.editable) return false;
+    setEditingId(last.message.id);
+    return true;
+  };
 
   const submit = () => {
     const store = useComposerStore.getState();
@@ -208,6 +281,7 @@ export function ChatPane({ host, ref }: { host: ChatHost; ref?: Ref<ChatPaneHand
 
   return (
     <ApprovalsContext.Provider value={approvalsValue}>
+    <TurnActionsContext.Provider value={turnActions}>
     <section aria-label={`Chat with ${persona.name}`} onKeyDown={onKeyDown} className="flex min-h-0 w-full flex-1 flex-col">
       <ChatThread
         persona={persona}
@@ -249,12 +323,14 @@ export function ChatPane({ host, ref }: { host: ChatHost; ref?: Ref<ChatPaneHand
               compact={compact}
               boxRef={boxRef}
               chips={chips}
+              onEditLast={editLast}
             />
           )}
           {host.footnote && <p className="m-0 text-center text-xs text-fg-muted">{host.footnote}</p>}
         </div>
       </div>
     </section>
+    </TurnActionsContext.Provider>
     </ApprovalsContext.Provider>
   );
 }

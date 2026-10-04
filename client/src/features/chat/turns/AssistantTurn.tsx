@@ -16,8 +16,9 @@
  * themes paint as a bubble.
  */
 
-import { CircleAlert, Pause, Square } from 'lucide-react';
+import { CircleAlert, Pause, RotateCcw, Square } from 'lucide-react';
 import { Suspense, lazy, useMemo, type ReactNode } from 'react';
+import { Button } from '@/components/ui/button';
 import { isLiveRun, type RunSnapshot } from '@/lib/agui/reduceRun';
 import type { UiStateChange } from '@/lib/jsonRender/uiState';
 import { cn } from '@/lib/utils';
@@ -43,9 +44,12 @@ import { citationOrder } from '../markdown/citations';
 import { ChatAvatar } from '../thread/ChatAvatar';
 import type { TurnWork } from '../thread/model';
 import { timeLabel } from '../thread/timeLabel';
+import { useComposerStore } from '../state/composerStore';
+import { useTurnActions } from '../thread/turnActions';
 import { ArtifactCard } from './ArtifactCard';
 import { GeneratedUiBlock } from './GeneratedUiBlock';
 import { FollowUps } from './FollowUps';
+import { ReplyActions } from './ReplyActions';
 import { failureLines, liveLabel, liveText } from './runCopy';
 import { SourceChips } from './SourceChips';
 import { StatusLine } from './StatusLine';
@@ -54,6 +58,12 @@ import { TurnMeta } from './TurnMeta';
 import { useWritingRate } from './useWritingRate';
 
 const NO_UI: UiPart[] = [];
+
+/** Whether the owner has written something in this chat's box. */
+function useDrafting(): boolean {
+  const sessionId = useTurnActions()?.sessionId ?? null;
+  return useComposerStore((state) => Boolean(sessionId && state.drafts[sessionId]?.text.trim()));
+}
 
 // Its own chunk: the markdown stack stays out of the first load.
 const ReplyMarkdown = lazy(() => import('../markdown/ReplyMarkdown'));
@@ -128,6 +138,25 @@ export function AssistantTurn({
   const narration = streamed.narration;
   const rate = useWritingRate(text, streaming, now);
   const failure = run?.state === 'error' ? failureLines(run.error, persona.name) : null;
+  // A run that ended without saving an answer can be tried again from its
+  // note (an answer it saved has Try again in its bar).
+  const actions = useTurnActions();
+  const question = run?.userMessageId ?? null;
+  const retry =
+    !message && latest && actions && question && (run?.state === 'stopped' || run?.state === 'error') ? (
+      <div>
+        <Button
+          variant="quiet"
+          size="sm"
+          disabled={actions.busy}
+          onClick={() => actions.regenerate(question)}
+          className="-ml-2 h-7 gap-1.5 px-2 text-xs font-semibold text-fg-default"
+        >
+          <RotateCcw aria-hidden className="size-3.25" strokeWidth={2} />
+          Try again
+        </Button>
+      </div>
+    ) : null;
   const saved = message ? savedUiParts(message.parts) : NO_UI;
   const interfaces = saved.length > 0 ? saved : liveUi;
   // The documents it wrote, at the latest version the reply or the run names.
@@ -140,8 +169,13 @@ export function AssistantTurn({
     () => [...new Set([...savedApprovalIds(message?.parts), ...liveApprovalIds(run?.activities)])],
     [message?.parts, run?.activities],
   );
-  // Only under the latest answer, once it is done.
-  const followups = message && latest && !live && onFollowUp ? savedFollowups(message.parts) : [];
+  // Only under the latest answer, once it is done, not stopped, and while
+  // the owner is not writing something else.
+  const drafting = useDrafting();
+  const followups =
+    message && latest && !live && onFollowUp && !drafting && message.status !== 'stopped' && run?.state !== 'stopped'
+      ? savedFollowups(message.parts)
+      : [];
   const citations = useMemo<CitationInfo>(() => {
     if (!message) return NO_CITATIONS;
     const known = sources ?? new Map(savedSources(message.parts).map((source) => [source.n, source] as const));
@@ -210,6 +244,7 @@ export function AssistantTurn({
         {run?.state === 'stopped' && (
           <Note icon="stop">
             <p className="m-0">You stopped this reply.</p>
+            {retry}
           </Note>
         )}
         {failure && (
@@ -217,11 +252,17 @@ export function AssistantTurn({
             <p className="m-0 text-fg-default">{failure.headline}</p>
             {failure.detail && <p className="m-0">{failure.detail}</p>}
             {run?.error?.hint && <p className="m-0">{run.error.hint}</p>}
+            {retry}
           </Note>
         )}
         {citations.order.size > 0 && <SourceChips sources={citations.sources} order={citations.order} />}
         {followups.length > 0 && onFollowUp && <FollowUps items={followups} onPick={onFollowUp} />}
-        {message && <TurnMeta shown={latest}>{timeLabel(message.timestamp, now)}</TurnMeta>}
+        {message &&
+          (live ? (
+            <TurnMeta shown={latest}>{timeLabel(message.timestamp, now)}</TurnMeta>
+          ) : (
+            <ReplyActions message={message} latest={latest} now={now} />
+          ))}
       </div>
     </div>
   );

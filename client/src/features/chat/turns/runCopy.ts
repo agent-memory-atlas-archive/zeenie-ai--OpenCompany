@@ -87,3 +87,32 @@ export function stepDetail(step: RunStep): string | null {
   if (step.state === 'failed') return step.detail ? `Failed · ${step.detail}` : 'Failed';
   return step.detail ?? null;
 }
+
+/** Why a change to the conversation (an edit, Try again, another version)
+ *  did not go through, by the server's code. */
+export function branchRefusalText(code: string, name: string): string {
+  switch (code) {
+    case 'revision_conflict':
+      return 'The conversation changed meanwhile. Try again.';
+    case 'run_in_progress':
+      return `${name} is still answering. Try again once they finish.`;
+    case 'cannot_rewind':
+      return `${name} has summed up the conversation since, so it can’t go back to that point.`;
+    case 'older_generation':
+      return `That’s from before ${name} restarted, so it can’t be changed.`;
+    case 'branch_unavailable':
+      return 'That version can’t be brought back any more.';
+    case 'not_editable':
+    case 'not_found':
+      return 'That can’t be changed.';
+    default:
+      return 'That didn’t go through. Try again.';
+  }
+}
+
+/** What the owner hears after rating an answer: where the rating goes. */
+export function feedbackThanks(name: string, reaches: readonly string[]): string {
+  return reaches.includes('memory')
+    ? `Thanks — ${name} will see this next time and remember it.`
+    : `Thanks — ${name} will see this next time.`;
+}

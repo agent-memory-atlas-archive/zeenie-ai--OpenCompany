@@ -25,6 +25,9 @@ function message(id: string, role: 'user' | 'assistant', patch: Partial<ChatMess
     parts: {},
     clientMessageId: null,
     run: null,
+    siblings: null,
+    editable: false,
+    feedback: null,
     ...patch,
   };
 }

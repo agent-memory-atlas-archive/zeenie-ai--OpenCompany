@@ -43,6 +43,29 @@ const messageRunSchema = z
     }),
   );
 
+/** The messages sharing this one's place in the conversation (its parent),
+ *  oldest first: the owner's edits of a message, or the answers tried for
+ *  one. `index` is this one's. */
+export interface MessageSiblings {
+  index: number;
+  count: number;
+  ids: string[];
+}
+
+export type Feedback = 'up' | 'down';
+
+const siblingsSchema = z
+  .object({
+    index: z.number().int().nonnegative(),
+    count: z.number().int().positive(),
+    ids: z.array(z.union([z.string(), z.number()]).transform(String)),
+  })
+  .transform((siblings): MessageSiblings | null =>
+    siblings.ids.length === siblings.count && siblings.index < siblings.count
+      ? { index: siblings.index, count: siblings.count, ids: siblings.ids }
+      : null,
+  );
+
 const messageSchema = z
   .object({
     id: z.union([z.number(), z.string()]).transform(String),
@@ -60,6 +83,9 @@ const messageSchema = z
     parts: z.record(z.string(), z.unknown()).catch({}),
     client_message_id: z.string().nullable().catch(null),
     run: messageRunSchema.nullable().catch(null),
+    siblings: siblingsSchema.nullable().catch(null),
+    editable: z.boolean().catch(false),
+    feedback: z.enum(['up', 'down']).nullable().catch(null),
   })
   .transform((row) => ({
     id: row.id,
@@ -76,6 +102,12 @@ const messageSchema = z
     parts: row.parts,
     clientMessageId: row.client_message_id,
     run: row.run,
+    /** Null when it is the only one. */
+    siblings: row.siblings && row.siblings.count > 1 ? row.siblings : null,
+    /** The owner may edit it (their message) or try it again (the latest
+     *  answer); the server decides. */
+    editable: row.editable,
+    feedback: row.feedback as Feedback | null,
   }));
 
 export type ChatMessage = z.output<typeof messageSchema> & {
