@@ -102,8 +102,10 @@ describe('BrowserWorkspace session lifecycle', () => {
     expect(link).toHaveAttribute('href', 'https://example.com/book');
     expect(link).toHaveAttribute('target', '_blank');
     expect(link).toHaveAttribute('rel', 'noopener noreferrer');
-    act(() => socket.message({ type: 'page', url: 'chrome://settings' }));
-    expect(screen.queryByRole('link', { name: 'Open in new tab' })).not.toBeInTheDocument();
+    for (const url of ['chrome://settings', 'javascript:alert(document.cookie)', 'data:text/html,<script>alert(1)</script>']) {
+      act(() => socket.message({ type: 'page', url }));
+      expect(screen.queryByRole('link', { name: 'Open in new tab' })).not.toBeInTheDocument();
+    }
   });
   it('acknowledges malformed binary frames so a bad frame cannot stall the stream', async () => {
     render(<BrowserWorkspace workflowId="wf" nodes={nodes} />);
