@@ -2,7 +2,7 @@
 
 Internal reference for OpenCompany's GitHub Actions setup. Workflow inventory, release flow, and the composite setup action.
 
-The repo currently ships **five workflows** plus one composite action. Code scanning is live but has no workflow file: it runs through GitHub's **default CodeQL setup**, which is why alerts land in the Security tab with nothing in `.github/workflows/` to point at (see [Code scanning](#code-scanning)). The other hardening workflows described in earlier revisions of this doc (zizmor, rollback, reusable PyPI publish, cross-platform test-install) are **not yet implemented** — see [Planned (not yet implemented)](#planned-not-yet-implemented) at the end.
+The repo currently ships **six workflows** plus one composite action. Code scanning is live but has no workflow file: it runs through GitHub's **default CodeQL setup**, which is why alerts land in the Security tab with nothing in `.github/workflows/` to point at (see [Code scanning](#code-scanning)). The other hardening workflows described in earlier revisions of this doc (zizmor, rollback, reusable PyPI publish, cross-platform test-install) are **not yet implemented** — see [Planned (not yet implemented)](#planned-not-yet-implemented) at the end.
 
 ---
 
@@ -25,6 +25,10 @@ The repo currently ships **five workflows** plus one composite action. Code scan
                                   |                    +---------------------+
                                   +-- publish-npm
                                   +-- publish-github-packages
+
+  PR / push to main touching ------> +------------------+  terraform, image-signatures,
+  gateway/** or llm_defaults.json    |  gateway-ci.yml  |  dependencies, contract
+                                     +------------------+
 ```
 
 > Documentation is NOT deployed from this repo: the Mintlify docs live in
@@ -41,6 +45,7 @@ The repo currently ships **five workflows** plus one composite action. Code scan
 | Release | `.github/workflows/release.yml` | `v*.*.*` tag, `workflow_dispatch` | predeploy gate → publish (npm + GitHub Packages) |
 | Desktop CI | `.github/workflows/desktop-ci.yml` | PR touching `desktop/**` or the backend host-contract files; push to main touching `desktop/**` | typecheck + unit + staged-tree invariants + `electron-vite build` + Playwright Electron smoke on ubuntu-22.04 (xvfb) and windows-latest |
 | Desktop release | `.github/workflows/desktop-release.yml` | `v*.*.*` tag, `workflow_dispatch` | `prepare` drafts the GitHub Release from the annotated tag's message (first line = title, rest = notes); a 3-runner matrix (windows-latest x64, macos-14 arm64+x64, ubuntu-22.04 x64) checks the synced version against the tag, builds installers with electron-builder and uploads into that one **draft**; `finalize` undrafts once every leg is green. Artifacts-only on dispatch unless `publish` is ticked |
+| Gateway CI | `.github/workflows/gateway-ci.yml` | PR / push to main touching `gateway/**`, `server/config/llm_defaults.json` or the workflow | The LiteLLM gateway ([LLM Gateway](./llm_gateway.md)): `terraform fmt`/`validate` with Terraform 1.14.8, cosign verification of the pinned LiteLLM images, `uv lock --check` and pip-audit for `gateway/uv.lock`, then the contract and pin tests against the local mock stack. Path-filtered, so it is not a required check |
 | Setup | `.github/actions/setup/action.yml` | (composite) | bun 1.4 + Node 22 (CI-only: bun runs vite / vitest / eslint on it) + Python 3.12 + uv v8 + editable CLI install |
 
 ### Toolchain pin
@@ -202,6 +207,7 @@ folder — both the folder and the workflow are gone.
 | `.github/workflows/release.yml` | Tag / manual release: predeploy gate → publish npm + GitHub Packages |
 | `.github/workflows/desktop-ci.yml` | Desktop shell checks on PRs: typecheck, unit, invariants, build, Playwright smoke |
 | `.github/workflows/desktop-release.yml` | Tag-triggered desktop installers (NSIS / DMG+zip / AppImage+deb) into a draft release, then undraft. Separate from `release.yml` so npm publish is never blocked |
+| `.github/workflows/gateway-ci.yml` | LiteLLM gateway checks: Terraform, image signatures, locked and audited test dependencies, contract and pin tests |
 | `.github/actions/setup/action.yml` | Composite: bun + Node + Python + uv + editable CLI install |
 | `.github/dependabot.yml` | **Manual dependency updates** — scheduled PRs suppressed; automatic security-update attempts also require the repository setting to be disabled; see below |
 | `.python-version` | Toolchain pin (`3.12`) — single source of truth |
@@ -270,7 +276,9 @@ repository setting described below. Dependencies move by hand with tests:
   `overrides` block in the root manifest for transitive pins), `bun install`,
   `bun run audit:deps` (at the root and in `desktop/`), run the suites.
 - pip: `uv lock --upgrade-package <name>` in `server/`, `uv sync`, run the
-  suites (`predeploy.yml` runs `uv lock --check` and the audit below).
+  suites (`predeploy.yml` runs `uv lock --check` and the audit below). The
+  gateway's test dependencies (`gateway/uv.lock`) move the same way, in
+  `gateway/`; `gateway-ci.yml` runs the same lock check and audit.
 
 The Python gate exports exact pins from `uv.lock` without installing optional
 extras. `pip-audit==2.10.1` queries advisories with `--strict --disable-pip
@@ -287,8 +295,8 @@ On Windows, use a file under `$env:TEMP` in both commands. Advisory lookup
 requires network access; Python markers select the current platform, so the
 Ubuntu CI audit also covers Linux-only dependencies.
 
-The five entries (`bun /`, `bun /desktop`, `pip /server`, `uv /server`,
-`github-actions /`) declare the intended updaters; they do not guarantee
+The seven entries (`bun /`, `bun /desktop`, `pip /server`, `uv /server`,
+`pip /gateway`, `uv /gateway`, `github-actions /`) declare the intended updaters; they do not guarantee
 the ecosystem chosen for alert-triggered jobs. The
 [2026-10-06 Sharp update attempt](https://github.com/zeenie-ai/OpenCompany/actions/runs/37474349729)
 selected `npm_and_yarn` for `/desktop`, with no ignore conditions, despite

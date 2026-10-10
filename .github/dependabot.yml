@@ -56,6 +56,24 @@ updates:
     ignore:
       - dependency-name: "*"
 
+  # gateway/ holds the gateway's test dependencies (gateway/uv.lock); same
+  # pair of entries as server/, same manual policy.
+  - package-ecosystem: pip
+    directory: /gateway
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 0
+    ignore:
+      - dependency-name: "*"
+
+  - package-ecosystem: uv
+    directory: /gateway
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 0
+    ignore:
+      - dependency-name: "*"
+
   - package-ecosystem: github-actions
     directory: /
     schedule:

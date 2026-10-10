@@ -1,0 +1,75 @@
+# Local OpenCompany Gateway stack, for development and the contract tests in
+# gateway/tests. Mock models only: no vendor keys, no spend. Not for
+# production; staging and prod run from gateway/infra.
+#
+#   docker compose -f gateway/local/docker-compose.yml up -d --wait
+#   docker compose -f gateway/local/docker-compose.yml down -v
+name: opencompany-gateway-local
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: litellm
+      POSTGRES_USER: litellm
+      POSTGRES_PASSWORD: litellm-local
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U litellm -d litellm"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  redis:
+    image: redis:7-alpine
+    # Same eviction policy as ElastiCache in gateway/infra: evicting keys
+    # would silently drop budget and rate-limit counters.
+    command: ["redis-server", "--maxmemory-policy", "noeviction", "--save", ""]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  fake-anthropic:
+    # A real upstream stream for the streamed-pricing test (see the file).
+    image: python:3.12-alpine
+    command: ["python", "/app/fake_anthropic.py"]
+    volumes:
+      - ./fake_anthropic.py:/app/fake_anthropic.py:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  litellm:
+    # Keep the tag and LITELLM_MODEL_COST_MAP_URL in step with
+    # gateway/infra/terraform/main.tf (gateway/tests/test_pins.py checks).
+    image: ghcr.io/berriai/litellm:v1.103.4
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    environment:
+      DATABASE_URL: postgresql://litellm:litellm-local@postgres:5432/litellm
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      LITELLM_MASTER_KEY: sk-local-master-key
+      LITELLM_SALT_KEY: sk-local-salt-key
+      LITELLM_MODE: PRODUCTION
+      STORE_MODEL_IN_DB: "False"
+      LITELLM_MODEL_COST_MAP_URL: https://raw.githubusercontent.com/BerriAI/litellm/729b02d05719715f4faeb1f81ef2728ef06c3273/model_prices_and_context_window.json
+    volumes:
+      - ./config.local.yaml:/app/config.yaml:ro
+    ports:
+      - "127.0.0.1:4000:4000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      fake-anthropic:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:4000/health/liveliness')\""]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 30s

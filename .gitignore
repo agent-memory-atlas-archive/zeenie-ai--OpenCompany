@@ -119,6 +119,7 @@ venv/
 # app version gets the same dependency tree, and CI runs ``uv lock --check``.
 uv.lock
 !server/uv.lock
+!gateway/uv.lock
 # server/requirements.txt is a pip export of server/uv.lock, made on demand
 # (docs-internal/SETUP.md). A tracked copy drifts from the lock and gets its
 # own Dependabot alerts, which never close.
@@ -195,6 +196,9 @@ cli/terraform/**/*.tfstate
 cli/terraform/**/*.tfstate.*
 cli/terraform/**/*.tfvars
 cli/terraform/**/*.tfvars.json
+# Gateway state lives in S3; never commit a local copy
+gateway/infra/terraform/**/*.tfstate
+gateway/infra/terraform/**/*.tfstate.*
 
 # =============================================================================
 # Desktop shell (desktop/) — build outputs, staged bundle inputs, downloaded

@@ -1,0 +1,107 @@
+# OpenCompany Gateway: LiteLLM Proxy configuration for staging and prod.
+#
+# Every key below is a stock LiteLLM setting; there is no custom gateway code.
+# Vendor keys never appear here: ECS injects them from AWS Secrets Manager as
+# environment variables, and the proxy resolves `os.environ/<NAME>` at start.
+# Prices come from the pinned price list (LITELLM_MODEL_COST_MAP_URL, set in
+# infra/terraform/main.tf).
+#
+# gateway/local/config.local.yaml mirrors the policy blocks (litellm_settings,
+# general_settings) with mock models. Change both together, and run the
+# contract tests in gateway/tests after any policy change.
+
+model_list:
+  # Provider-prefixed wildcards: any model the price list prices works with
+  # no config change. Models without a price are refused, see
+  # block_requests_for_models_without_pricing below.
+  - model_name: openai/*
+    litellm_params:
+      model: openai/*
+      api_key: os.environ/OPENAI_API_KEY
+  - model_name: anthropic/*
+    litellm_params:
+      model: anthropic/*
+      api_key: os.environ/ANTHROPIC_API_KEY
+  # The Anthropic SDK and Claude Code send bare model ids to /v1/messages.
+  - model_name: claude-*
+    litellm_params:
+      model: anthropic/claude-*
+      api_key: os.environ/ANTHROPIC_API_KEY
+  - model_name: gemini/*
+    litellm_params:
+      model: gemini/*
+      api_key: os.environ/GEMINI_API_KEY
+  # The Gemini SDK puts a bare model id in the /v1beta/models/<id> path.
+  - model_name: gemini-*
+    litellm_params:
+      model: gemini/gemini-*
+      api_key: os.environ/GEMINI_API_KEY
+  - model_name: groq/*
+    litellm_params:
+      model: groq/*
+      api_key: os.environ/GROQ_API_KEY
+  - model_name: cerebras/*
+    litellm_params:
+      model: cerebras/*
+      api_key: os.environ/CEREBRAS_API_KEY
+  - model_name: xai/*
+    litellm_params:
+      model: xai/*
+      api_key: os.environ/XAI_API_KEY
+  # OpenCompany's "kimi" provider.
+  - model_name: moonshot/*
+    litellm_params:
+      model: moonshot/*
+      api_key: os.environ/MOONSHOT_API_KEY
+  - model_name: mistral/*
+    litellm_params:
+      model: mistral/*
+      api_key: os.environ/MISTRAL_API_KEY
+  # Speech (OpenAI and Groq) and embeddings (OpenAI) use the wildcards above:
+  # /v1/audio/speech, /v1/audio/transcriptions and /v1/embeddings.
+
+router_settings:
+  # Shared state across gateway tasks: rate-limit and budget counters,
+  # cooldowns. The Terraform module sets REDIS_HOST, REDIS_PORT and REDIS_SSL.
+  redis_host: os.environ/REDIS_HOST
+  redis_port: os.environ/REDIS_PORT
+
+litellm_settings:
+  json_logs: true
+  timezone: UTC
+  # Each person's allowance (USD) resets on the 1st of the month, UTC.
+  # Admins override it per person; this is the default for new people.
+  max_internal_user_budget: 50
+  internal_user_budget_duration: 1mo
+  # Takes effect from LiteLLM 1.104; 1.103.x always answers 429. OpenCompany
+  # reads the error type (budget_exceeded), so either status pauses the run.
+  # Without it, 1.104+ would answer 422.
+  budget_exceeded_status_code: 402
+  # A model without a price would be billed at $0; refuse it instead (403).
+  block_requests_for_models_without_pricing: true
+  # Ceilings for keys that people create for their installs.
+  upperbound_key_generate_params:
+    rpm_limit: 120
+    tpm_limit: 2000000
+    max_parallel_requests: 32
+  # Opt-in response cache. OpenCompany sends a retry-stable namespace on
+  # Temporal LLM steps, so a retried call replays from cache at $0.
+  cache: true
+  cache_params:
+    type: redis
+    mode: default_off
+    ttl: 172800
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  proxy_batch_write_at: 60
+  disable_error_logs: true
+  maximum_spend_logs_retention_period: 90d
+  maximum_spend_logs_retention_interval: 1d
+  # Platform keys are our money: reject a call when the budget can't be
+  # confirmed, rather than letting it through.
+  fail_closed_budget_enforcement: true
+  # The module's VPC; client IPs are read from the ALB's forwarding header.
+  trusted_proxy_ranges: ["10.40.0.0/16"]
+  alerting: ["slack"]
+  alert_types: ["budget_alerts", "outage_alerts", "db_exceptions"]

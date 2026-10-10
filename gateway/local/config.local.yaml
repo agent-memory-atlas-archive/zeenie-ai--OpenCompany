@@ -1,0 +1,61 @@
+# Local OpenCompany Gateway config: mock models instead of real vendors, so
+# nothing is billed and no vendor keys are needed.
+#
+# The policy blocks mirror gateway/litellm/config.yaml. Differences, all
+# deliberate: mock_response on every model, spend logs flush every second so
+# the tests can read them, and there is no Slack alerting or proxy-range trust.
+
+model_list:
+  - model_name: openai/*
+    litellm_params:
+      model: openai/*
+      api_key: sk-local-unused
+      mock_response: pong
+  - model_name: claude-*
+    litellm_params:
+      model: anthropic/claude-*
+      api_key: sk-local-unused
+      mock_response: pong
+  - model_name: gemini-*
+    litellm_params:
+      model: gemini/gemini-*
+      api_key: local-unused
+      mock_response: pong
+  # A dotted alias that is not a price-list key, the shape LiteLLM's own test
+  # for PR #44341 uses: a stream through it must still be priced at the
+  # deployment's model. It streams from fake_anthropic.py, because mock
+  # responses skip LiteLLM's upstream streaming path.
+  - model_name: claude-opus-4.8-20261010
+    litellm_params:
+      model: anthropic/claude-opus-4-8
+      api_key: sk-local-unused
+      api_base: http://fake-anthropic:8080
+
+router_settings:
+  redis_host: os.environ/REDIS_HOST
+  redis_port: os.environ/REDIS_PORT
+
+litellm_settings:
+  json_logs: true
+  timezone: UTC
+  max_internal_user_budget: 50
+  internal_user_budget_duration: 1mo
+  budget_exceeded_status_code: 402
+  block_requests_for_models_without_pricing: true
+  upperbound_key_generate_params:
+    rpm_limit: 120
+    tpm_limit: 2000000
+    max_parallel_requests: 32
+  cache: true
+  cache_params:
+    type: redis
+    mode: default_off
+    ttl: 172800
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  proxy_batch_write_at: 1
+  disable_error_logs: true
+  maximum_spend_logs_retention_period: 90d
+  maximum_spend_logs_retention_interval: 1d
+  fail_closed_budget_enforcement: true

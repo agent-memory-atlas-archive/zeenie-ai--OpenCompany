@@ -1,0 +1,100 @@
+# OpenCompany Gateway (LiteLLM) checks: Terraform validity, image signatures,
+# the test dependencies, and the contract tests against a local LiteLLM stack
+# with mock models. Path-filtered, so it is not a required check.
+name: gateway-ci
+
+on:
+  pull_request:
+    paths:
+      - "gateway/**"
+      - "server/config/llm_defaults.json"
+      - ".github/workflows/gateway-ci.yml"
+  push:
+    branches: [main]
+    paths:
+      - "gateway/**"
+      - "server/config/llm_defaults.json"
+      - ".github/workflows/gateway-ci.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gateway-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Keep in step with local.litellm_version in gateway/infra/terraform/main.tf
+  # and the image tag in gateway/local/docker-compose.yml (gateway/tests/test_pins.py checks).
+  LITELLM_VERSION: "1.103.4"
+  # Commit that introduced LiteLLM's image-signing key (docs: Docker image security).
+  LITELLM_COSIGN_KEY: https://raw.githubusercontent.com/BerriAI/litellm/0112e53046018d726492c814b3644b7d376029d0/cosign.pub
+
+jobs:
+  terraform:
+    name: Terraform fmt and validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.14.8
+          terraform_wrapper: false
+      - run: terraform -chdir=gateway/infra/terraform fmt -check -recursive
+      - run: terraform -chdir=gateway/infra/terraform init -backend=false -input=false
+      - run: terraform -chdir=gateway/infra/terraform validate
+
+  image-signatures:
+    name: Verify LiteLLM image signatures
+    runs-on: ubuntu-latest
+    steps:
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: cosign verify
+        run: |
+          for image in litellm litellm-gateway litellm-backend litellm-ui litellm-migrations; do
+            cosign verify --key "$LITELLM_COSIGN_KEY" "ghcr.io/berriai/${image}:v${LITELLM_VERSION}" > /dev/null
+            echo "verified ghcr.io/berriai/${image}:v${LITELLM_VERSION}"
+          done
+
+  dependencies:
+    name: Test dependencies locked and audited
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          enable-cache: false
+      - name: Lockfile is current
+        working-directory: gateway
+        run: uv lock --check
+      - name: Audit Python dependencies
+        working-directory: gateway
+        run: |
+          uv export --locked --no-hashes --no-emit-project --output-file "${RUNNER_TEMP}/gateway-audit.txt" > /dev/null
+          uvx --from pip-audit==2.10.1 pip-audit --strict --disable-pip --no-deps -r "${RUNNER_TEMP}/gateway-audit.txt"
+
+  contract:
+    name: Contract tests (local LiteLLM, mock models)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          enable-cache: false
+      - name: Start the local gateway stack
+        run: docker compose -f gateway/local/docker-compose.yml up -d --wait --wait-timeout 300
+      - name: Run the contract and pin tests
+        run: uv run --locked --project gateway pytest gateway/tests -v
+      - name: Gateway logs
+        if: failure()
+        run: docker compose -f gateway/local/docker-compose.yml logs litellm
+      - name: Stop the stack
+        if: always()
+        run: docker compose -f gateway/local/docker-compose.yml down -v
