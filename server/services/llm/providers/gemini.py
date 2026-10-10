@@ -84,8 +84,8 @@ class GeminiProvider:
         extra_body: Optional[Mapping[str, Any]] = None,
     ) -> LLMResponse:
         del context_management  # Gemini stays on portable Context checkpoints.
-        # The LLM gateway's replay cache is verified only on its OpenAI and
-        # Anthropic routes, not the native Gemini one; never sent here.
+        # The LLM gateway doesn't serve its replay cache on the native Gemini
+        # route (checked on LiteLLM 1.103.4); never sent here.
         del extra_body
         from google.genai import types
 

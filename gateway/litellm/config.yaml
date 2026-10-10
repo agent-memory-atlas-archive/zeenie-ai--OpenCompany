@@ -57,8 +57,21 @@ model_list:
     litellm_params:
       model: mistral/*
       api_key: os.environ/MISTRAL_API_KEY
-  # Speech (OpenAI and Groq) and embeddings (OpenAI) use the wildcards above:
-  # /v1/audio/speech, /v1/audio/transcriptions and /v1/embeddings.
+  # OpenCompany's speech (OpenAI) and embeddings (OpenAI) use the openai/*
+  # wildcard: /v1/audio/speech, /v1/audio/transcriptions and /v1/embeddings.
+  #
+  # Except gpt-4o-mini-tts, OpenCompany's Text to Speech default. The price
+  # list prices its audio output, but the speech route returns no usage, so
+  # LiteLLM would bill the input text only, about 1% of the cost. Priced per
+  # input token instead: about $0.015 per minute of speech at ~200 text tokens
+  # a minute. An exact name wins over the wildcard. gateway/local/config.local.yaml
+  # carries the same price (gateway/tests/test_pins.py checks).
+  - model_name: openai/gpt-4o-mini-tts
+    litellm_params:
+      model: openai/gpt-4o-mini-tts
+      api_key: os.environ/OPENAI_API_KEY
+      input_cost_per_token: 0.000075
+      output_cost_per_token: 0
 
 router_settings:
   # Shared state across gateway tasks: rate-limit and budget counters,

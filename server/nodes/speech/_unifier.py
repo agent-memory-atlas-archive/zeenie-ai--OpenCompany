@@ -20,11 +20,14 @@ was built.
 
 from __future__ import annotations
 
-from typing import Awaitable, Callable, List, Optional, TypeVar
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional, TypeVar
 
 from core.logging import get_logger
 from services.plugin import NodeUserError
 from services.provider_registry import ProviderSpec
+
+if TYPE_CHECKING:
+    from services.gateway.routing import GatewayRoute
 
 from ._protocol import (
     SpeechError,
@@ -48,8 +51,10 @@ async def synthesize(
     api_key: str,
     request: TtsRequest,
     translate_errors: bool = True,
+    route: Optional[GatewayRoute] = None,
 ) -> TtsResult:
-    """Synthesize speech via the named provider."""
+    """Synthesize speech via the named provider (through the OpenCompany
+    Gateway when ``route`` is set)."""
     spec = get_tts_provider(provider)
     return await _dispatch(
         spec,
@@ -58,6 +63,7 @@ async def synthesize(
         lambda client: client.synthesize(request),
         operation="synthesis",
         translate_errors=translate_errors,
+        route=route,
     )
 
 
@@ -67,8 +73,10 @@ async def transcribe(
     api_key: str,
     request: SttRequest,
     translate_errors: bool = True,
+    route: Optional[GatewayRoute] = None,
 ) -> SttResult:
-    """Transcribe audio via the named provider."""
+    """Transcribe audio via the named provider (through the OpenCompany
+    Gateway when ``route`` is set)."""
     spec = get_stt_provider(provider)
     return await _dispatch(
         spec,
@@ -77,6 +85,7 @@ async def transcribe(
         lambda client: client.transcribe(request),
         operation="transcription",
         translate_errors=translate_errors,
+        route=route,
     )
 
 
@@ -105,6 +114,7 @@ async def _dispatch(
     *,
     operation: str,
     translate_errors: bool,
+    route: Optional[GatewayRoute] = None,
 ) -> T:
     """Build a client, run ``call``, normalize failures, always close.
 
@@ -112,10 +122,15 @@ async def _dispatch(
     re-raises the structured :class:`SpeechError` instead of a flattened
     user message, which is what a Temporal retry policy needs to read
     ``retryable``.
+
+    A ``route`` points the client at the OpenCompany Gateway: its URL, the
+    LiteLLM model prefix and the run's attribution headers. Only providers
+    on :class:`OpenAISpeechProvider` get one (``"gateway": true`` in
+    speech_defaults.json).
     """
     client: Optional[object] = None
     try:
-        client = spec.factory(api_key=api_key, **spec.client_kwargs)
+        client = spec.factory(api_key=api_key, **_client_kwargs(spec, route))
         return await call(client)
     except spec.sdk_exception_types as exc:
         error = SpeechError.from_exception(provider, exc)
@@ -130,8 +145,9 @@ async def _dispatch(
             status_code=error.status_code,
             provider_code=error.provider_code,
             request_id=error.request_id,
+            gateway=route is not None,
         )
-        raise NodeUserError(error.user_message) from error
+        raise NodeUserError(_gateway_message(route, exc) or error.user_message) from error
     except SpeechError as exc:
         # A provider classified a failure itself -- typically a documented
         # vendor error that arrived with HTTP 200, which both Deepgram and
@@ -174,6 +190,29 @@ async def _dispatch(
     finally:
         if client is not None:
             await _close(client)
+
+
+def _client_kwargs(spec: ProviderSpec, route: Optional[GatewayRoute]) -> Dict[str, Any]:
+    if route is None:
+        return dict(spec.client_kwargs)
+    from services.gateway.attribution import request_headers
+
+    return {
+        **spec.client_kwargs,
+        "base_url": route.base_url,
+        "model_prefix": route.model_prefix,
+        "extra_headers": request_headers(),
+    }
+
+
+def _gateway_message(route: Optional[GatewayRoute], exc: BaseException) -> Optional[str]:
+    """Gateway wording for a failed gateway call: the vendor's texts point
+    at the wrong key and billing account."""
+    if route is None:
+        return None
+    from services.gateway.errors import describe
+
+    return describe(exc)
 
 
 async def _close(client: object) -> None:

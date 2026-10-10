@@ -37,7 +37,7 @@ from . import _config as speech_config
 from . import _unifier
 from ._base import (
     coerce_blank_params,
-    provider_api_key,
+    provider_key,
     require_provider,
     track_usage,
 )
@@ -202,10 +202,11 @@ class TextToSpeechNode(ActionNode):
 
         self._check_length(provider, model, params.text)
 
-        api_key = await provider_api_key(ctx, provider)
+        api_key, route = await provider_key(ctx, provider)
         result = await _unifier.synthesize(
             provider=provider,
             api_key=api_key,
+            route=route,
             request=TtsRequest(
                 text=params.text,
                 model=model,

@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from services.memory.vector_store import (
     EmbeddingError,
     create_embedder,
+    openai_embedding_access,
 )
 from services.plugin import ActionNode, NodeContext, NodeUserError, Operation, TaskQueue
 
@@ -99,6 +100,14 @@ class EmbeddingGeneratorNode(ActionNode):
             )
 
         texts = [c.get("content", "") if isinstance(c, dict) else str(c) for c in chunks]
+        route = None
+        if provider == "openai" and not api_key.strip():
+            # Own keys first (the install's stored key), then the gateway.
+            from services.plugin.deps import get_auth_service
+
+            api_key, route = await openai_embedding_access(
+                api_key, params.endpoint.strip(), get_auth_service()
+            )
         embedder = None
         try:
             embedder = create_embedder(
@@ -106,6 +115,7 @@ class EmbeddingGeneratorNode(ActionNode):
                 model=model,
                 api_key=api_key,
                 endpoint=params.endpoint,
+                route=route,
             )
             embeddings = await embedder.embed_documents(
                 texts,

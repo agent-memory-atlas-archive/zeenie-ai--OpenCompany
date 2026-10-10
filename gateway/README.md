@@ -25,16 +25,20 @@ The hosted LLM gateway for OpenCompany: invited people use LLMs on platform-owne
 | Kind | Providers |
 |---|---|
 | Chat | OpenAI, Anthropic, Gemini, Groq, Cerebras, xAI, Moonshot (Kimi), Mistral |
-| Speech | OpenAI (speech and transcription), Groq (transcription) |
+| Speech | OpenAI (speech and transcription) |
 | Embeddings | OpenAI |
 
-Not served: OpenRouter, DeepSeek and Sarvam (their default models have no price in the list), ElevenLabs and Deepgram (OpenCompany uses their native formats), and every tool API (Brave, Serper, TikHub, Google Maps, Perplexity, DeepL, Apify and the rest). Those stay on each install's own keys.
+Not served: OpenRouter, DeepSeek and Sarvam (their default models have no price in the list), Groq speech (1.103.4 bills Groq transcription at $0), ElevenLabs and Deepgram (OpenCompany uses their native formats), and every tool API (Brave, Serper, TikHub, Google Maps, Perplexity, DeepL, Apify and the rest). Those stay on each install's own keys.
 
-To serve another provider: add its secret name to `secret_env_names`, its wildcard to `litellm/config.yaml`, and its OpenCompany provider id to `SERVED_PROVIDERS` in `tests/test_pins.py` (which checks its default model is priced), then apply.
+To serve another provider:
+1. Add its secret name to `secret_env_names` and its wildcard to `litellm/config.yaml`.
+2. Give it a `"gateway"` block in `server/config/llm_defaults.json` (chat), and `"gateway": true` in `server/config/speech_defaults.json` if its speech is served too.
+3. Run the tests. `tests/test_pins.py` checks that its default models are priced; check its routes bill the person on the local stack.
+4. Apply.
 
 ## Local stack and tests
 
-Needs Docker. Mock models plus a fake Anthropic upstream ([local/fake_anthropic.py](local/fake_anthropic.py)) for streamed calls: nothing is billed and no vendor key is needed.
+Needs Docker. Mock models plus fake Anthropic, Gemini and OpenAI-audio upstreams ([local/fake_upstream.py](local/fake_upstream.py)) for what mocks can't show (spend rows on `/v1/messages`, the native Gemini route and the audio routes, streamed pricing): nothing is billed and no vendor key is needed. Three contract tests are strict expected failures that pin LiteLLM gaps OpenCompany works around. When an upgrade closes a gap, its test passes and fails the suite: lift the workaround and drop the marker.
 
 ```bash
 docker compose -f gateway/local/docker-compose.yml up -d --wait
@@ -108,5 +112,8 @@ Why 1.103.x: it is the only stable line with the streamed-alias billing fix (Lit
 ## Known limits
 
 - Replay covers completed LLM calls only; an abandoned stream is billed for what it produced.
+- Gemini SDK calls (the native `generateContent` route) carry the session id and tags, but 1.103.4 drops their per-call metadata and doesn't replay them from the cache, so a retried Gemini step is billed again.
+- `gpt-4o-mini-tts` (OpenCompany's Text to Speech default) carries a price override in `litellm/config.yaml`. The speech route returns no usage for the audio, so LiteLLM would otherwise bill the input text only, about 1% of the cost. The override's per-token rate assumes about 200 text tokens per minute of speech; revisit it if OpenAI's price changes.
+- Groq speech is not served: 1.103.4 bills Groq transcription at $0. The `groq/*` wildcard still lets a person call Groq Whisper directly with their key, billed $0 to them; Groq charges about $0.11 per hour of audio.
 - A Default key can create and delete that person's own keys, but not raise their allowance. Revoke a leaked key in the console.
 - The open-source tier has no SSO beyond 5 users, no audit log, no automatic key rotation, and no route permissions for tool pass-through. Those need a LiteLLM Enterprise license.

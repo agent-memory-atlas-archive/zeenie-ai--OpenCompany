@@ -54,9 +54,17 @@ _PCM_SAMPLE_RATE = 24000
 
 
 class OpenAISpeechProvider(HttpSpeechProvider):
-    """Speech over OpenAI's ``/audio/*`` routes."""
+    """Speech over OpenAI's ``/audio/*`` routes.
+
+    ``model_prefix`` is the OpenCompany Gateway's LiteLLM prefix
+    (``openai/``, ``groq/``): it goes on the model name in the request only.
+    """
 
     provider_name = "openai"
+
+    def __init__(self, api_key: str, *, model_prefix: str = "", **kwargs: Any):
+        super().__init__(api_key, **kwargs)
+        self._model_prefix = model_prefix
 
     # ------------------------------------------------------------------
     # synthesis
@@ -70,7 +78,7 @@ class OpenAISpeechProvider(HttpSpeechProvider):
 
         body: Dict[str, Any] = {
             "input": req.text,
-            "model": model,
+            "model": f"{self._model_prefix}{model}",
             "voice": req.voice
             or speech_config.default_voice(self.provider_name)
             or "alloy",
@@ -151,7 +159,7 @@ class OpenAISpeechProvider(HttpSpeechProvider):
         )
 
         form: Dict[str, Any] = {
-            "model": model,
+            "model": f"{self._model_prefix}{model}",
             "response_format": response_format,
         }
         # The translation route always outputs English, so a language hint

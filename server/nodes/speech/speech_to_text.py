@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
+from core.logging import get_logger
 from services.plugin import ActionNode, NodeContext, Operation, TaskQueue
 
 from ..model._credentials import GroqCredential, OpenAICredential, SarvamCredential
@@ -31,7 +32,7 @@ from . import _unifier
 from ._base import (
     coerce_blank_params,
     measure_seconds,
-    provider_api_key,
+    provider_key,
     read_audio_input,
     require_provider,
     track_usage,
@@ -41,6 +42,8 @@ from ._protocol import SttRequest
 from ._registry import stt_providers
 
 from . import _providers  # noqa: F401  isort:skip
+
+logger = get_logger(__name__)
 
 _PROVIDERS: List[str] = stt_providers()
 
@@ -177,17 +180,28 @@ class SpeechToTextNode(ActionNode):
             params.audio_file, ctx, max_bytes=max_bytes
         )
 
-        api_key = await provider_api_key(ctx, provider)
+        api_key, route = await provider_key(ctx, provider)
+        translate = params.translate
+        if translate and route is not None:
+            # The OpenCompany Gateway has no translation route. Same fallback
+            # as a model that cannot translate (_openai_compat.py).
+            logger.warning(
+                "the OpenCompany Gateway cannot translate; transcribing in-language instead",
+                provider=provider,
+                model=model,
+            )
+            translate = False
         result = await _unifier.transcribe(
             provider=provider,
             api_key=api_key,
+            route=route,
             request=SttRequest(
                 audio=blob,
                 filename=filename,
                 mime_type=_guess_mime(filename),
                 model=model,
                 language=params.language,
-                translate=params.translate,
+                translate=translate,
                 diarize=params.diarize,
                 timestamps=params.timestamps,
                 provider_options=dict(params.provider_options),

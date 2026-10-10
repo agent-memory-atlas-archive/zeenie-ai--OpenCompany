@@ -27,7 +27,7 @@ than an activity timeout.
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Mapping, Optional
 
 import httpx
 
@@ -57,6 +57,7 @@ class HttpSpeechProvider:
         base_url: str = "",
         provider_name: Optional[str] = None,
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
+        extra_headers: Optional[Mapping[str, str]] = None,
     ):
         # provider_name may arrive via client_kwargs so one class can serve
         # several registry entries (openai and groq share a transcription
@@ -67,6 +68,9 @@ class HttpSpeechProvider:
             base_url or speech_config.base_url(self.provider_name)
         ).rstrip("/")
         self._timeout = timeout
+        # Sent on every request, after the auth headers (the OpenCompany
+        # Gateway's attribution headers).
+        self._extra_headers = dict(extra_headers or {})
         self._client: Optional[httpx.AsyncClient] = None
 
     # ------------------------------------------------------------------
@@ -89,7 +93,7 @@ class HttpSpeechProvider:
             self._client = httpx.AsyncClient(
                 base_url=self._base_url,
                 timeout=self._timeout,
-                headers=self.auth_headers(),
+                headers={**self.auth_headers(), **self._extra_headers},
             )
         return self._client
 

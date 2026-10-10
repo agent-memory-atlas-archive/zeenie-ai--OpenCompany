@@ -11,13 +11,15 @@ the ``"gateway"`` block of each served provider in
 ``server/config/llm_defaults.json``. OpenAI-compatible providers use the
 gateway's ``/v1`` routes with a LiteLLM provider prefix on the model name
 (``groq/...``); Anthropic and Gemini use the gateway's native routes with
-bare model ids.
+bare model ids. The same route serves a provider's embeddings, speech and
+vision calls, which go out from their own SDK clients
+(:func:`key_or_route`).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, List, Mapping, Optional
+from typing import Any, List, Mapping, Optional, Tuple
 
 from services.llm.config import split_provider_ref
 
@@ -81,8 +83,8 @@ class GatewayRouter:
         return await self.route(provider) is not None
 
 
-async def gateway_covers(provider: str) -> bool:
-    """:meth:`GatewayRouter.covers` on the container's router, for call sites
+async def gateway_route(provider: str) -> Optional[GatewayRoute]:
+    """:meth:`GatewayRouter.route` on the container's router, for call sites
     outside the DI graph. Under test the container is a MagicMock (whose
     router would claim to cover everything) or a stub without a router, so
     only a real :class:`GatewayRouter` is asked."""
@@ -90,4 +92,27 @@ async def gateway_covers(provider: str) -> bool:
 
     factory = getattr(container, "gateway_router", None)
     router = factory() if callable(factory) else None
-    return isinstance(router, GatewayRouter) and await router.covers(provider)
+    return await router.route(provider) if isinstance(router, GatewayRouter) else None
+
+
+async def gateway_covers(provider: str) -> bool:
+    """:meth:`GatewayRouter.covers` outside the DI graph (see :func:`gateway_route`)."""
+    return await gateway_route(provider) is not None
+
+
+async def key_or_route(ctx: Any, credential_id: str, provider: str) -> Tuple[str, Optional[GatewayRoute]]:
+    """A plugin node's key: the install's own for ``credential_id``, else the
+    gateway's for ``provider``, with its route (``None`` for an own key).
+
+    The own key is read through ``ctx.connection``, so with neither key the
+    node still raises the annotated missing-key error that points the
+    Credentials modal at the provider."""
+    try:
+        async with ctx.connection(credential_id) as conn:
+            secrets = await conn.credentials()
+    except PermissionError as exc:
+        route = await gateway_route(provider) if getattr(exc, "reason", None) == "missing" else None
+        if route is None:
+            raise
+        return route.api_key, route
+    return str(secrets.get("api_key") or ""), None

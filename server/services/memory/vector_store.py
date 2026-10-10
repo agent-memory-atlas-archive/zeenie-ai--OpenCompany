@@ -14,11 +14,14 @@ import math
 import sys
 import threading
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, List, Literal, Optional, Protocol
+from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Literal, Optional, Protocol
 from uuid import uuid4
 
 from core.encryption import fingerprint_credential
 from core.logging import get_logger
+
+if TYPE_CHECKING:
+    from services.gateway.routing import GatewayRoute
 
 logger = get_logger(__name__)
 
@@ -197,7 +200,12 @@ class SentenceTransformerEmbedder:
 
 
 class OpenAIEmbedder:
-    """Direct ``AsyncOpenAI.embeddings`` adapter."""
+    """Direct ``AsyncOpenAI.embeddings`` adapter.
+
+    With a ``route``, the OpenCompany Gateway serves the calls: its key and
+    URL, the LiteLLM prefix on the model name, and the attribution headers
+    of whichever run makes each call.
+    """
 
     def __init__(
         self,
@@ -205,6 +213,7 @@ class OpenAIEmbedder:
         *,
         api_key: Optional[str],
         endpoint: Optional[str] = None,
+        route: Optional[GatewayRoute] = None,
     ) -> None:
         try:
             from openai import AsyncOpenAI
@@ -213,10 +222,19 @@ class OpenAIEmbedder:
                 "OpenAI embeddings unavailable. Install the 'openai' package."
             ) from exc
 
-        kwargs: Dict[str, Any] = {"api_key": api_key or None}
+        if route is not None:
+            api_key, endpoint = route.api_key, route.base_url
+        if not api_key:
+            # AsyncOpenAI would fall back to OPENAI_API_KEY from the
+            # environment and send it wherever ``endpoint`` points.
+            raise EmbedderUnavailableError(
+                "OpenAI API key is required for embeddings."
+            )
+        kwargs: Dict[str, Any] = {"api_key": api_key}
         if endpoint:
             kwargs["base_url"] = endpoint
         self.model_name = model_name
+        self._route = route
         try:
             self._client = AsyncOpenAI(**kwargs)
         except Exception as exc:
@@ -224,6 +242,26 @@ class OpenAIEmbedder:
                 "OpenAI embedding client initialization failed "
                 f"({type(exc).__name__})"
             ) from exc
+
+    def _request(self, batch: List[str]) -> Dict[str, Any]:
+        if self._route is None:
+            return {"model": self.model_name, "input": batch}
+        from services.gateway.attribution import request_headers
+
+        return {
+            "model": f"{self._route.model_prefix}{self.model_name}",
+            "input": batch,
+            "extra_headers": request_headers(),
+        }
+
+    def _failure(self, exc: Exception) -> str:
+        if self._route is not None:
+            from services.gateway.errors import describe
+
+            message = describe(exc)
+            if message:
+                return message
+        return f"OpenAI embedding request failed ({type(exc).__name__})"
 
     async def embed_documents(
         self,
@@ -236,14 +274,10 @@ class OpenAIEmbedder:
             batch = texts[start : start + batch_size]
             try:
                 response = await self._client.embeddings.create(
-                    model=self.model_name,
-                    input=batch,
+                    **self._request(batch)
                 )
             except Exception as exc:
-                raise EmbeddingProviderError(
-                    "OpenAI embedding request failed "
-                    f"({type(exc).__name__})"
-                ) from exc
+                raise EmbeddingProviderError(self._failure(exc)) from exc
             data = sorted(response.data, key=lambda item: int(item.index))
             vectors = [
                 [float(value) for value in item.embedding]
@@ -342,8 +376,13 @@ def create_embedder(
     model: Optional[str] = None,
     api_key: Optional[str] = None,
     endpoint: Optional[str] = None,
+    route: Optional[GatewayRoute] = None,
 ) -> AsyncEmbedder:
-    """Build a direct-SDK embedder without making a network request."""
+    """Build a direct-SDK embedder without making a network request.
+
+    ``route`` (OpenAI only) sends the calls through the OpenCompany Gateway;
+    see :func:`openai_embedding_access`.
+    """
 
     normalized = _normalize_provider(provider)
     model_name = str(model or "").strip() or default_embedding_model(normalized)
@@ -356,7 +395,7 @@ def create_embedder(
             )
         return SentenceTransformerEmbedder(model_name)
     if normalized == "openai":
-        if not str(api_key or "").strip():
+        if route is None and not str(api_key or "").strip():
             raise EmbedderUnavailableError(
                 "OpenAI API key is required for embeddings."
             )
@@ -364,11 +403,39 @@ def create_embedder(
             model_name,
             api_key=api_key,
             endpoint=normalized_endpoint or None,
+            route=route,
         )
     return OllamaEmbedder(
         model_name,
         endpoint=normalized_endpoint or None,
     )
+
+
+async def openai_embedding_access(
+    api_key: Optional[str],
+    endpoint: str,
+    auth_service: Any,
+) -> tuple[Optional[str], Optional[GatewayRoute]]:
+    """The key for OpenAI embeddings, and the gateway route when it is the
+    OpenCompany Gateway's.
+
+    Own keys first: the given key, else the install's stored OpenAI key.
+    Without either, and only on OpenAI's own endpoint (an ``endpoint``
+    override names a server of the user's), the gateway serves the calls
+    when it covers OpenAI.
+    """
+
+    key = str(api_key or "").strip() or None
+    if key is None and auth_service is not None:
+        stored = await auth_service.resolve_api_key("openai", "default")
+        key = str(stored or "").strip() or None
+    if key is None and not endpoint:
+        from services.gateway.routing import gateway_route
+
+        route = await gateway_route("openai")
+        if route is not None:
+            return route.api_key, route
+    return key, None
 
 
 class NativeMemoryVectorStore:
@@ -508,26 +575,28 @@ async def get_memory_vector_store(
     model_name = str(model or "").strip() or default_embedding_model(normalized)
     normalized_endpoint = _normalize_endpoint(endpoint)
     resolved_key = str(api_key or "").strip() or None
-    if normalized == "openai" and resolved_key is None:
-        if auth_service is not None:
-            try:
-                auth_key = await auth_service.resolve_api_key(
-                    "openai",
-                    "default",
-                )
-                resolved_key = str(auth_key or "").strip() or None
-            except Exception as exc:  # noqa: BLE001 - best-effort memory
-                logger.warning(
-                    "[Memory] Could not resolve OpenAI embedding credential: %s",
-                    exc,
-                )
-                return None
+    route: Optional[GatewayRoute] = None
+    if normalized == "openai":
+        try:
+            resolved_key, route = await openai_embedding_access(
+                resolved_key,
+                normalized_endpoint,
+                auth_service,
+            )
+        except Exception as exc:  # noqa: BLE001 - best-effort memory
+            logger.warning(
+                "[Memory] Could not resolve OpenAI embedding credential: %s",
+                exc,
+            )
+            return None
         if not resolved_key:
             logger.warning(
                 "[Memory] OpenAI long-term memory is disabled because no "
                 "OpenAI credential is configured"
             )
             return None
+        if route is not None:
+            normalized_endpoint = route.base_url
 
     cache_key = MemoryVectorStoreKey(
         session_id=str(session_id),
@@ -546,6 +615,7 @@ async def get_memory_vector_store(
                 model=model_name,
                 api_key=resolved_key,
                 endpoint=normalized_endpoint,
+                route=route,
             )
         except EmbedderUnavailableError as exc:
             logger.warning("[Memory] Vector store not available: %s", exc)

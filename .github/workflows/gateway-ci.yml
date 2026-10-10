@@ -8,12 +8,14 @@ on:
     paths:
       - "gateway/**"
       - "server/config/llm_defaults.json"
+      - "server/config/speech_defaults.json"
       - ".github/workflows/gateway-ci.yml"
   push:
     branches: [main]
     paths:
       - "gateway/**"
       - "server/config/llm_defaults.json"
+      - "server/config/speech_defaults.json"
       - ".github/workflows/gateway-ci.yml"
 
 permissions:

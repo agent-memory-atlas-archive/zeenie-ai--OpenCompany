@@ -2,8 +2,8 @@
 
 They run against the local stack in gateway/local (mock models, no real keys)
 and pin the LiteLLM behaviours the OpenCompany integration relies on: budget
-refusals, key scope, attribution, streamed pricing, retry replay, and the
-native Anthropic and Gemini routes.
+refusals, key scope, attribution, streamed pricing, retry replay, the native
+Anthropic and Gemini routes, and the embedding and speech routes.
 
     docker compose -f gateway/local/docker-compose.yml up -d --wait
     uv run --project gateway pytest gateway/tests -v
@@ -13,10 +13,12 @@ Set GATEWAY_URL and GATEWAY_MASTER_KEY to point the suite at another stack.
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import time
 import uuid
+import wave
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -27,9 +29,18 @@ import pytest
 GATEWAY_URL = os.environ.get("GATEWAY_URL", "http://127.0.0.1:4000")
 MASTER_KEY = os.environ.get("GATEWAY_MASTER_KEY", "sk-local-master-key")
 CHAT_MODEL = "openai/gpt-4o-mini"
-# A dotted alias that is not a price-list key, streaming from a fake Anthropic
-# upstream (gateway/local/config.local.yaml, gateway/local/fake_anthropic.py).
+# Models answered by gateway/local/fake_upstream.py (gateway/local/config.local.yaml).
+# Mocks reuse one response id on /v1/messages and carry no HTTP response on the
+# native Gemini route, and LiteLLM writes no spend row for either, so every
+# spend-row check on those routes uses these. ALIAS_MODEL is also a dotted
+# alias that is not a price-list key.
 ALIAS_MODEL = "claude-opus-4.8-20261010"
+GEMINI_LIVE_MODEL = "gemini-2.5-flash-live"
+# OpenCompany's default speech models under their wire names, answered by
+# fake_upstream.py too: mocks don't apply on the audio routes.
+TTS_MODEL = "openai/gpt-4o-mini-tts"
+STT_MODEL = "openai/whisper-1"
+GROQ_STT_MODEL = "groq/whisper-large-v3"
 # 1.103.x always answers a spent allowance with 429; budget_exceeded_status_code
 # makes it 402 from 1.104. OpenCompany reads the error type either way.
 BUDGET_STATUSES = {402, 429}
@@ -97,6 +108,36 @@ def _error_type(resp: httpx.Response) -> str | None:
         return None
     error = body.get("error", body) if isinstance(body, dict) else None
     return error.get("type") if isinstance(error, dict) else None
+
+
+def _attribution(session: str) -> dict[str, str]:
+    """The attribution headers OpenCompany sends (services/gateway/attribution.py)."""
+    return {
+        "x-litellm-session-id": session,
+        "x-litellm-tags": "source:chat",
+        "x-litellm-spend-logs-metadata": json.dumps({"chat_run_id": session}),
+    }
+
+
+def _attributed_row(admin: httpx.Client, session: str) -> dict:
+    """The session's spend row, priced and carrying all three attribution headers."""
+    rows = _spend_rows(admin, session_id=session)
+    assert rows, f"no spend row for session {session}"
+    row = rows[0]
+    assert float(row.get("spend") or 0) > 0, row
+    assert "source:chat" in (row.get("request_tags") or []), row
+    assert ((row.get("metadata") or {}).get("spend_logs_metadata") or {}).get("chat_run_id") == session, row
+    return row
+
+
+def _wav(seconds: float = 1.0, rate: int = 16000) -> bytes:
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(rate)
+        handle.writeframes(b"\x00\x00" * int(rate * seconds))
+    return buffer.getvalue()
 
 
 def _spend_rows(admin: httpx.Client, **filters: str) -> list[dict]:
@@ -288,3 +329,151 @@ def test_gemini_native_route_accepts_virtual_key(person: Callable[..., Person]) 
     """The gemini-* wildcard serves the Gemini SDK, which sends its key as x-goog-api-key."""
     resp = _generate_content(person().key)
     assert resp.status_code == 200, resp.text
+
+
+def test_messages_route_writes_a_priced_row_for_the_session(person: Callable[..., Person], admin: httpx.Client) -> None:
+    """The Anthropic SDK's own route bills the person and carries attribution, streamed or not."""
+    key = person().key
+    for stream in (False, True):
+        session = f"r_{uuid.uuid4().hex}"
+        resp = _messages(
+            key,
+            headers={"x-litellm-session-id": session, "x-litellm-tags": "source:chat"},
+            body={"model": ALIAS_MODEL, "temperature": 1, **({"stream": True} if stream else {})},
+        )
+        assert resp.status_code == 200, resp.text
+        rows = _spend_rows(admin, session_id=session)
+        assert rows, f"no spend row for the {'streamed' if stream else 'plain'} /v1/messages call"
+        assert float(rows[0].get("spend") or 0) > 0, rows[0]
+        assert "source:chat" in (rows[0].get("request_tags") or []), rows[0]
+
+
+def test_gemini_native_route_writes_a_priced_row_for_the_session(person: Callable[..., Person], admin: httpx.Client) -> None:
+    """The Gemini SDK's native route bills the person and keeps the session id and tags.
+
+    It is the only route where 1.103.4 drops x-litellm-spend-logs-metadata (router metadata
+    goes to litellm_metadata there and wins) and ignores the opt-in cache body.
+    """
+    session = f"r_{uuid.uuid4().hex}"
+    resp = httpx.post(
+        f"{GATEWAY_URL}/v1beta/models/{GEMINI_LIVE_MODEL}:generateContent",
+        headers={"x-goog-api-key": person().key, "x-litellm-session-id": session, "x-litellm-tags": "source:chat"},
+        json={"contents": [{"role": "user", "parts": [{"text": "ping"}]}]},
+        timeout=30,
+    )
+    assert resp.status_code == 200, resp.text
+    rows = _spend_rows(admin, session_id=session)
+    assert rows, "no spend row for the native Gemini call"
+    assert float(rows[0].get("spend") or 0) > 0, rows[0]
+    assert "source:chat" in (rows[0].get("request_tags") or []), rows[0]
+
+
+def test_embeddings_route_writes_an_attributed_row(person: Callable[..., Person], admin: httpx.Client) -> None:
+    """OpenAI embeddings (long-term memory, the Embedding Generator) bill the person with attribution."""
+    session = f"r_{uuid.uuid4().hex}"
+    resp = httpx.post(
+        f"{GATEWAY_URL}/v1/embeddings",
+        headers={**_auth(person().key), **_attribution(session)},
+        json={"model": "openai/text-embedding-3-small", "input": ["ping"]},
+        timeout=30,
+    )
+    assert resp.status_code == 200, resp.text
+    _attributed_row(admin, session)
+
+
+def test_speech_routes_write_attributed_rows(person: Callable[..., Person], admin: httpx.Client) -> None:
+    """Text to Speech and Speech to Text bill the person with attribution.
+
+    Transcription is billed per second of audio, measured from the file.
+    gpt-4o-mini-tts is billed per input token at the config's override: the
+    speech route returns no usage for the audio, which the price list prices.
+    """
+    key = person().key
+    speech_session, transcription_session = f"r_{uuid.uuid4().hex}", f"r_{uuid.uuid4().hex}"
+    speech = httpx.post(
+        f"{GATEWAY_URL}/v1/audio/speech",
+        headers={**_auth(key), **_attribution(speech_session)},
+        json={"model": TTS_MODEL, "input": "ping", "voice": "alloy"},
+        timeout=30,
+    )
+    assert speech.status_code == 200 and speech.content, speech.text
+    transcription = httpx.post(
+        f"{GATEWAY_URL}/v1/audio/transcriptions",
+        headers={**_auth(key), **_attribution(transcription_session)},
+        data={"model": STT_MODEL},
+        files={"file": ("ping.wav", _wav(), "audio/wav")},
+        timeout=30,
+    )
+    assert transcription.status_code == 200, transcription.text
+    assert transcription.json().get("text") == "pong", transcription.text
+    speech_row = _attributed_row(admin, speech_session)
+    # At least one input token at the override's $0.000075, not the price
+    # list's $0.0000006.
+    assert float(speech_row["spend"]) >= 0.000075, speech_row
+    _attributed_row(admin, transcription_session)
+
+
+def test_the_gateway_has_no_audio_translation_route(person: Callable[..., Person]) -> None:
+    """Why OpenCompany never asks the gateway to translate audio (nodes/speech/speech_to_text.py)."""
+    resp = httpx.post(
+        f"{GATEWAY_URL}/v1/audio/translations",
+        headers=_auth(person().key),
+        data={"model": STT_MODEL},
+        files={"file": ("ping.wav", _wav(), "audio/wav")},
+        timeout=30,
+    )
+    assert resp.status_code in (404, 405), resp.text
+
+
+# Gaps in 1.103.4 that OpenCompany works around. Each test passes once LiteLLM
+# fixes its gap, and strict xfail then fails the suite: lift the workaround
+# and drop the marker.
+
+
+@pytest.mark.xfail(strict=True, reason="1.103.4 bills Groq transcription at $0, so Groq speech isn't served")
+def test_groq_transcription_is_billed(person: Callable[..., Person], admin: httpx.Client) -> None:
+    """Serve Groq speech ("gateway": true in server/config/speech_defaults.json) once this passes."""
+    session = f"r_{uuid.uuid4().hex}"
+    resp = httpx.post(
+        f"{GATEWAY_URL}/v1/audio/transcriptions",
+        headers={**_auth(person().key), **_attribution(session)},
+        data={"model": GROQ_STT_MODEL},
+        files={"file": ("ping.wav", _wav(), "audio/wav")},
+        timeout=30,
+    )
+    assert resp.status_code == 200, resp.text
+    _attributed_row(admin, session)
+
+
+@pytest.mark.xfail(strict=True, reason="1.103.4 drops x-litellm-spend-logs-metadata on the native Gemini route")
+def test_gemini_native_route_keeps_the_spend_logs_metadata(person: Callable[..., Person], admin: httpx.Client) -> None:
+    session = f"r_{uuid.uuid4().hex}"
+    resp = httpx.post(
+        f"{GATEWAY_URL}/v1beta/models/{GEMINI_LIVE_MODEL}:generateContent",
+        headers={"x-goog-api-key": person().key, **_attribution(session)},
+        json={"contents": [{"role": "user", "parts": [{"text": "ping"}]}]},
+        timeout=30,
+    )
+    assert resp.status_code == 200, resp.text
+    _attributed_row(admin, session)
+
+
+@pytest.mark.xfail(strict=True, reason="1.103.4 ignores the cache body on the native Gemini route")
+def test_gemini_native_route_replays_retry_for_free(person: Callable[..., Person], admin: httpx.Client) -> None:
+    """Send the replay-cache body from services/llm/providers/gemini.py once this passes."""
+    key = person().key
+    namespace = f"oc1-{uuid.uuid4().hex}"
+    for suffix in ("first", "retry"):
+        resp = httpx.post(
+            f"{GATEWAY_URL}/v1beta/models/{GEMINI_LIVE_MODEL}:generateContent",
+            headers={"x-goog-api-key": key, "x-litellm-session-id": f"{namespace}-{suffix}"},
+            json={
+                "contents": [{"role": "user", "parts": [{"text": "ping"}]}],
+                "cache": {"use-cache": True, "namespace": namespace, "ttl": 600},
+            },
+            timeout=30,
+        )
+        assert resp.status_code == 200, resp.text
+    rows = _spend_rows(admin, session_id=f"{namespace}-retry")
+    assert rows, "no spend row for the retry"
+    assert float(rows[0].get("spend") or 0) == 0.0, rows[0]

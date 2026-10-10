@@ -128,7 +128,7 @@ def _ctx(tmp_path: Path) -> NodeContext:
 @pytest.fixture
 def no_api_key_lookup(monkeypatch):
     async def fake_key(ctx, provider):
-        return "test-key"
+        return "test-key", None
 
     monkeypatch.setattr("nodes.vision.vision_analyze._api_key", fake_key)
 
@@ -229,8 +229,9 @@ class TestProviderRequestShapes:
                 return SimpleNamespace(text="gemini sees a chart")
 
         class FakeClient:
-            def __init__(self, api_key):
+            def __init__(self, api_key, http_options=None):
                 captured["api_key"] = api_key
+                captured["http_options"] = http_options
                 self.aio = SimpleNamespace(models=FakeModels())
 
         monkeypatch.setattr("google.genai.Client", FakeClient)
@@ -249,6 +250,7 @@ class TestProviderRequestShapes:
         )
         assert result.text == "gemini sees a chart"
         assert captured["model"] == "gemini-3.6-flash"
+        assert captured["http_options"] is None
         # Custom question wins over the canned prompt.
         assert captured["contents"][1] == "What color is it?"
 

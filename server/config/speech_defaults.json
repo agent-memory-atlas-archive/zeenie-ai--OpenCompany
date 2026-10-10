@@ -11,6 +11,8 @@
     "openai": {
       "base_url": "https://api.openai.com/v1",
       "credential_id": "openai",
+      "_gateway_comment": "Served by the OpenCompany Gateway when the install has no key of its own (nodes/speech/_base.py provider_key). The gateway's URL and LiteLLM model prefix come from this provider's gateway block in llm_defaults.json. It has no translation route, so translate falls back to in-language transcription there. gpt-4o-mini-tts is billed through a price override in gateway/litellm/config.yaml (the speech route returns no audio usage); tts-1 and tts-1-hd are billed per character, transcription per second.",
+      "gateway": true,
       "tts": {
         "endpoint": "/audio/speech",
         "default_model": "gpt-4o-mini-tts",
@@ -67,6 +69,7 @@
       "_comment": "Serves OpenAI's exact transcription wire format at its own base URL, so it rides the same provider class. Transcription-only: no TTS product.",
       "base_url": "https://api.groq.com/openai/v1",
       "credential_id": "groq",
+      "_gateway_comment": "Not served by the OpenCompany Gateway: LiteLLM 1.103.4 bills Groq transcription at $0 (gateway/tests/test_gateway_contract.py test_groq_transcription_is_billed).",
       "stt": {
         "endpoint": "/audio/transcriptions",
         "translate_endpoint": "/audio/translations",

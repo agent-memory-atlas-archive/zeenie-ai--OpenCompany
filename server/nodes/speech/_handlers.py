@@ -2,8 +2,9 @@
 
 ``dictation_status`` says whether a recording can be turned into text: the
 first provider in ``speech_defaults.json``'s ``dictation.providers`` with a
-stored key (the microphone shows only when there is one; the browser's own
-speech recognition is not used, it does not work in the desktop app).
+stored key, else the first the OpenCompany Gateway serves (the microphone
+shows only when there is one; the browser's own speech recognition is not
+used, it does not work in the desktop app).
 ``transcribe_audio`` transcribes a recording the chat uploaded into the
 workflow's workspace (``uploads/``) with that provider, records the usage,
 and deletes the recording: a dictation leaves nothing behind.
@@ -27,7 +28,7 @@ from services.plugin.ws import ws_response
 
 from . import _config as speech_config
 from . import _unifier
-from ._base import track_usage
+from ._base import gateway_serves, track_usage
 from ._protocol import SttRequest
 from ._registry import stt_providers
 
@@ -42,16 +43,22 @@ def dictation_providers() -> list[str]:
 
 
 async def dictation_provider(*, principal: str | None = None) -> Optional[str]:
-    """The first dictation provider with a stored key, or None."""
+    """The first dictation provider with a stored key, else the first the
+    OpenCompany Gateway serves, or None."""
     from core.container import container
+    from services.gateway.routing import gateway_covers
 
     auth = container.auth_service()
-    for provider in dictation_providers():
+    providers = dictation_providers()
+    for provider in providers:
         try:
             if await auth.has_valid_key(speech_config.credential_id(provider), principal=principal):
                 return provider
         except Exception:  # noqa: BLE001 - an unreadable key is no key
             logger.warning("Dictation key could not be read", provider=provider, exc_info=True)
+    for provider in providers:
+        if gateway_serves(provider) and await gateway_covers(provider):
+            return provider
     return None
 
 
@@ -109,9 +116,16 @@ async def handle_transcribe_audio(data: Dict[str, Any], websocket: WebSocket) ->
         raise NodeUserError("The recording is too long to transcribe. Record a shorter one.")
     try:
         api_key = await container.auth_service().resolve_api_key(speech_config.credential_id(provider), principal=principal)
+        route = None
+        if not api_key and gateway_serves(provider):
+            from services.gateway.routing import gateway_route
+
+            route = await gateway_route(provider)
+            api_key = route.api_key if route is not None else ""
         result = await _unifier.transcribe(
             provider=provider,
             api_key=str(api_key or ""),
+            route=route,
             request=SttRequest(
                 audio=path.read_bytes(),
                 filename=path.name,

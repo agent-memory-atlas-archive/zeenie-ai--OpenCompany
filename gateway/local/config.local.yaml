@@ -1,9 +1,10 @@
-# Local OpenCompany Gateway config: mock models instead of real vendors, so
-# nothing is billed and no vendor keys are needed.
+# Local OpenCompany Gateway config: mock models and fake upstreams instead of
+# real vendors, so nothing is billed and no vendor keys are needed.
 #
 # The policy blocks mirror gateway/litellm/config.yaml. Differences, all
-# deliberate: mock_response on every model, spend logs flush every second so
-# the tests can read them, and there is no Slack alerting or proxy-range trust.
+# deliberate: mock responses or fake_upstream.py behind every model, spend logs
+# flush every second so the tests can read them, and there is no Slack alerting
+# or proxy-range trust.
 
 model_list:
   - model_name: openai/*
@@ -11,6 +12,9 @@ model_list:
       model: openai/*
       api_key: sk-local-unused
       mock_response: pong
+      # The audio routes ignore mock_response and call the upstream: the fake
+      # one (fake_upstream.py), never api.openai.com.
+      api_base: http://fake-upstream:8080/v1
   - model_name: claude-*
     litellm_params:
       model: anthropic/claude-*
@@ -21,15 +25,43 @@ model_list:
       model: gemini/gemini-*
       api_key: local-unused
       mock_response: pong
+  # Real upstreams (fake_upstream.py) for what mocks can't show: spend rows on
+  # /v1/messages, the native Gemini route and the audio routes, and streamed
+  # pricing. Exact names win over the wildcards above.
+  #
   # A dotted alias that is not a price-list key, the shape LiteLLM's own test
   # for PR #44341 uses: a stream through it must still be priced at the
-  # deployment's model. It streams from fake_anthropic.py, because mock
-  # responses skip LiteLLM's upstream streaming path.
+  # deployment's model.
   - model_name: claude-opus-4.8-20261010
     litellm_params:
       model: anthropic/claude-opus-4-8
       api_key: sk-local-unused
-      api_base: http://fake-anthropic:8080
+      api_base: http://fake-upstream:8080
+  - model_name: gemini-2.5-flash-live
+    litellm_params:
+      model: gemini/gemini-2.5-flash
+      api_key: local-unused
+      api_base: http://fake-upstream:8080
+  # The price override of gateway/litellm/config.yaml, same values.
+  - model_name: openai/gpt-4o-mini-tts
+    litellm_params:
+      model: openai/gpt-4o-mini-tts
+      api_key: sk-local-unused
+      api_base: http://fake-upstream:8080/v1
+      input_cost_per_token: 0.000075
+      output_cost_per_token: 0
+  # OpenCompany's default embedding model under its wire name: the OpenAI SDK
+  # asks for base64 vectors, which the mock's "pong" can't decode to.
+  - model_name: openai/text-embedding-3-small
+    litellm_params:
+      model: openai/text-embedding-3-small
+      api_key: sk-local-unused
+      api_base: http://fake-upstream:8080/v1
+  - model_name: groq/whisper-large-v3
+    litellm_params:
+      model: groq/whisper-large-v3
+      api_key: local-unused
+      api_base: http://fake-upstream:8080/v1
 
 router_settings:
   redis_host: os.environ/REDIS_HOST

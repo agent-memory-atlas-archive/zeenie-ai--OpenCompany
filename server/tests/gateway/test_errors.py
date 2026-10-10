@@ -5,7 +5,7 @@ import httpx
 import openai
 import pytest
 
-from services.gateway.errors import explain
+from services.gateway.errors import describe, explain
 from services.llm.protocol import LLMError, LLMErrorCategory, error_type
 
 
@@ -73,3 +73,40 @@ def test_public_hint_replaces_the_category_hint():
     error = LLMError(message="x", provider="openai", category=LLMErrorCategory.BILLING, public_hint="custom")
     assert error.hint == "custom"
     assert LLMError(message="x", provider="openai", category=LLMErrorCategory.BILLING).hint.startswith("Review the provider")
+
+
+def _http_error(status: int, error_type_: str) -> httpx.HTTPStatusError:
+    """What a speech provider's ``raise_for_status`` raises for a LiteLLM error body."""
+    request = httpx.Request("POST", "https://gw.example/v1/audio/speech")
+    response = httpx.Response(
+        status, request=request, json={"error": {"message": "refused", "type": error_type_, "code": str(status)}}
+    )
+    return httpx.HTTPStatusError("refused", request=request, response=response)
+
+
+@pytest.mark.parametrize("make", [_gateway_error, _http_error], ids=["sdk", "httpx"])
+def test_described_failures_read_the_body_type_of_sdk_and_httpx_errors(make):
+    """Embeddings and vision raise SDK errors; speech raises httpx ones."""
+    assert describe(make(429, "budget_exceeded")).startswith("Your OpenCompany allowance for this month is used up.")
+    assert describe(make(403, "model_cost_map_missing")).startswith("This model isn't available")
+
+
+@pytest.mark.parametrize(
+    "status, expected",
+    [
+        (401, "The OpenCompany Gateway rejected the gateway key. Reconnect"),
+        (403, "The OpenCompany Gateway denied this request. Reconnect"),
+        (429, "The OpenCompany Gateway is rate-limiting requests."),
+        (503, "The OpenCompany Gateway is temporarily unavailable."),
+    ],
+)
+def test_described_failures_fall_back_to_the_status(status, expected):
+    assert describe(_http_error(status, "other")).startswith(expected)
+
+
+def test_an_unreachable_gateway_and_a_rejected_request_are_told_apart():
+    request = httpx.Request("POST", "https://gw.example/v1/embeddings")
+    assert describe(httpx.ConnectError("refused", request=request)) == "Could not reach the OpenCompany Gateway."
+    # A request the gateway rejected for its content keeps the caller's wording.
+    assert describe(_http_error(400, "invalid_request_error")) is None
+    assert describe(ValueError("bad")) is None

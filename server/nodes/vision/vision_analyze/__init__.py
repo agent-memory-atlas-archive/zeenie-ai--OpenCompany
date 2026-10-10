@@ -14,12 +14,16 @@ models and the specialist path (OCR-style extraction).
 Token cost/billing note: like the LLM-backed translate providers, usage is
 deliberately NOT recorded via the pricing service — this path bills
 provider tokens that the LLM pricing layer has no per-call meter for here.
+
+With no key of the install's own for the provider, the OpenCompany Gateway
+answers (``key_or_route``): the same SDK clients, pointed at the gateway
+with its key, the LiteLLM model prefix and the run's attribution headers.
 """
 
 from __future__ import annotations
 
 import base64
-from typing import Any, Literal, Optional
+from typing import TYPE_CHECKING, Any, Dict, Literal, Optional, Tuple
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -30,6 +34,11 @@ from services.plugin import (
     TaskQueue,
     ToolNode,
 )
+
+from ...model._credentials import AnthropicCredential, GeminiCredential, OpenAICredential
+
+if TYPE_CHECKING:
+    from services.gateway.routing import GatewayRoute
 
 VisionProvider = Literal["openai", "anthropic", "gemini"]
 VisionOperation = Literal["describe", "extract_text"]
@@ -113,18 +122,31 @@ class VisionAnalyzeOutput(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 
-async def _api_key(ctx: NodeContext, provider: str) -> str:
+async def _api_key(
+    ctx: NodeContext, provider: str
+) -> Tuple[str, Optional[GatewayRoute]]:
     """Resolve the stored key through the provider's credential (the speech
-    idiom) so a missing key surfaces as the annotated credential envelope."""
-    async with ctx.connection(provider) as conn:
-        secrets = await conn.credentials()
-    api_key = str(secrets.get("api_key") or "")
+    idiom) so a missing key surfaces as the annotated credential envelope;
+    with no own key, the OpenCompany Gateway's key and route when it covers
+    the provider."""
+    from services.gateway.routing import key_or_route
+
+    api_key, route = await key_or_route(ctx, provider, provider)
     if not api_key:
         raise NodeUserError(
             f"No API key stored for '{provider}'. Add one in the "
             "Credentials modal."
         )
-    return api_key
+    return api_key, route
+
+
+def _gateway_client_kwargs(route: Optional[GatewayRoute]) -> Dict[str, Any]:
+    """The SDK client options that point a call at the gateway."""
+    if route is None:
+        return {}
+    from services.gateway.attribution import request_headers
+
+    return {"base_url": route.base_url, "default_headers": request_headers()}
 
 
 def _default_model(provider: str) -> str:
@@ -177,6 +199,8 @@ class VisionAnalyzeNode(ToolNode):
         "readonly": True,
         "open_world": True,  # sends image content to an external provider
     }
+    # ``ctx.connection(provider)`` is a lookup over this tuple.
+    credentials = (OpenAICredential, AnthropicCredential, GeminiCredential)
     task_queue = TaskQueue.AI_HEAVY
 
     Params = VisionAnalyzeParams
@@ -236,19 +260,31 @@ class VisionAnalyzeNode(ToolNode):
             if args.operation == "describe" and args.question
             else _PROMPTS[args.operation]
         )
-        api_key = await _api_key(ctx, provider)
+        api_key, route = await _api_key(ctx, provider)
         dispatch = {
             "openai": self._ask_openai,
             "anthropic": self._ask_anthropic,
             "gemini": self._ask_gemini,
         }
-        text = await dispatch[provider](
-            api_key=api_key,
-            model=model,
-            prompt=prompt,
-            image_bytes=fitted,
-            mime=mime,
-        )
+        try:
+            text = await dispatch[provider](
+                api_key=api_key,
+                model=model,
+                prompt=prompt,
+                image_bytes=fitted,
+                mime=mime,
+                route=route,
+            )
+        except Exception as exc:
+            if route is None:
+                raise
+            from services.gateway.errors import describe
+
+            # The vendor's text would point at the wrong key and account.
+            message = describe(exc)
+            if message is None:
+                raise
+            raise NodeUserError(message) from exc
         return VisionAnalyzeOutput(
             operation=args.operation,
             provider=provider,
@@ -261,17 +297,23 @@ class VisionAnalyzeNode(ToolNode):
 
     @staticmethod
     async def _ask_openai(
-        *, api_key: str, model: str, prompt: str, image_bytes: bytes, mime: str
+        *,
+        api_key: str,
+        model: str,
+        prompt: str,
+        image_bytes: bytes,
+        mime: str,
+        route: Optional[GatewayRoute] = None,
     ) -> str:
         from openai import AsyncOpenAI
 
-        client = AsyncOpenAI(api_key=api_key)
+        client = AsyncOpenAI(api_key=api_key, **_gateway_client_kwargs(route))
         data_url = (
             f"data:{mime};base64,"
             f"{base64.b64encode(image_bytes).decode('ascii')}"
         )
         response = await client.chat.completions.create(
-            model=model,
+            model=f"{route.model_prefix}{model}" if route else model,
             max_completion_tokens=_MAX_OUTPUT_TOKENS,
             messages=[
                 {
@@ -292,11 +334,18 @@ class VisionAnalyzeNode(ToolNode):
 
     @staticmethod
     async def _ask_anthropic(
-        *, api_key: str, model: str, prompt: str, image_bytes: bytes, mime: str
+        *,
+        api_key: str,
+        model: str,
+        prompt: str,
+        image_bytes: bytes,
+        mime: str,
+        route: Optional[GatewayRoute] = None,
     ) -> str:
         from anthropic import AsyncAnthropic
 
-        client = AsyncAnthropic(api_key=api_key)
+        # The gateway's Anthropic route takes bare model ids.
+        client = AsyncAnthropic(api_key=api_key, **_gateway_client_kwargs(route))
         response = await client.messages.create(
             model=model,
             max_tokens=_MAX_OUTPUT_TOKENS,
@@ -327,12 +376,27 @@ class VisionAnalyzeNode(ToolNode):
 
     @staticmethod
     async def _ask_gemini(
-        *, api_key: str, model: str, prompt: str, image_bytes: bytes, mime: str
+        *,
+        api_key: str,
+        model: str,
+        prompt: str,
+        image_bytes: bytes,
+        mime: str,
+        route: Optional[GatewayRoute] = None,
     ) -> str:
         from google import genai
         from google.genai import types as genai_types
 
-        client = genai.Client(api_key=api_key)
+        gateway = _gateway_client_kwargs(route)
+        # The gateway's native Gemini route takes bare model ids.
+        http_options = (
+            genai_types.HttpOptions(
+                base_url=gateway["base_url"], headers=gateway["default_headers"]
+            )
+            if gateway
+            else None
+        )
+        client = genai.Client(api_key=api_key, http_options=http_options)
         response = await client.aio.models.generate_content(
             model=model,
             contents=[

@@ -7,7 +7,7 @@ parts both nodes need and neither should own.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Optional, Sequence, Tuple
 
 from core.logging import get_logger
 from services.media import coerce_file_param, read_media_bytes, resolve_media
@@ -16,28 +16,46 @@ from services.plugin import NodeContext, NodeUserError, coerce_blank_params  # n
 
 from . import _config as speech_config
 
+if TYPE_CHECKING:
+    from services.gateway.routing import GatewayRoute
+
 logger = get_logger(__name__)
 
 
-async def provider_api_key(ctx: NodeContext, provider: str) -> str:
-    """Resolve the stored key for ``provider`` through its credential.
+def gateway_serves(provider: str) -> bool:
+    """Whether the OpenCompany Gateway serves this provider's speech
+    (``"gateway": true`` in speech_defaults.json)."""
+    return speech_config.provider_block(provider).get("gateway") is True
+
+
+async def provider_key(ctx: NodeContext, provider: str) -> Tuple[str, Optional[GatewayRoute]]:
+    """Resolve the key for ``provider`` through its credential, and the
+    OpenCompany Gateway's route when the gateway serves the call.
 
     Goes through ``ctx.connection(...)`` rather than reading the auth
     service directly so a missing key raises the framework's annotated
     ``PermissionError`` -- which ``BaseNode.execute`` turns into a
     credential envelope plus a CloudEvents broadcast, so the Credentials
     modal lights up the right provider.
+
+    Own keys first: only with no key of the install's own does a provider
+    marked ``"gateway": true`` in speech_defaults.json run on the gateway.
     """
     credential_id = speech_config.credential_id(provider)
-    async with ctx.connection(credential_id) as conn:
-        secrets = await conn.credentials()
-    api_key = str(secrets.get("api_key") or "")
+    if gateway_serves(provider):
+        from services.gateway.routing import key_or_route
+
+        api_key, route = await key_or_route(ctx, credential_id, provider)
+    else:
+        async with ctx.connection(credential_id) as conn:
+            secrets = await conn.credentials()
+        api_key, route = str(secrets.get("api_key") or ""), None
     if not api_key:
         raise NodeUserError(
             f"No API key stored for '{credential_id}'. Add one in the "
             "Credentials modal."
         )
-    return api_key
+    return api_key, route
 
 
 def require_provider(provider: str, available: Sequence[str], direction: str) -> str:
@@ -152,8 +170,9 @@ async def track_usage(
 
 __all__ = [
     "coerce_blank_params",
+    "gateway_serves",
     "measure_seconds",
-    "provider_api_key",
+    "provider_key",
     "read_audio_input",
     "require_provider",
     "track_usage",

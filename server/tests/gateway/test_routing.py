@@ -1,12 +1,13 @@
 """services/gateway/routing.py: own keys first; the gateway serves only the
 providers llm_defaults.json marks, and only when enabled and connected."""
 
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from services.gateway.routing import GATEWAY_CREDENTIAL_ID, GatewayRoute, GatewayRouter, gateway_covers
+from services.gateway.routing import GATEWAY_CREDENTIAL_ID, GatewayRoute, GatewayRouter, gateway_covers, key_or_route
 
 DEFAULTS = {
     "providers": {
@@ -83,6 +84,54 @@ async def test_gateway_covers_trusts_only_a_real_router():
     # tests/conftest.py stubs core.container with a MagicMock, whose router
     # would claim to cover every provider.
     assert await gateway_covers("openai") is False
+
+
+ROUTE = GatewayRoute(api_key="sk-gateway", base_url="https://gw.example/v1", model_prefix="openai/")
+
+
+def _node_ctx(*, key=None, reason="missing"):
+    """A NodeContext stand-in whose connection yields ``key`` or raises the
+    annotated PermissionError ApiKeyCredential.resolve raises."""
+
+    async def credentials():
+        if key:
+            return {"api_key": key}
+        error = PermissionError("No API key for 'openai'.")
+        error.reason = reason
+        raise error
+
+    @asynccontextmanager
+    async def connection(credential_id):
+        yield SimpleNamespace(credentials=credentials)
+
+    return SimpleNamespace(connection=connection)
+
+
+async def test_a_node_uses_its_own_key_without_asking_the_gateway(monkeypatch):
+    route = AsyncMock(return_value=ROUTE)
+    monkeypatch.setattr("services.gateway.routing.gateway_route", route)
+    assert await key_or_route(_node_ctx(key="sk-own"), "openai", "openai") == ("sk-own", None)
+    route.assert_not_awaited()
+
+
+async def test_a_node_without_its_own_key_gets_the_gateway_key_and_route(monkeypatch):
+    monkeypatch.setattr("services.gateway.routing.gateway_route", AsyncMock(return_value=ROUTE))
+    assert await key_or_route(_node_ctx(), "openai", "openai") == ("sk-gateway", ROUTE)
+
+
+async def test_a_node_without_any_key_still_raises_the_missing_key_error(monkeypatch):
+    monkeypatch.setattr("services.gateway.routing.gateway_route", AsyncMock(return_value=None))
+    with pytest.raises(PermissionError) as raised:
+        await key_or_route(_node_ctx(), "openai", "openai")
+    assert raised.value.reason == "missing"
+
+
+async def test_only_a_missing_key_falls_back_to_the_gateway(monkeypatch):
+    route = AsyncMock(return_value=ROUTE)
+    monkeypatch.setattr("services.gateway.routing.gateway_route", route)
+    with pytest.raises(PermissionError):
+        await key_or_route(_node_ctx(reason="expired"), "openai", "openai")
+    route.assert_not_awaited()
 
 
 async def test_activity_key_lookup_returns_no_key_when_the_gateway_covers(monkeypatch):
