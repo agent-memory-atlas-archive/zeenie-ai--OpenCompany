@@ -26,6 +26,7 @@
   "providers": {
     "openai": {
       "display_name": "OpenAI",
+      "gateway": {"model_prefix": "openai/", "base_path": "/v1"},
       "streaming": true,
       "default_model": "gpt-6-sol",
       "popular_models": ["gpt-6-sol", "gpt-6-astra", "gpt-6-astra-pro", "gpt-6-sol-pro", "gpt-6-luna", "gpt-6-luna-pro", "gpt-5.6-sol", "gpt-5.6-sol-pro", "gpt-5.6-terra", "gpt-5.6-terra-pro", "gpt-5.6-luna", "gpt-5.6-luna-pro", "gpt-5.5", "gpt-5.4", "gpt-4.1"],
@@ -86,6 +87,7 @@
     },
     "anthropic": {
       "display_name": "Anthropic",
+      "gateway": {"model_prefix": "", "base_path": ""},
       "streaming": true,
       "default_model": "claude-opus-5-5",
       "popular_models": ["claude-opus-5-5", "claude-fable-5-1", "claude-fable-5", "claude-opus-5", "claude-sonnet-5-5", "claude-sonnet-5", "claude-opus-4-8", "claude-opus-4-7", "claude-sonnet-4-6"],
@@ -157,6 +159,7 @@
     },
     "gemini": {
       "display_name": "Gemini",
+      "gateway": {"model_prefix": "", "base_path": ""},
       "default_model": "gemini-3.8-flash",
       "popular_models": ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.1-pro-preview", "gemini-3.1-flash-lite", "gemini-3-flash-preview", "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite"],
       "detection_patterns": ["gemini", "google", "gemma"],
@@ -237,6 +240,7 @@
     },
     "groq": {
       "display_name": "Groq",
+      "gateway": {"model_prefix": "groq/", "base_path": "/v1"},
       "default_model": "openai/gpt-oss-120b",
       "popular_models": [],
       "_popular_note": "Empty per the 1M-context policy — no Groq-served model reaches 1M (all top out at 131072). Models remain reachable via live fetch_models.",
@@ -272,6 +276,7 @@
     },
     "cerebras": {
       "display_name": "Cerebras",
+      "gateway": {"model_prefix": "cerebras/", "base_path": "/v1"},
       "default_model": "gpt-oss-120b",
       "popular_models": [],
       "_popular_note": "Empty per the 1M-context policy — no Cerebras model reaches 1M (all 131072). Models remain reachable via live fetch_models.",
@@ -298,6 +303,7 @@
     },
     "xai": {
       "display_name": "xAI",
+      "gateway": {"model_prefix": "xai/", "base_path": "/v1"},
       "default_model": "grok-4.20",
       "popular_models": ["grok-4.20", "grok-4.20-multi-agent", "grok-4.3"],
       "_popular_note": "grok-4.7, grok-4.6 and grok-4.5 are excluded per the 1M-context policy (500K each); reachable via live fetch_models. Default stays grok-4.20 (2M) so the default is selectable from the global list.",
@@ -356,6 +362,7 @@
     },
     "kimi": {
       "display_name": "Kimi",
+      "gateway": {"model_prefix": "moonshot/", "base_path": "/v1"},
       "default_model": "kimi-k3",
       "popular_models": ["kimi-k3"],
       "_popular_note": "Only kimi-k3 meets the 1M-context policy (k2.x are 262144); k2.x remain reachable via live fetch_models.",
@@ -384,6 +391,7 @@
     },
     "mistral": {
       "display_name": "Mistral",
+      "gateway": {"model_prefix": "mistral/", "base_path": "/v1"},
       "default_model": "mistral-large-latest",
       "popular_models": [],
       "_popular_note": "Empty per the 1M-context policy — Mistral tops out at 262144 (large/medium/small). Models remain reachable via live fetch_models.",

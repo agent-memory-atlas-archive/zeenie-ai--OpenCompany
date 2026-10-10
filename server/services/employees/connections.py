@@ -88,10 +88,12 @@ class Connections:
 
     async def ai_providers(self) -> List[str]:
         """LLM providers an agent could run on right now: one with a key
-        stored or a local server saved, and each saved OpenAI-compatible
-        endpoint by its reference (``openai_compatible:<slug>``). The bare
-        ``openai_compatible`` id is never one: an agent set to it has no
-        server to call."""
+        stored or a local server saved, one the OpenCompany Gateway serves
+        when it is connected (services/gateway), and each saved
+        OpenAI-compatible endpoint by its reference
+        (``openai_compatible:<slug>``). The bare ``openai_compatible`` id is
+        never one: an agent set to it has no server to call."""
+        from services.gateway.routing import gateway_covers
         from services.llm.config import ENDPOINT_PROVIDER, PROVIDER_CONFIGS
 
         usable = []
@@ -99,6 +101,8 @@ class Connections:
             if provider_id == ENDPOINT_PROVIDER:
                 continue
             if self.provider(provider_id) is not None and await self.is_connected(provider_id):
+                usable.append(provider_id)
+            elif await gateway_covers(provider_id):
                 usable.append(provider_id)
         try:
             from services.llm.endpoints import list_endpoints

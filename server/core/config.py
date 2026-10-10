@@ -356,6 +356,12 @@ class Settings(BaseSettings):
     # AI Proxy Configuration (Ollama-style proxy)
     ai_proxy_default_port: int = Field(default=11434, env="AI_PROXY_DEFAULT_PORT")
 
+    # OpenCompany Gateway (hosted LiteLLM, gateway/): with a gateway key in
+    # Connectors, LLM calls for a provider this install has no key of its
+    # own for go through the gateway on the person's allowance.
+    gateway_enabled: bool = Field(default=False, validation_alias="OPENCOMPANY_GATEWAY_ENABLED")
+    gateway_url: str = Field(default="https://api.gw.opencompany.sh", validation_alias="OPENCOMPANY_GATEWAY_URL")
+
     # Residential Proxy Configuration
     proxy_enabled: bool = Field(default=False, env="PROXY_ENABLED")
     proxy_budget_daily_usd: float = Field(default=50.0, env="PROXY_BUDGET_DAILY_USD")

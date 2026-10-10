@@ -582,16 +582,26 @@ class BaseNode:
           the same identifiers as the log context.
         """
         start_time = time.time()
-        workflow_id_attr: Optional[str] = None
-        if isinstance(context.raw, dict):
-            workflow_id_attr = context.raw.get("workflow_id")
+        raw = context.raw if isinstance(context.raw, dict) else {}
+        workflow_id_attr: Optional[str] = raw.get("workflow_id")
+
+        from services.chat.stream import chat_run_id_of
 
         log_fields: Dict[str, Any] = {
             "node_id": node_id,
             "node_type": self.type,
         }
-        if workflow_id_attr is not None:
-            log_fields["workflow_id"] = workflow_id_attr
+        # Which run this work belongs to. Logs carry them, and so do the LLM
+        # gateway's attribution headers (services.gateway.attribution).
+        run_fields = {
+            "workflow_id": workflow_id_attr,
+            "execution_id": getattr(context, "execution_id", None),
+            "root_execution_id": raw.get("root_execution_id"),
+            "chat_run_id": chat_run_id_of(raw),
+            "employee_job_id": raw.get("employee_job_id"),
+            "user_id": getattr(context, "user_id", None),
+        }
+        log_fields.update({key: value for key, value in run_fields.items() if value})
 
         async with log_context(**log_fields):
             with tracer.start_as_current_span(

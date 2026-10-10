@@ -125,14 +125,20 @@ class CredentialRegistry:
     # ----- public API -----
 
     def get_all_providers(self) -> List[Dict[str, Any]]:
-        """Return all concrete (non-abstract) providers in JSON order."""
+        """Return all concrete (non-abstract) providers in JSON order.
+
+        An entry declaring ``requires_setting`` is listed only while that
+        ``Settings`` attribute is ``True`` (the OpenCompany Gateway's card,
+        hidden unless the gateway is enabled). ``get_provider`` still
+        resolves it by id.
+        """
         resolved = self._resolve_all()
         # Preserve insertion order of the raw providers dict.
         raw = self._load_raw().get("providers", {})
         out: List[Dict[str, Any]] = []
         for provider_id in raw:
             entry = resolved[provider_id]
-            if entry.get("_abstract"):
+            if entry.get("_abstract") or not _setting_enabled(entry):
                 continue
             out.append(entry)
         return out
@@ -243,6 +249,17 @@ class CredentialRegistry:
 
 
 # ----- deep-merge helper (n8n mergeNodeProperties pattern) -----
+
+
+def _setting_enabled(entry: Dict[str, Any]) -> bool:
+    """Whether an entry's ``requires_setting`` (if any) is on. ``is True``:
+    under test the container's Settings is a MagicMock."""
+    name = entry.get("requires_setting")
+    if not name:
+        return True
+    from core.container import container
+
+    return getattr(container.settings(), str(name), False) is True
 
 
 def _deep_merge(parent: Dict[str, Any], child: Dict[str, Any]) -> Dict[str, Any]:

@@ -169,6 +169,9 @@ const ApiKeyPanel: React.FC<CredentialPanelProps> = ({
           {field?.help && !endpoints && (
             <p className="mt-2 text-xs text-muted-foreground">{field.help}</p>
           )}
+          {panel.statusSummary && validated && (
+            <p className="mt-2 text-sm">{panel.statusSummary}</p>
+          )}
         </CardContent>
       </Card>
 

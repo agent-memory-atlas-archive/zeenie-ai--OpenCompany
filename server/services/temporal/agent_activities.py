@@ -221,6 +221,12 @@ async def _resolve_activity_api_key(payload: Dict[str, Any]) -> str:
         if isinstance(candidate, str) and candidate and parameters.get("provider", "openai") == provider:
             api_key = candidate
 
+    from services.gateway.routing import gateway_covers
+
+    if not api_key and await gateway_covers(provider):
+        # No own key: ChatUnifier sends the call through the OpenCompany
+        # Gateway with the install's gateway key (services/gateway).
+        return ""
     if not api_key:
         raise _unsaved_endpoint_error(provider) or ApplicationError(
             f"API key for provider {provider!r} is not configured",
@@ -720,13 +726,18 @@ async def execute_llm_step(payload: Dict[str, Any]) -> Dict[str, Any]:
     ``heartbeat_timeout``.
     """
 
+    from core.logging import log_context
+
     activity.logger.info(
         f"Agent LLM step: provider={payload.get('provider')} " f"model={payload.get('model')} messages={len(payload.get('messages', []))}"
     )
     activity.heartbeat(f"LLM step starting: {payload.get('model')}")
 
     await _publish_llm_attempt_status(payload)
-    result = await _execute_native_llm_step(payload)
+    # The run's ids reach the log context before the provider call starts, so
+    # its logs and the LLM gateway's spend row carry them.
+    async with log_context(**(payload.get("attribution") or {})):
+        result = await _execute_native_llm_step(payload)
     activity.heartbeat("LLM step: model returned")
     return result
 
@@ -1230,6 +1241,11 @@ async def prepare_agent_payload(context: Dict[str, Any]) -> Dict[str, Any]:
             api_key = bool(source) or await auth.has_valid_key(provider) or await auth.has_valid_key(f"{provider}_api_key")
         else:
             api_key = await auth.has_valid_key(provider) or await auth.has_valid_key(f"{provider}_api_key")
+    if not api_key:
+        from services.gateway.routing import gateway_covers
+
+        # No own key, but the OpenCompany Gateway serves the provider.
+        api_key = await gateway_covers(provider)
     if not api_key:
         endpoint_error = _unsaved_endpoint_error(provider)
         if endpoint_error:
@@ -2570,17 +2586,27 @@ async def compact_context(payload: Dict[str, Any]) -> Dict[str, Any]:
         f"({len(rendered)} rendered chars) via "
         f"{payload['provider']}/{payload['model']}"
     )
-    result = await svc.compact_context(
-        session_id=str(payload.get("session_id") or "default"),
-        node_id=payload["node_id"],
-        memory_content=rendered,
-        provider=payload["provider"],
-        api_key=await _resolve_activity_api_key(payload),
-        model=payload["model"],
-        # Temporal owns activity retries; never repeat an ambiguous provider
-        # request inside the activity or SDK.
-        explicit_max_retries=0,
-    )
+    from core.logging import log_context
+    from services.llm.protocol import LLMError
+
+    try:
+        async with log_context(**(payload.get("attribution") or {})):
+            result = await svc.compact_context(
+                session_id=str(payload.get("session_id") or "default"),
+                node_id=payload["node_id"],
+                memory_content=rendered,
+                provider=payload["provider"],
+                api_key=await _resolve_activity_api_key(payload),
+                model=payload["model"],
+                # Temporal owns activity retries; never repeat an ambiguous provider
+                # request inside the activity or SDK.
+                explicit_max_retries=0,
+                # A spent allowance or a rejected key stops the run with its
+                # reason, like an LLM step, instead of retrying compaction.
+                stop_on_user_action=True,
+            )
+    except LLMError as error:
+        raise _as_temporal_llm_error(error) from None
     if result.get("success") and result.get("summary"):
         usage = result.get("usage") or {}
         activity.logger.info(

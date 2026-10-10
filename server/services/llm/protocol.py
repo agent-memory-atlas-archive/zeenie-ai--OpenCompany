@@ -364,6 +364,11 @@ class LLMError(Exception):
     # Must already be safe for public surfaces: no credential, no query
     # string, no userinfo.
     public_message: Optional[str] = None
+    # Replaces the category's fixed recovery advice, under the same safety
+    # rule. The LLM gateway sets both for calls it served
+    # (services/gateway/errors.py): "check the provider's billing" would
+    # point at the wrong account.
+    public_hint: Optional[str] = None
 
     def __post_init__(self) -> None:
         Exception.__init__(self, self.message)
@@ -464,6 +469,8 @@ class LLMError(Exception):
     @property
     def hint(self) -> Optional[str]:
         """Fixed recovery advice; never copy the provider's raw response."""
+        if self.public_hint:
+            return self.public_hint
         return {
             LLMErrorCategory.BILLING: "Review the provider project's billing, spending cap, and credits. Resume after access is restored; repeating the request will not fix it.",
             LLMErrorCategory.QUOTA: "Check the model's quota for your API project. Resume after the quota resets or is increased, or choose a model with available quota.",
@@ -832,6 +839,16 @@ def _error_body(exc: BaseException) -> Mapping[str, Any]:
     return {}
 
 
+def error_type(exc: BaseException) -> Optional[str]:
+    """The ``type`` of an SDK error's JSON body (``budget_exceeded``), if any.
+
+    ``LLMError.provider_code`` prefers the body's ``code``, which LiteLLM sets
+    to the HTTP status, so the type has to be read from the body itself.
+    """
+    value = _error_body(exc).get("type")
+    return str(value) if value else None
+
+
 def _google_error_details(exc: BaseException) -> List[Mapping[str, Any]]:
     """Read Google's typed details without exposing provider bodies publicly."""
     body = getattr(exc, "details", None)
@@ -876,6 +893,11 @@ def _classify_error(
     body = _error_body(exc)
     message += " " + str(body.get("message") or "").lower()
     codes = {str(value).lower() for value in (getattr(exc, "code", None), body.get("code"), body.get("type"), body.get("status")) if value is not None}
+    # The LLM gateway (LiteLLM) refuses a spent allowance with this type, as
+    # 429 before LiteLLM 1.104 and 402 or 422 after. Whatever the status, only
+    # the user can fix it.
+    if "budget_exceeded" in codes:
+        return LLMErrorCategory.BILLING
     # A quota/credit exhaustion can arrive as 429, but backoff cannot fix it.
     # Match narrow billing signatures before the generic HTTP classifiers.
     if status in {None, 400, 402, 403, 429} and (
@@ -953,12 +975,18 @@ class LLMProvider(Protocol):
         context_management: Optional[Dict[str, Any]] = None,
         on_event: Optional[StreamSink] = None,
         effort: Optional[str] = None,
+        extra_headers: Optional[Mapping[str, str]] = None,
+        extra_body: Optional[Mapping[str, Any]] = None,
     ) -> LLMResponse:
         """One turn. A provider that streams (``streaming`` in
         llm_defaults.json) hands each delta to ``on_event`` as it arrives and
         still returns the same response; the others never receive one.
         ``effort`` (``low`` / ``high``) is the owner's chat choice, sent only
-        for a model its provider lists in ``effort_models``."""
+        for a model its provider lists in ``effort_models``.
+
+        ``extra_headers`` and ``extra_body`` ride on this request only: the
+        LLM gateway's attribution headers and replay-cache body. ChatUnifier
+        passes them only for calls that go through the gateway."""
         ...
 
     async def fetch_models(self, api_key: str) -> List[str]: ...

@@ -349,6 +349,7 @@ class AIService:
         cache,
         settings: Settings,
         chat_unifier=None,
+        gateway_router=None,
     ):
         self.auth = auth_service
         self.database = database
@@ -361,6 +362,10 @@ class AIService:
         # the DI container can still instantiate ``AIService`` (the chat
         # paths will fall back to direct factory calls).
         self.chat_unifier = chat_unifier
+        # services/gateway/routing.py: a provider with no key of the
+        # install's own may still run on the OpenCompany Gateway.
+        self.gateway_router = gateway_router
+        # RLM service (lazy import to avoid circular deps)
         # RLM service (lazy import to avoid circular deps)
         from services.rlm import RLMService
 
@@ -369,6 +374,11 @@ class AIService:
     def detect_provider(self, model: str) -> str:
         """Detect AI provider from model name."""
         return detect_provider_from_model(model)
+
+    async def _gateway_covers(self, provider: str) -> bool:
+        """No key of the install's own, but the OpenCompany Gateway serves
+        ``provider``: ChatUnifier sends the call there (services/gateway)."""
+        return self.gateway_router is not None and await self.gateway_router.covers(provider)
 
     async def _prepare_context(
         self,
@@ -647,7 +657,8 @@ class AIService:
                 )
 
             # Trigger compaction if threshold exceeded
-            if tracking.get("needs_compaction") and memory_content and api_key:
+            # No own key is fine when the OpenCompany Gateway serves the provider.
+            if tracking.get("needs_compaction") and memory_content and (api_key or await self._gateway_covers(provider)):
                 logger.info(f"[Compaction] Threshold exceeded for session {session_id}, triggering compaction")
 
                 if broadcaster:
@@ -708,6 +719,11 @@ class AIService:
                 "ChatUnifier is not injected. AIService must be constructed via "
                 "the DI container (core.container.Container)."
             )
+        if not api_key and await self._gateway_covers(provider):
+            # No key of the install's own: the gateway serves this provider.
+            # Its curated models, with no network call: a gateway key must
+            # never reach a vendor's model-list URL.
+            return self._get_curated_models(provider)
         try:
             return await self.chat_unifier.fetch_models(provider=provider, api_key=api_key)
         except NodeUserError:
@@ -750,7 +766,7 @@ class AIService:
 
             provider = detect_ai_provider(node_type, flattened)
 
-            if not api_key:
+            if not api_key and not await self._gateway_covers(provider):
                 _require_saved_endpoint(provider)
                 raise ValueError("API key is required")
 
@@ -961,7 +977,7 @@ class AIService:
                 else:
                     logger.info(f"No model specified, using default: {model}")
 
-            if not api_key:
+            if not api_key and not await self._gateway_covers(provider):
                 _require_saved_endpoint(provider)
                 raise ValueError("API key is required for AI Agent")
 
@@ -1804,7 +1820,7 @@ class AIService:
                 else:
                     logger.info(f"No model specified, using default: {model}")
 
-            if not api_key:
+            if not api_key and not await self._gateway_covers(provider):
                 _require_saved_endpoint(provider)
                 raise ValueError("API key is required for Zeenie")
 

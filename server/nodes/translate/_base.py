@@ -20,10 +20,21 @@ async def provider_api_key(ctx: NodeContext, provider: str) -> str:
     ``BaseNode.execute`` turns into a credential envelope plus a CloudEvents
     broadcast — lighting up the right provider in the Credentials modal.
     """
+    from services.gateway.routing import gateway_covers
+
     credential_id = translate_config.credential_id(provider)
-    async with ctx.connection(credential_id) as conn:
-        secrets = await conn.credentials()
+    try:
+        async with ctx.connection(credential_id) as conn:
+            secrets = await conn.credentials()
+    except PermissionError:
+        # No key of the install's own: an LLM provider the OpenCompany
+        # Gateway serves still runs, through ChatUnifier (services/gateway).
+        if await gateway_covers(provider):
+            return ""
+        raise
     api_key = str(secrets.get("api_key") or "")
+    if not api_key and await gateway_covers(provider):
+        return ""
     if not api_key:
         raise NodeUserError(
             f"No API key stored for '{credential_id}'. Add one in the "

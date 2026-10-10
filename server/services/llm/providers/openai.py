@@ -7,7 +7,7 @@ Also used as base for OpenRouter (same API shape, different base_url).
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional
 
 from core.logging import get_logger
 from services.llm.protocol import (
@@ -79,6 +79,10 @@ def _detail(source: Dict[str, Any]) -> str:
 
 class OpenAIProvider:
     provider_name = "openai"
+    #: Prepended to the model name on the wire only. The LLM gateway
+    #: (LiteLLM) routes OpenAI-format calls by provider prefix
+    #: (``groq/llama-...``); everything else here keeps the bare id.
+    _model_prefix: str = ""
 
     def __init__(
         self,
@@ -88,10 +92,12 @@ class OpenAIProvider:
         base_url: Optional[str] = None,
         provider_name: Optional[str] = None,
         max_retries: int = 2,
+        model_prefix: str = "",
     ):
         import openai
 
         self.provider_name = provider_name or type(self).provider_name
+        self._model_prefix = model_prefix
         kwargs: Dict[str, Any] = {
             "api_key": api_key,
             "max_retries": max(0, int(max_retries)),
@@ -109,6 +115,29 @@ class OpenAIProvider:
     def endpoint_url(self) -> str:
         """The base URL requests actually go to."""
         return str(self._client.base_url)
+
+    def _wire_model(self, model: str) -> str:
+        """The model name a request carries (see ``_model_prefix``)."""
+        return f"{self._model_prefix}{model}" if self._model_prefix else model
+
+    def _bare_model(self, model: str) -> str:
+        """A model name the server echoed, without the wire prefix."""
+        prefix = self._model_prefix
+        return model[len(prefix):] if prefix and model.startswith(prefix) else model
+
+    @staticmethod
+    def _add_request_extras(
+        params: Dict[str, Any],
+        extra_headers: Optional[Mapping[str, str]],
+        extra_body: Optional[Mapping[str, Any]],
+    ) -> None:
+        """Per-request headers and body fields (the LLM gateway's
+        attribution and replay cache), merged with any ``extra_body``
+        the request already carries."""
+        if extra_headers:
+            params["extra_headers"] = dict(extra_headers)
+        if extra_body:
+            params.setdefault("extra_body", {}).update(extra_body)
 
     def _raise_if_error_body(self, resp: Any) -> None:
         """Turn a 2xx that carried an error body into a ``PROTOCOL`` failure.
@@ -158,6 +187,8 @@ class OpenAIProvider:
         context_management: Optional[Dict[str, Any]] = None,
         on_event: Optional[StreamSink] = None,
         effort: Optional[str] = None,
+        extra_headers: Optional[Mapping[str, str]] = None,
+        extra_body: Optional[Mapping[str, Any]] = None,
     ) -> LLMResponse:
         model = self._clean_model(model)
         policy = self._model_policy(model, thinking)
@@ -175,10 +206,12 @@ class OpenAIProvider:
                 context_management=context_management,
                 on_event=on_event,
                 effort=effort,
+                extra_headers=extra_headers,
+                extra_body=extra_body,
             )
 
         params: Dict[str, Any] = {
-            "model": model,
+            "model": self._wire_model(model),
             "messages": [self._to_api_message(m) for m in messages],
         }
 
@@ -221,6 +254,7 @@ class OpenAIProvider:
         # Tools
         if tools:
             params["tools"] = [self._to_api_tool(t) for t in tools]
+        self._add_request_extras(params, extra_headers, extra_body)
 
         if on_event is not None:
             return self._normalize(await self._stream_completion(params, on_event), model)
@@ -264,11 +298,13 @@ class OpenAIProvider:
         context_management: Optional[Dict[str, Any]],
         on_event: Optional[StreamSink] = None,
         effort: Optional[str] = None,
+        extra_headers: Optional[Mapping[str, str]] = None,
+        extra_body: Optional[Mapping[str, Any]] = None,
     ) -> LLMResponse:
         """Run a self-contained Responses API turn for reasoning tool use."""
 
         params: Dict[str, Any] = {
-            "model": model,
+            "model": self._wire_model(model),
             "input": self._to_responses_input(messages),
             "max_output_tokens": max_tokens,
             # Durable encrypted reasoning state is recorded in our message;
@@ -301,6 +337,7 @@ class OpenAIProvider:
                         "compact_threshold": threshold,
                     }
                 ]
+        self._add_request_extras(params, extra_headers, extra_body)
         if on_event is not None:
             return self._normalize_responses(await self._stream_response(params, on_event), model)
         response = await self._client.responses.create(**params)
@@ -754,7 +791,7 @@ class OpenAIProvider:
             thinking=thinking_text,
             tool_calls=tool_calls,
             usage=usage,
-            model=str(getattr(resp, "model", "") or model),
+            model=self._bare_model(str(getattr(resp, "model", "") or model)),
             finish_reason=str(
                 getattr(resp, "status", "") or "stop"
             ).lower(),

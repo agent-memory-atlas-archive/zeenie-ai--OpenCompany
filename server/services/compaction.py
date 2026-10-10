@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from typing import Dict, Any, Optional, TYPE_CHECKING
 
 from core.logging import get_logger
+from services.llm.protocol import LLMError
 from services.pricing import get_pricing_service
 
 if TYPE_CHECKING:
@@ -304,10 +305,16 @@ class CompactionService:
         model: str,
         *,
         explicit_max_retries: int = 2,
+        stop_on_user_action: bool = False,
     ) -> Dict[str, Any]:
         """Perform compaction by summarizing conversation history.
 
         Uses the AI service to generate a structured summary following Claude Code pattern.
+
+        A failed summarizer call returns ``success: False``. With
+        ``stop_on_user_action``, a failure only the user can fix (a spent
+        allowance or exhausted credits, a rejected key, missing access) raises
+        the :class:`LLMError` instead, since retrying compaction cannot help.
         """
         if not self._ai_service:
             logger.warning("[Compaction] AI service not wired")
@@ -367,6 +374,7 @@ Provide a concise but complete summary."""
                 max_tokens=summary_tokens,
                 sdk_max_retries=0,
                 explicit_max_retries=explicit_max_retries,
+                translate_errors=False,
             )
             compaction_usage = asdict(response.usage)
             await self._record_usage_metric(
@@ -394,6 +402,16 @@ Provide a concise but complete summary."""
                 "usage": compaction_usage,
             }
 
+        except LLMError as e:
+            if stop_on_user_action and e.requires_user_action:
+                raise
+            # user_message: the raw SDK text can carry payload fragments.
+            logger.error(f"[Compaction] Failed: {e.user_message}")
+            return {
+                "success": False,
+                "error": e.user_message,
+                "usage": compaction_usage,
+            }
         except Exception as e:
             logger.error(f"[Compaction] Failed: {e}")
             return {

@@ -42,6 +42,7 @@ from services.plugin import NodeUserError
 
 if TYPE_CHECKING:
     from services.auth import AuthService
+    from services.gateway.routing import GatewayRoute, GatewayRouter
 
 logger = get_logger(__name__)
 
@@ -53,6 +54,24 @@ def _provider_failure(provider: str, exc: BaseException) -> LLMError:
         error.category = LLMErrorCategory.TIMEOUT if isinstance(exc, httpx.TimeoutException) else LLMErrorCategory.CONNECTION
         error.retryable = True
     return error
+
+
+def _gateway_request_extras(route: "GatewayRoute") -> Dict[str, Any]:
+    """Per-request headers and body for a call the gateway serves."""
+    from services.gateway.attribution import replay_cache, request_headers
+
+    extras: Dict[str, Any] = {"extra_headers": request_headers()}
+    cache = replay_cache(route.api_key)
+    if cache is not None:
+        extras["extra_body"] = cache
+    return extras
+
+
+def _explain_gateway_failure(error: LLMError, exc: BaseException) -> None:
+    """Gateway wording for a failed gateway call (services/gateway/errors.py)."""
+    from services.gateway.errors import explain
+
+    explain(error, exc)
 
 
 @dataclass(eq=False)
@@ -72,6 +91,11 @@ class ChatUnifier:
 
     Public surface: ``chat()``, ``fetch_models()``, ``is_registered()``.
     Everything else is private.
+
+    ``gateway`` (services/gateway/routing.py) sends a chat call that comes
+    with no key of the install's own to the OpenCompany Gateway when it serves
+    the provider. ``fetch_models`` never goes there: it validates a key
+    against its own vendor.
     """
 
     def __init__(
@@ -80,9 +104,11 @@ class ChatUnifier:
         auth_service: "AuthService",
         *,
         client_cache_size: int = 32,
+        gateway: Optional["GatewayRouter"] = None,
     ):
         self._defaults = defaults
         self._auth = auth_service
+        self._gateway = gateway
         self._client_cache_size = max(0, int(client_cache_size))
         self._client_cache: OrderedDict[str, _ClientEntry] = OrderedDict()
         self._retired_entries: List[_ClientEntry] = []
@@ -129,15 +155,21 @@ class ChatUnifier:
         ``effort`` is the owner's chat choice (``low`` / ``high``). It reaches
         the provider only for a model listed in its ``effort_models``; any
         other model answers as it would without it.
+
+        An empty ``api_key`` means the install has no key of its own for the
+        provider. If the OpenCompany Gateway serves it and is connected, the
+        call goes there with the gateway key, attribution headers and, inside
+        a Temporal activity, a replay-cache namespace (services/gateway).
         """
         provider_id = split_provider_ref(provider)[0]
         spec = get_provider(provider_id)
         streams = on_event is not None and self._streams(provider_id)
-        api_key = self._resolve_credential(provider, api_key)
+        route = await self._gateway.route(provider) if not api_key and self._gateway is not None else None
+        api_key = route.api_key if route is not None else self._resolve_credential(provider, api_key)
         entry: Optional[_ClientEntry] = None
         try:
             entry = await self._acquire_client(
-                spec, api_key, provider_ref=provider, sdk_max_retries=sdk_max_retries
+                spec, api_key, provider_ref=provider, sdk_max_retries=sdk_max_retries, route=route
             )
             kwargs: Dict[str, Any] = {
                 "model": model,
@@ -151,6 +183,8 @@ class ChatUnifier:
                 kwargs["on_event"] = on_event
             if effort and supports_effort(provider, model):
                 kwargs["effort"] = effort
+            if route is not None:
+                kwargs.update(_gateway_request_extras(route))
             response = await entry.client.chat(messages, **kwargs)
             if on_event is not None and not streams:
                 await _replay_response(response, on_event)
@@ -160,12 +194,16 @@ class ChatUnifier:
             # carried an error body instead of a completion. Logged whether
             # or not it is translated: agent steps take it untranslated, and
             # only this layer knows where the call went (RFC-0003 D10).
+            if route is not None:
+                _explain_gateway_failure(error, error)
             self._log_failure("LLM provider request failed", error, entry, provider)
             if not translate_errors:
                 raise
             raise error.as_node_error() from error
         except spec.sdk_exception_types + (httpx.TransportError, httpx.HTTPStatusError) as e:
             error = _provider_failure(provider, e)
+            if route is not None:
+                _explain_gateway_failure(error, e)
             self._log_failure("LLM provider request failed", error, entry, provider)
             if not translate_errors:
                 raise error from e
@@ -188,6 +226,8 @@ class ChatUnifier:
                 category=category,
                 retryable=category == LLMErrorCategory.CONNECTION,
             )
+            if route is not None:
+                _explain_gateway_failure(error, e)
             logger.warning(
                 "LLM client construction failed",
                 provider=error.provider,
@@ -322,6 +362,7 @@ class ChatUnifier:
         *,
         sdk_max_retries: int,
         provider_ref: Optional[str] = None,
+        route: Optional["GatewayRoute"] = None,
     ) -> _ClientEntry:
         """Return an entry leased until ``_release_client`` is called."""
 
@@ -331,6 +372,7 @@ class ChatUnifier:
             provider_ref=provider_ref,
             sdk_max_retries=sdk_max_retries,
             acquire=True,
+            route=route,
         )
 
     async def _get_or_create_entry(
@@ -341,22 +383,30 @@ class ChatUnifier:
         sdk_max_retries: int,
         acquire: bool,
         provider_ref: Optional[str] = None,
+        route: Optional["GatewayRoute"] = None,
     ) -> _ClientEntry:
         # The base-URL row is keyed by the full reference, so each named
         # endpoint reads its own URL while sharing one registration.
         ref = provider_ref or spec.name
-        proxy_url = await self._auth.resolve_api_key(base_url_key(ref))
-        unconfigured = unconfigured_endpoint_message(ref)
-        if unconfigured and not proxy_url:
-            # A named endpoint exists only as its credential rows. Without
-            # the URL row the SDK would default to api.openai.com.
-            raise NodeUserError(unconfigured)
+        if route is not None:
+            # A gateway call goes to the gateway, never to a saved base URL.
+            proxy_url: Optional[str] = route.base_url
+        else:
+            proxy_url = await self._auth.resolve_api_key(base_url_key(ref))
+            unconfigured = unconfigured_endpoint_message(ref)
+            if unconfigured and not proxy_url:
+                # A named endpoint exists only as its credential rows. Without
+                # the URL row the SDK would default to api.openai.com.
+                raise NodeUserError(unconfigured)
+        model_prefix = route.model_prefix if route is not None else ""
         factory_kwargs = {
             "api_key": api_key,
             "proxy_url": proxy_url,
             "max_retries": max(0, int(sdk_max_retries)),
             **spec.client_kwargs,
         }
+        if model_prefix:
+            factory_kwargs["model_prefix"] = model_prefix
         if not self._client_cache_size:
             return _ClientEntry(
                 client=spec.factory(**factory_kwargs),
@@ -369,6 +419,7 @@ class ChatUnifier:
             api_key=api_key,
             proxy_url=proxy_url,
             sdk_max_retries=sdk_max_retries,
+            model_prefix=model_prefix,
         )
         evicted: Optional[_ClientEntry] = None
         async with self._cache_lock:
@@ -412,6 +463,7 @@ class ChatUnifier:
         api_key: str,
         proxy_url: Optional[str],
         sdk_max_retries: int,
+        model_prefix: str = "",
     ) -> str:
         material = json.dumps(
             {
@@ -419,6 +471,7 @@ class ChatUnifier:
                 "proxy_url": proxy_url or "",
                 "client_kwargs": spec.client_kwargs,
                 "max_retries": max(0, int(sdk_max_retries)),
+                "model_prefix": model_prefix,
             },
             sort_keys=True,
             separators=(",", ":"),

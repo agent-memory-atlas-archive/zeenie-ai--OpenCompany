@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional
 
 from core.logging import get_logger
 from services.llm.protocol import (
@@ -51,6 +51,8 @@ class OpenRouterProvider(OpenAIProvider):
         tools: Optional[List[ToolDef]] = None,
         context_management: Optional[Dict[str, Any]] = None,
         effort: Optional[str] = None,
+        extra_headers: Optional[Mapping[str, str]] = None,
+        extra_body: Optional[Mapping[str, Any]] = None,
     ) -> LLMResponse:
         # OpenAI-compatible endpoints must prove support independently; the
         # OpenRouter adapter currently uses portable Context checkpoints.
@@ -66,6 +68,8 @@ class OpenRouterProvider(OpenAIProvider):
             tools=tools,
             context_management=None,
             effort=effort,
+            extra_headers=extra_headers,
+            extra_body=extra_body,
         )
 
     async def fetch_models(self, api_key: str) -> List[str]:

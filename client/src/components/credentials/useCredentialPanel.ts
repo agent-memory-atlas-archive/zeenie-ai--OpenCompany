@@ -230,8 +230,21 @@ export function useCredentialPanel(config: ProviderConfig, visible: boolean) {
       execute(type, () => sendRequest(type, data ?? {}, timeoutMs)),
   };
 
+  // A key-based card that declares a status hook (``ws.status``) shows the
+  // line it returns as ``summary`` once a key is stored: the OpenCompany
+  // Gateway's remaining allowance, for one. OAuth cards keep their own flow.
+  const statusHook = config.kind !== 'oauth' ? config.ws?.status : undefined;
+  const statusQuery = useQuery<{ summary?: unknown }, Error>({
+    queryKey: ['credential-status', config.id],
+    queryFn: () => sendRequest(statusHook as string, {}),
+    enabled: Boolean(visible && isConnected && statusHook && stored),
+    staleTime: 60_000,
+  });
+  const statusSummary = typeof statusQuery.data?.summary === 'string' ? statusQuery.data.summary : null;
+
   return {
     form, values, loading, error, stored, setStored, setError,
+    statusSummary,
     sources: credentialValuesQuery.data?.sources ?? {},
     verificationCode,
     execute, actions, isConnected,

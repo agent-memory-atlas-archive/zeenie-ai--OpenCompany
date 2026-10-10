@@ -147,6 +147,14 @@ the stored key as stored (no provider rewrites a key any more). The OpenAI SDK
 then sends to the configured local endpoint — traffic never reaches
 api.openai.com.
 
+**OpenCompany Gateway** — a `chat` call that arrives with no key (the install
+has none for that provider) goes to the hosted gateway when it is connected and
+the provider's `llm_defaults.json` block has a `"gateway"` entry: the gateway's
+URL replaces the `{ref}_proxy` row, the gateway key is sent, `OpenAIProvider`
+prefixes the wire model (`groq/...`), and every provider passes the per-request
+`extra_headers` / `extra_body` (attribution, replay cache). A call with a key is
+untouched. See [LLM Gateway](./llm_gateway.md).
+
 **Provider detection** ([`server/constants.py:detect_ai_provider`](../server/constants.py)) MUST list `ollama` / `lmstudio` substrings, or a chat-model node falls through to `'openai'`. Agents need no edit: their `provider` field is loader-driven.
 
 **Open-world providers** — local model names like `qwen/qwen3.6-27b` don't contain provider substrings, so the cloud-style pattern check would always reject them. A provider block declares `"open_world_models": true` (openrouter, groq, ollama, lmstudio, openai_compatible) and `is_model_valid_for_provider` accepts any id for it. The upstream server still rejects genuinely missing models with a clear 404.

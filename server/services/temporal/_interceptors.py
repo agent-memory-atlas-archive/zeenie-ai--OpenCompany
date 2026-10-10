@@ -34,13 +34,18 @@ from temporalio.worker import (
     WorkflowInterceptorClassInput,
 )
 
-from core.logging import get_logger
+from core.logging import get_logger, log_context
 
 logger = get_logger(__name__)
 
 
 class ActivityObservabilityInterceptor(ActivityInboundInterceptor):
-    """Log start / retry / end (with outcome) for every activity."""
+    """Log start / retry / end (with outcome) for every activity.
+
+    Also binds the Temporal identifiers to the log context for the whole
+    activity, under their own keys (``workflow_id`` elsewhere is the graph
+    id). The LLM gateway's attribution reads them (services.gateway).
+    """
 
     async def execute_activity(self, input: ExecuteActivityInput) -> Any:
         info = activity.info()
@@ -57,8 +62,15 @@ class ActivityObservabilityInterceptor(ActivityInboundInterceptor):
             logger.warning("activity_retry", **extra)
         else:
             logger.debug("activity_start", **extra)
+        bound = {
+            "temporal_workflow_id": info.workflow_id,
+            "temporal_run_id": info.workflow_run_id,
+            "temporal_activity_id": info.activity_id,
+            "temporal_attempt": info.attempt,
+        }
         try:
-            result = await self.next.execute_activity(input)
+            async with log_context(**bound):
+                result = await self.next.execute_activity(input)
         except Exception as exc:
             logger.warning(
                 "activity_end",

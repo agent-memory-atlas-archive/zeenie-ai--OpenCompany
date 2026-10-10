@@ -54,7 +54,18 @@ def _create_temporal_client(server_address: str, namespace: str):
     return TemporalClientWrapper(server_address=server_address, namespace=namespace)
 
 
-def _build_chat_unifier(auth_service):
+def _build_gateway_router(settings, auth_service):
+    """The OpenCompany Gateway router (services/gateway/routing.py).
+
+    Imported here, not at module scope, so the container's import doesn't
+    register the gateway's Connectors handlers as a side effect.
+    """
+    from services.gateway.routing import GatewayRouter
+
+    return GatewayRouter(settings=settings, auth_service=auth_service, defaults=LLM_DEFAULTS)
+
+
+def _build_chat_unifier(auth_service, gateway_router):
     """Construct the chat-model unifier with the shared JSON defaults.
 
     Wrapped in a factory function so the DI container doesn't have to
@@ -62,7 +73,7 @@ def _build_chat_unifier(auth_service):
     loaded once at import time by ``services.llm.config`` and reflects
     the on-disk ``server/config/llm_defaults.json``.
     """
-    return ChatUnifier(defaults=LLM_DEFAULTS, auth_service=auth_service)
+    return ChatUnifier(defaults=LLM_DEFAULTS, auth_service=auth_service, gateway=gateway_router)
 
 
 # Wave 12 C4 sub-piece C: plugin-owned service factories.
@@ -151,7 +162,11 @@ class Container(containers.DeclarativeContainer):
     # JSON-driven typed-exception translation + ``incompatible_models``
     # filter. ``AIService`` delegates to this rather than calling
     # provider classes directly.
-    chat_unifier = providers.Singleton(_build_chat_unifier, auth_service=auth_service)
+    # Own keys first; a provider with no key of the install's own runs on
+    # the OpenCompany Gateway when it is connected (services/gateway).
+    gateway_router = providers.Singleton(_build_gateway_router, settings=settings, auth_service=auth_service)
+
+    chat_unifier = providers.Singleton(_build_chat_unifier, auth_service=auth_service, gateway_router=gateway_router)
 
     ai_service = providers.Singleton(
         AIService,
@@ -160,6 +175,7 @@ class Container(containers.DeclarativeContainer):
         cache=cache,
         settings=settings,
         chat_unifier=chat_unifier,
+        gateway_router=gateway_router,
     )
 
     maps_service = providers.Factory(_build_maps_service, auth_service=auth_service, settings=settings)

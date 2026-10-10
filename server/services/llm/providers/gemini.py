@@ -5,7 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional
 
 from core.logging import get_logger
 from services.llm.protocol import (
@@ -80,8 +80,13 @@ class GeminiProvider:
         tools: Optional[List[ToolDef]] = None,
         context_management: Optional[Dict[str, Any]] = None,
         effort: Optional[str] = None,
+        extra_headers: Optional[Mapping[str, str]] = None,
+        extra_body: Optional[Mapping[str, Any]] = None,
     ) -> LLMResponse:
         del context_management  # Gemini stays on portable Context checkpoints.
+        # The LLM gateway's replay cache is verified only on its OpenAI and
+        # Anthropic routes, not the native Gemini one; never sent here.
+        del extra_body
         from google.genai import types
 
         system_instruction, contents = self._split_system_and_contents(messages)
@@ -117,6 +122,11 @@ class GeminiProvider:
         # Tools
         if tools:
             config["tools"] = [self._to_api_tool(t) for t in tools]
+
+        if extra_headers:
+            # Request-level options patch the client's: headers merge, the
+            # base URL stays.
+            config["http_options"] = types.HttpOptions(headers=dict(extra_headers))
 
         resp = await self._client.aio.models.generate_content(
             model=model,

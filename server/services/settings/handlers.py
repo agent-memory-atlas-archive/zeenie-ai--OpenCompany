@@ -158,12 +158,18 @@ async def handle_get_validated_ai_providers(
     except Exception:
         llm_defaults = {"providers": {}}
 
+    from services.gateway.routing import gateway_covers
+    from services.llm.config import curated_models
+
     providers = []
     for provider in AI_PROVIDERS:
-        if not await auth_service.has_valid_key(provider, data.get("session_id", "default"), principal=principal):
+        if await auth_service.has_valid_key(provider, data.get("session_id", "default"), principal=principal):
+            stored_models = await auth_service.get_stored_models(provider, data.get("session_id", "default"), principal=principal)
+        elif await gateway_covers(provider):
+            # No key of the install's own; the OpenCompany Gateway serves it.
+            stored_models = curated_models(provider)
+        else:
             continue
-
-        stored_models = await auth_service.get_stored_models(provider, data.get("session_id", "default"), principal=principal)
 
         provider_config = llm_defaults.get("providers", {}).get(provider, {})
         default_model = provider_config.get("default_model", "")

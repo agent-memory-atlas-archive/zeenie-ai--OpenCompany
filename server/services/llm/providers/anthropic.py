@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional
 
 from core.logging import get_logger
 from services.llm.protocol import (
@@ -58,6 +58,8 @@ class AnthropicProvider:
         context_management: Optional[Dict[str, Any]] = None,
         on_event: Optional[StreamSink] = None,
         effort: Optional[str] = None,
+        extra_headers: Optional[Mapping[str, str]] = None,
+        extra_body: Optional[Mapping[str, Any]] = None,
     ) -> LLMResponse:
         system, api_msgs = self._split_system(messages)
         policy = self._model_policy(model)
@@ -103,6 +105,13 @@ class AnthropicProvider:
         # Tools
         if tools:
             params["tools"] = [self._to_api_tool(t) for t in tools]
+
+        # Per-request extras: the LLM gateway's attribution headers and
+        # replay-cache body (ChatUnifier sends them for gateway calls only).
+        if extra_headers:
+            params["extra_headers"] = dict(extra_headers)
+        if extra_body:
+            params["extra_body"] = dict(extra_body)
 
         # Always stream.  The SDK refuses a non-streaming request whose
         # ``max_tokens`` implies more than ten minutes of generation

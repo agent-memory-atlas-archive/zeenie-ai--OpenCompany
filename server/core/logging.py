@@ -407,23 +407,20 @@ async def log_context(**fields: Any) -> AsyncIterator[None]:
         async with log_context(workflow_id=wf_id, node_id=node_id):
             await do_work()  # all logs inside carry workflow_id + node_id
 
-    Bindings clear on ``__aexit__`` even if the inner block raises.
+    On ``__aexit__`` each field goes back to the value it had before, even if
+    the inner block raises: a node executed inside another node (a tool call)
+    must not wipe its parent's fields. The LLM gateway's attribution headers
+    read the same fields (services.gateway.attribution).
     """
-    structlog.contextvars.bind_contextvars(**fields)
-    try:
+    with structlog.contextvars.bound_contextvars(**fields):
         yield
-    finally:
-        structlog.contextvars.unbind_contextvars(*fields.keys())
 
 
 @contextmanager
 def log_context_sync(**fields: Any) -> Iterator[None]:
     """Synchronous variant of :func:`log_context` for sync callers."""
-    structlog.contextvars.bind_contextvars(**fields)
-    try:
+    with structlog.contextvars.bound_contextvars(**fields):
         yield
-    finally:
-        structlog.contextvars.unbind_contextvars(*fields.keys())
 
 
 def log_execution_time(logger: structlog.BoundLogger, operation: str, start_time: float, end_time: float, **kwargs) -> None:

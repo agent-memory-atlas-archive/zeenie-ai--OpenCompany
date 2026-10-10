@@ -344,6 +344,30 @@ def _inherited_scope(context: Dict[str, Any], *, delegation: bool = False) -> Di
     return inherited
 
 
+def _attribution_ids(
+    context: Dict[str, Any],
+    payload: Dict[str, Any],
+    *,
+    workflow_id: Optional[str],
+    execution_id: str,
+    root_execution_id: str,
+) -> Dict[str, str]:
+    """The ids an LLM step or compaction binds to its log context.
+
+    Logs carry them, and so does the LLM gateway's spend row
+    (services/gateway/attribution.py). Deterministic workflow state only.
+    """
+    ids = {
+        "workflow_id": workflow_id,
+        "execution_id": execution_id,
+        "root_execution_id": root_execution_id,
+        "chat_run_id": payload.get("chat_run_id"),
+        "employee_job_id": context.get("employee_job_id"),
+        "user_id": context.get("user_id"),
+    }
+    return {key: str(value) for key, value in ids.items() if value}
+
+
 def _child_control_scope(control: ExecutionControl) -> Dict[str, Any]:
     """Fresh intent travels to children; each root owns its chain identity."""
     return {
@@ -1134,6 +1158,16 @@ class AgentWorkflow:
                     {"effort": payload["effort"]}
                     if payload.get("effort")
                     else {}
+                ),
+                # Which run the step belongs to, for logs and the LLM
+                # gateway's spend rows. Read only by the activity's log
+                # context; activity input only, like the keys above.
+                "attribution": _attribution_ids(
+                    context,
+                    payload,
+                    workflow_id=agent_workflow_id,
+                    execution_id=execution_id,
+                    root_execution_id=root_execution_id,
                 ),
             }
             if context.get("native_workspace_version") == 1 or context.get("browser_runtime_version") == 1 or context.get("browser_routing_version") == 1:
@@ -2658,6 +2692,13 @@ class AgentWorkflow:
                     "messages": compact_source,
                     "provider": payload["provider"],
                     "model": payload["model"],
+                    "attribution": _attribution_ids(
+                        context,
+                        payload,
+                        workflow_id=agent_workflow_id,
+                        execution_id=execution_id,
+                        root_execution_id=root_execution_id,
+                    ),
                 }
                 if context.get("native_workspace_version") == 1 or context.get("browser_runtime_version") == 1 or context.get("browser_routing_version") == 1:
                     compact_payload["user_id"] = str(context.get("user_id") or "owner")

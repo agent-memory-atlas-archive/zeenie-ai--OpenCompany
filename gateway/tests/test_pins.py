@@ -3,7 +3,8 @@
 - LiteLLM's version and the price-list commit agree across Terraform, the
   local stack and CI.
 - The pinned price list prices the default model of every provider the
-  gateway serves, so OpenCompany's defaults are never refused as unpriced.
+  gateway serves (a "gateway" block in server/config/llm_defaults.json), so
+  OpenCompany's defaults are never refused as unpriced.
 """
 
 from __future__ import annotations
@@ -23,18 +24,10 @@ COMPOSE = yaml.safe_load((REPO / "gateway/local/docker-compose.yml").read_text(e
 CI = yaml.safe_load((REPO / ".github/workflows/gateway-ci.yml").read_text(encoding="utf-8"))
 LITELLM = COMPOSE["services"]["litellm"]
 
-# Providers the gateway serves: OpenCompany provider id (server/config/
-# llm_defaults.json) -> the prefix of its keys in LiteLLM's price list.
-SERVED_PROVIDERS = {
-    "openai": "",
-    "anthropic": "",
-    "gemini": "gemini/",
-    "groq": "groq/",
-    "cerebras": "cerebras/",
-    "xai": "xai/",
-    "kimi": "moonshot/",
-    "mistral": "mistral/",
-}
+# The providers the gateway serves are the ones with a "gateway" block in
+# server/config/llm_defaults.json (OpenCompany's services/gateway/routing.py).
+PROVIDERS = json.loads((REPO / "server/config/llm_defaults.json").read_text(encoding="utf-8"))["providers"]
+SERVED = {name: config["gateway"] for name, config in PROVIDERS.items() if isinstance(config.get("gateway"), dict)}
 
 
 def _terraform_string(name: str) -> str:
@@ -61,11 +54,14 @@ def test_served_default_models_are_priced() -> None:
         if os.environ.get("CI"):
             raise
         pytest.skip(f"price list unreachable: {exc}")
-    providers = json.loads((REPO / "server/config/llm_defaults.json").read_text(encoding="utf-8"))["providers"]
+    assert SERVED, "no provider in llm_defaults.json has a gateway block"
     unpriced = []
-    for provider, prefix in SERVED_PROVIDERS.items():
-        key = prefix + providers[provider]["default_model"]
-        entry = prices.get(key) or {}
+    for provider, block in SERVED.items():
+        model = PROVIDERS[provider]["default_model"]
+        # LiteLLM prices a model under its wire name, its bare id, or (for
+        # the native Gemini route, whose wire name is bare) gemini/<id>.
+        candidates = (block.get("model_prefix", "") + model, model, f"{provider}/{model}")
+        entry = next((prices[key] for key in candidates if key in prices), {})
         if "input_cost_per_token" not in entry and "output_cost_per_token" not in entry:
-            unpriced.append(key)
+            unpriced.append(f"{provider}: {model}")
     assert not unpriced, f"served default models with no price in the pinned list: {unpriced}"

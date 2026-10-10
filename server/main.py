@@ -154,6 +154,10 @@ async def lifespan(app: FastAPI):
     # save_api_key / delete_api_key).
     import services.credentials  # noqa: F401
 
+    # services/gateway/__init__.py registers the OpenCompany Gateway's
+    # Connectors credential and its gateway_status handler.
+    import services.gateway  # noqa: F401
+
     # Wave 13.7: services/workflow_storage/__init__.py self-registers the
     # 5 workflow-record CRUD handlers (save_workflow / import_workflow /
     # get_workflow / get_all_workflows / delete_workflow).
