@@ -46,6 +46,7 @@ class RLMService:
         """
         start_time = time.time()
         context_bridge = None
+        route = None
         if (context_data or {}).get("kind") == "context":
             from services.cli_agent.context_bridge import (
                 SpecializedAgentContextBridge,
@@ -110,6 +111,13 @@ class RLMService:
             if not api_key and self.auth:
                 api_key = await self.auth.resolve_api_key(provider)
             if not api_key:
+                # Own keys first. The RLM library reaches a custom URL only
+                # in OpenAI's format, which the gateway serves for every
+                # provider it serves.
+                from services.gateway.routing import gateway_route
+
+                route = await gateway_route(provider, openai_format=True)
+            if not api_key and route is None:
                 raise ValueError(f"API key required for RLM Agent (provider: {provider})")
 
             await broadcast_status(
@@ -131,7 +139,7 @@ class RLMService:
                 supplementary_context += f"\n\n## Conversation History\n{memory_text}"
 
             # === Adapter: Map provider to RLM backend ===
-            backend, backend_kwargs = BackendAdapter.adapt(provider, model, api_key)
+            backend, backend_kwargs = BackendAdapter.adapt(provider, model, api_key, route=route)
 
             # === Adapter: Extract chat model nodes as other_backends ===
             other_backends, other_backend_kwargs = await ChatModelExtractor.extract(tool_data, self.auth)
@@ -294,6 +302,11 @@ class RLMService:
 
         except Exception as e:
             public_error = str(e)
+            if route is not None:
+                from services.gateway.errors import describe
+
+                # The vendor's text would point at the wrong key and account.
+                public_error = describe(e) or public_error
             logger.error(
                 "[RLM] Execution failed type=%s",
                 type(e).__name__,

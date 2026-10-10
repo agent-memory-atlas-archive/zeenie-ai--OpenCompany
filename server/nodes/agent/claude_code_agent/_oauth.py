@@ -38,8 +38,9 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from dataclasses import dataclass, field
 from services.process_environment import without_onepassword_environment
-from typing import Any, Dict
+from typing import Any, Dict, Mapping
 
 from core.js_runtime import add_package, shared_tree_bin
 from core.logging import get_logger
@@ -211,3 +212,53 @@ async def claude_auth_logout() -> bool:
     """Run ``claude auth logout``. True on exit 0."""
     envelope = await _run_auth("logout", timeout=ONESHOT_TIMEOUT_SECONDS)
     return bool(envelope.get("success"))
+
+
+#: How a claude process reaches the API other than through its login. Set in
+#: the server's own environment, they are the install's choice: left alone.
+_API_ENV_VARIABLES = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL")
+
+
+@dataclass(frozen=True)
+class ApiAccess:
+    """What a spawned claude needs, beyond its login, to reach the API."""
+
+    env: Dict[str, str] = field(default_factory=dict)
+    #: The env carries this run's attribution headers, so the process must
+    #: not serve another run (no warm reuse).
+    per_run: bool = False
+
+
+async def api_access(base_env: Mapping[str, str]) -> ApiAccess:
+    """Where the OpenCompany Gateway serves Anthropic, own access still comes
+    first: the CLI's login (``claude auth status``: a Claude subscription or
+    Console account), then the install's Anthropic key, then the gateway.
+    Without the gateway, claude uses its login as always.
+
+    On the gateway, claude calls the gateway's Anthropic route with the
+    gateway key (``ANTHROPIC_BASE_URL``, ``ANTHROPIC_AUTH_TOKEN``) and sends
+    the run's attribution headers (``ANTHROPIC_CUSTOM_HEADERS``).
+    """
+    if any(base_env.get(name) for name in _API_ENV_VARIABLES):
+        return ApiAccess()
+    from services.gateway.routing import gateway_route
+
+    route = await gateway_route("anthropic")
+    if route is None or await claude_auth_status():
+        return ApiAccess()
+    from core.container import container
+
+    own_key = await container.auth_service().resolve_api_key("anthropic")
+    if own_key:
+        return ApiAccess(env={"ANTHROPIC_API_KEY": own_key})
+    from services.gateway.attribution import request_headers
+
+    headers = "\n".join(f"{name}: {value}" for name, value in request_headers().items())
+    return ApiAccess(
+        env={
+            "ANTHROPIC_BASE_URL": route.base_url,
+            "ANTHROPIC_AUTH_TOKEN": route.api_key,
+            "ANTHROPIC_CUSTOM_HEADERS": headers,
+        },
+        per_run=True,
+    )

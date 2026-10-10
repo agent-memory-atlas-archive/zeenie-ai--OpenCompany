@@ -13,7 +13,10 @@ gateway's ``/v1`` routes with a LiteLLM provider prefix on the model name
 (``groq/...``); Anthropic and Gemini use the gateway's native routes with
 bare model ids. The same route serves a provider's embeddings, speech and
 vision calls, which go out from their own SDK clients
-(:func:`key_or_route`).
+(:func:`key_or_route`). The RLM agent's library speaks only OpenAI's format,
+so it asks for ``openai_format`` routes; Claude Code reaches the Anthropic
+route through its own environment variables
+(``nodes/agent/claude_code_agent/_oauth.py``).
 """
 
 from __future__ import annotations
@@ -64,8 +67,13 @@ class GatewayRouter:
         providers = self._defaults.get("providers") or {}
         return [name for name in providers if self._block(name) is not None]
 
-    async def route(self, provider: str) -> Optional[GatewayRoute]:
-        """The route for a call to ``provider`` with no key of the install's own."""
+    async def route(self, provider: str, *, openai_format: bool = False) -> Optional[GatewayRoute]:
+        """The route for a call to ``provider`` with no key of the install's own.
+
+        ``openai_format`` is for a client that speaks only OpenAI's format
+        (the RLM library): the gateway's ``/v1`` routes, where a provider
+        OpenCompany otherwise calls on its native route goes by the block's
+        ``openai_prefix`` (``anthropic/``, ``gemini/``)."""
         if not self.enabled():
             return None
         block = self._block(provider)
@@ -74,8 +82,11 @@ class GatewayRouter:
         api_key = await self._auth.get_api_key(GATEWAY_CREDENTIAL_ID)
         if not api_key:
             return None
-        base_url = str(self._settings.gateway_url).rstrip("/") + str(block.get("base_path") or "")
-        return GatewayRoute(api_key=api_key, base_url=base_url, model_prefix=str(block.get("model_prefix") or ""))
+        base_path, model_prefix = str(block.get("base_path") or ""), str(block.get("model_prefix") or "")
+        if openai_format and "openai_prefix" in block:
+            base_path, model_prefix = "/v1", str(block["openai_prefix"])
+        base_url = str(self._settings.gateway_url).rstrip("/") + base_path
+        return GatewayRoute(api_key=api_key, base_url=base_url, model_prefix=model_prefix)
 
     async def covers(self, provider: str) -> bool:
         """Whether a call to ``provider`` can run on the gateway: what a "no key
@@ -83,7 +94,7 @@ class GatewayRouter:
         return await self.route(provider) is not None
 
 
-async def gateway_route(provider: str) -> Optional[GatewayRoute]:
+async def gateway_route(provider: str, *, openai_format: bool = False) -> Optional[GatewayRoute]:
     """:meth:`GatewayRouter.route` on the container's router, for call sites
     outside the DI graph. Under test the container is a MagicMock (whose
     router would claim to cover everything) or a stub without a router, so
@@ -92,7 +103,9 @@ async def gateway_route(provider: str) -> Optional[GatewayRoute]:
 
     factory = getattr(container, "gateway_router", None)
     router = factory() if callable(factory) else None
-    return await router.route(provider) if isinstance(router, GatewayRouter) else None
+    if not isinstance(router, GatewayRouter):
+        return None
+    return await router.route(provider, openai_format=openai_format)
 
 
 async def gateway_covers(provider: str) -> bool:

@@ -25,6 +25,18 @@ model_list:
       model: gemini/gemini-*
       api_key: local-unused
       mock_response: pong
+  # OpenAI-format names for the providers OpenCompany calls on native routes
+  # (the RLM agent's library speaks only OpenAI's format).
+  - model_name: anthropic/*
+    litellm_params:
+      model: anthropic/*
+      api_key: sk-local-unused
+      mock_response: pong
+  - model_name: gemini/*
+    litellm_params:
+      model: gemini/*
+      api_key: local-unused
+      mock_response: pong
   # Real upstreams (fake_upstream.py) for what mocks can't show: spend rows on
   # /v1/messages, the native Gemini route and the audio routes, and streamed
   # pricing. Exact names win over the wildcards above.

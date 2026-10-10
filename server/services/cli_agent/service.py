@@ -674,7 +674,7 @@ class AICliService:
 
         env = {**os.environ, "PYTHONUNBUFFERED": "1"}
         # Project-local claude auth dir — same as ``AICliSession.env``.
-        from nodes.agent.claude_code_agent._oauth import OPENCOMPANY_CLAUDE_DIR
+        from nodes.agent.claude_code_agent._oauth import OPENCOMPANY_CLAUDE_DIR, api_access
 
         env["CLAUDE_CONFIG_DIR"] = str(OPENCOMPANY_CLAUDE_DIR)
         # Composio-style parent-run-ID for MCP correlation.
@@ -683,6 +683,10 @@ class AICliService:
         env["MACHINA_PARENT_RUN_ID"] = parent_run_id  # legacy child-process contract
 
         try:
+            # Without its own login, claude runs on the install's Anthropic
+            # key or the OpenCompany Gateway.
+            access = await api_access(env)
+            env.update(access.env)
             pooled = await pool.acquire(
                 session_key,
                 spec=task,
@@ -713,7 +717,13 @@ class AICliService:
                 workflow_id=workflow_id,
             )
         finally:
-            await pool.release(pooled)
+            if access.per_run:
+                # Its env carries this run's attribution headers. The next
+                # turn spawns fresh and resumes the conversation, as after
+                # an idle eviction.
+                await pool.terminate(session_key)
+            else:
+                await pool.release(pooled)
 
     @staticmethod
     async def _clear_stale_session_id(

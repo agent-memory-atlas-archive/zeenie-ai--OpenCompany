@@ -368,6 +368,14 @@ def test_gemini_native_route_writes_a_priced_row_for_the_session(person: Callabl
     assert "source:chat" in (rows[0].get("request_tags") or []), rows[0]
 
 
+@pytest.mark.parametrize("model", ["anthropic/claude-haiku-4-5", "gemini/gemini-2.5-flash"])
+def test_native_providers_answer_in_openai_format(person: Callable[..., Person], model: str) -> None:
+    """The RLM agent's library reaches every provider on /v1/chat/completions, under the
+    "openai_prefix" of its gateway block in server/config/llm_defaults.json."""
+    resp = _chat(person().key, body={"model": model})
+    assert resp.status_code == 200, resp.text
+
+
 def test_embeddings_route_writes_an_attributed_row(person: Callable[..., Person], admin: httpx.Client) -> None:
     """OpenAI embeddings (long-term memory, the Embedding Generator) bill the person with attribution."""
     session = f"r_{uuid.uuid4().hex}"

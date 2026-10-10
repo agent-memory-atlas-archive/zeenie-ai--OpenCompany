@@ -64,6 +64,26 @@ async def test_distributed_mode_turns_the_gateway_off():
     assert await router.route("openai") is None
 
 
+async def test_openai_format_routes_put_native_providers_on_v1():
+    """For the RLM library, which speaks only OpenAI's format to a custom URL."""
+    defaults = {"providers": {**DEFAULTS["providers"], "anthropic": {"gateway": {
+        "model_prefix": "", "base_path": "", "openai_prefix": "anthropic/"}}}}
+    router, _ = _router(defaults=defaults)
+    assert await router.route("anthropic", openai_format=True) == GatewayRoute(
+        api_key="sk-gateway", base_url="https://gw.example/v1", model_prefix="anthropic/"
+    )
+    assert await router.route("openai", openai_format=True) == await router.route("openai")
+
+
+async def test_every_served_provider_has_an_openai_format_route():
+    from services.llm.config import LLM_DEFAULTS
+
+    router, _ = _router(defaults=LLM_DEFAULTS)
+    for provider in router.served_providers():
+        route = await router.route(provider, openai_format=True)
+        assert route.base_url.endswith("/v1") and route.model_prefix.endswith("/"), provider
+
+
 def test_served_providers_come_from_the_gateway_blocks():
     router, _ = _router()
     assert router.served_providers() == ["openai", "anthropic"]

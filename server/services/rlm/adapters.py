@@ -5,12 +5,15 @@
 - ToolBridgeAdapter: Connected tool nodes -> RLM custom_tools dict
 """
 
+from __future__ import annotations
+
 import asyncio
 import inspect
 import re
 import threading
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from typing import (
+    TYPE_CHECKING,
     Any,
     Awaitable,
     Callable,
@@ -23,6 +26,9 @@ from typing import (
 from core.logging import get_logger
 from .constants import PROVIDER_TO_BACKEND, PROVIDER_BASE_URLS
 
+if TYPE_CHECKING:
+    from services.gateway.routing import GatewayRoute
+
 logger = get_logger(__name__)
 
 
@@ -30,7 +36,25 @@ class BackendAdapter:
     """Maps OpenCompany provider/model/api_key to RLM backend constructor args."""
 
     @staticmethod
-    def adapt(provider: str, model: str, api_key: str) -> Tuple[str, Dict[str, Any]]:
+    def adapt(
+        provider: str,
+        model: str,
+        api_key: Optional[str],
+        *,
+        route: Optional[GatewayRoute] = None,
+    ) -> Tuple[str, Dict[str, Any]]:
+        if route is not None:
+            # On the OpenCompany Gateway every provider speaks OpenAI's
+            # format under LiteLLM's model name. The attribution headers are
+            # the run's: an RLM completion runs within one node execution.
+            from services.gateway.attribution import request_headers
+
+            return "openai", {
+                "model_name": f"{route.model_prefix}{model}",
+                "api_key": route.api_key,
+                "base_url": route.base_url,
+                "default_headers": request_headers(),
+            }
         backend = PROVIDER_TO_BACKEND.get(provider, "openai")
         kwargs = {"model_name": model, "api_key": api_key}
         if provider in PROVIDER_BASE_URLS:
@@ -75,11 +99,16 @@ class ChatModelExtractor:
 
             if not api_key and auth:
                 api_key = await auth.resolve_api_key(provider)
+            route = None
             if not api_key:
+                from services.gateway.routing import gateway_route
+
+                route = await gateway_route(provider, openai_format=True)
+            if not api_key and route is None:
                 logger.warning(f"[RLM] Skipping chat model node {node_type}: no API key")
                 continue
 
-            backend, kwargs = BackendAdapter.adapt(provider, model, api_key)
+            backend, kwargs = BackendAdapter.adapt(provider, model, api_key, route=route)
             backends.append(backend)
             kwargs_list.append(kwargs)
             logger.info(f"[RLM] Extracted small LM: {provider}/{model} -> {backend}")

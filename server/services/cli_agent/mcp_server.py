@@ -528,6 +528,16 @@ def _build_tools(mcp: Any) -> None:  # FastMCP type
     )
     async def get_credential(name: str) -> Dict[str, Any]:
         ctx = _require_batch()
+        from services.gateway.routing import GATEWAY_CREDENTIAL_ID
+
+        if name == GATEWAY_CREDENTIAL_ID:
+            # Only OpenCompany's own clients spend the gateway key: in an
+            # agent's hands it would spend the allowance outside any run.
+            return {
+                "error": "the OpenCompany Gateway key is never handed out",
+                "name": name,
+                "status": 403,
+            }
         if name not in ctx.allowed_credentials:
             return {
                 "error": f"credential {name!r} not in allowlist for this batch",

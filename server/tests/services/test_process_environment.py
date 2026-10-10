@@ -233,6 +233,10 @@ async def test_cli_pooled_turn_supplies_filtered_env_and_keeps_parent_ids(
         send_turn=AsyncMock(return_value="result"), release=AsyncMock(),
     )
     monkeypatch.setattr("services.cli_agent.service.get_session_pool", lambda _: pool)
+    # The login / Anthropic key / gateway choice is covered in tests/gateway.
+    from nodes.agent.claude_code_agent import _oauth
+
+    monkeypatch.setattr(_oauth, "api_access", AsyncMock(return_value=_oauth.ApiAccess()))
     result = await AICliService()._run_pooled_turn(
         task=ClaudeTaskSpec(prompt="safe task"), session_key="session", cwd=tmp_path,
         workspace_dir=tmp_path, defaults={}, mcp_port=8000, mcp_bearer_token="abcdefgh-token",

@@ -2,7 +2,7 @@
 
 OpenCompany's hosted LLM gateway is the stock open-source LiteLLM Proxy, deployed from `gateway/` with BerriAI's official Terraform module. Invited people call LLMs on platform-owned vendor keys, each with a monthly allowance, and spend is recorded per person and per session. The repository holds only configuration and tests; there is no custom gateway code. The operator runbook (deployment, adding people, upgrades) is [gateway/README.md](../gateway/README.md).
 
-**Status:** the gateway is in `gateway/`; OpenCompany's side is `server/services/gateway/` and covers chat through ChatUnifier (agents, chat runs, employee setup, translate), OpenAI embeddings (long-term memory, the Embedding Generator), OpenAI speech (Text to Speech, Speech to Text, chat dictation) and the vision tool. RLM and Claude Code still call vendors directly. `gateway/tests/test_gateway_contract.py` pins the contract below against the local stack; `server/tests/gateway/` covers OpenCompany's side.
+**Status:** the gateway is in `gateway/`; OpenCompany's side is `server/services/gateway/` and covers chat through ChatUnifier (agents, chat runs, employee setup, translate), OpenAI embeddings (long-term memory, the Embedding Generator), OpenAI speech (Text to Speech, Speech to Text, chat dictation), the vision tool, the RLM agent and Claude Code. Codex and the Gemini CLI stay on their own logins. `gateway/tests/test_gateway_contract.py` pins the contract below against the local stack; `server/tests/gateway/` covers OpenCompany's side.
 
 ## OpenCompany's side
 
@@ -18,6 +18,16 @@ OpenCompany's hosted LLM gateway is the stock open-source LiteLLM Proxy, deploye
 - **Speech** (`nodes/speech/`): only providers marked `"gateway": true` in `speech_defaults.json` are routed (`provider_key`, `gateway_serves`). That is OpenAI, both directions; Groq is not, because 1.103.4 bills its transcription at $0. The gateway has no `/audio/translations` route, so Translate falls back to in-language transcription there. Dictation takes the first provider with an own key, else the first the gateway serves.
 - **Vision** (`nodes/vision/vision_analyze`): routes all three SDK clients. The node now declares its OpenAI, Anthropic and Gemini credentials. It never did, so every real run failed at `ctx.connection`.
 - **Error wording.** Failures of these calls get gateway wording from `describe` (`services/gateway/errors.py`), which reads LiteLLM's error type from an SDK or `httpx` error.
+
+**The RLM agent** (`services/rlm/`) uses the rlms library, which reaches a custom URL only in OpenAI's format.
+- **Route:** with no own key, `BackendAdapter` gives it the gateway's `/v1` route (`gateway_route(provider, openai_format=True)`) for every provider. The model goes under LiteLLM's name: the block's `model_prefix`, or for Anthropic and Gemini, which OpenCompany otherwise calls on native routes, the block's `openai_prefix`. Its client sends the run's attribution headers as `default_headers`.
+- **Scope:** the same applies to a connected small model. The supported providers are unchanged; there is no replay cache.
+
+**Claude Code** (`nodes/agent/claude_code_agent/_oauth.py`, `api_access`).
+- **When the gateway serves Anthropic:** own access still comes first: the CLI's login (`claude auth status`), then the install's Anthropic key (`ANTHROPIC_API_KEY`), then the gateway. On the gateway, the spawn gets `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN` and the run's attribution headers in `ANTHROPIC_CUSTOM_HEADERS`.
+- **Without the gateway,** or with API settings in the server's own environment, nothing changes.
+- **No reuse:** a gateway process carries its run's headers, so it is terminated after its turn instead of staying warm. The next turn resumes the conversation from the memory node's session id, as after an idle eviction.
+- **Credential tool:** the MCP `getCredential` tool never returns the gateway key, allowlisted or not.
 
 **Attribution** (`services/gateway/attribution.py`). Ids come from the structlog log context: `BaseNode.execute` binds the workflow, execution, root execution, chat run, employee job and user ids; the Temporal activity interceptor binds `temporal_workflow_id`, `temporal_run_id`, `temporal_activity_id` and `temporal_attempt`; the LLM-step and compaction activities bind the `attribution` dict their payload carries (`_attribution_ids` in `agent_workflow.py`). `log_context` restores outer values on exit, so a tool node run inside an agent keeps the agent's ids. Headers: session = chat run, else root execution, else execution, else Temporal workflow; tags `source:`, `workflow:`, `user:`; every allowlisted id as metadata. Inside a Temporal activity, calls send a replay-cache namespace from the key's fingerprint and the Temporal workflow, run and activity ids (not the attempt), so a retried activity replays at $0 and a re-run never replays another run's answer. Gemini's native route is the exception: LiteLLM 1.103.4 records its session id and tags but drops the metadata header, and ignores the cache body, so OpenCompany sends no cache body there and a retried Gemini step is billed again.
 
@@ -56,7 +66,7 @@ Not served: OpenRouter, DeepSeek and Sarvam (no price for their default models),
 
 | Behaviour | Detail | Test |
 |---|---|---|
-| Wire model names | OpenAI-format calls use `<litellm prefix>/<model>` on `/v1` (`openai/`, `groq/`, `cerebras/`, `xai/`, `moonshot/`, `mistral/`). Anthropic SDK calls send bare `claude-*` ids to `/v1/messages`; Gemini SDK calls use the native `/v1beta/models/<id>:generateContent` route with the key in `x-goog-api-key` | `test_anthropic_messages_route_accepts_bare_model_ids`, `test_gemini_native_route_accepts_virtual_key` |
+| Wire model names | OpenAI-format calls use `<litellm prefix>/<model>` on `/v1` (`openai/`, `groq/`, `cerebras/`, `xai/`, `moonshot/`, `mistral/`). Anthropic SDK calls and Claude Code send bare `claude-*` ids to `/v1/messages`; Gemini SDK calls use the native `/v1beta/models/<id>:generateContent` route with the key in `x-goog-api-key`. Both are also served in OpenAI's format as `anthropic/` and `gemini/` (the RLM agent) | `test_anthropic_messages_route_accepts_bare_model_ids`, `test_gemini_native_route_accepts_virtual_key`, `test_native_providers_answer_in_openai_format` |
 | Spent allowance | Refused with error type `budget_exceeded` on all three routes; HTTP 429 on 1.103.x, 402 from 1.104. Recognise it by type | `test_budget_refusal_is_typed_on_every_route` |
 | Unpriced model | HTTP 403, error type `model_cost_map_missing` | `test_unpriced_model_is_refused` |
 | Allowance | `GET /user/info` with the person's key returns `user_info.spend`, `max_budget` and `budget_reset_at`. Needs a Default-type key; LLM-API keys are refused; another user's id is refused | `test_user_info_needs_a_default_key_and_stays_scoped` |
