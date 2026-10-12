@@ -586,6 +586,18 @@ class TestMsMailListAttachments:
 
 
 class TestMsMailDownloadAttachments:
+    def test_a_canvas_node_id_puts_no_colon_in_the_file_name(self, tmp_path):
+        """Windows refuses a colon in a file name, and canvas node ids have two."""
+        from pathlib import Path
+        from types import SimpleNamespace
+
+        from nodes.microsoft._base import write_attachment_bytes
+
+        ctx = SimpleNamespace(node_id="7:msMail:1", workflow_id="wf-1", workspace_dir=str(tmp_path), raw={})
+        ref, written = write_attachment_bytes(b"%PDF-1.4", ctx=ctx, filename="quote.pdf")
+        assert ":" not in ref.path and ref.path.startswith("attachments/quote-7_msMail-")
+        assert Path(written).read_bytes() == b"%PDF-1.4"
+
     @respx.mock
     async def test_download_writes_file_and_returns_path(self, harness, tmp_path):
         pdf_bytes = b"%PDF-1.4 fake pdf body"

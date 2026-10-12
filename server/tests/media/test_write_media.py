@@ -125,6 +125,18 @@ class TestWriteMedia:
         with pytest.raises(NodeUserError):
             write_media(b"", ctx=_ctx(tmp_path), stem="x", ext="bin")
 
+    def test_a_canvas_node_id_puts_no_colon_in_the_file_name(self, tmp_path):
+        """Canvas node ids are ``<workflow>:<type>:<n>``, and Windows refuses a
+        colon in a file name (WinError 123), so every media write failed there."""
+        ctx = _ctx(tmp_path, node_id="7:mobile:1")
+        for ref in (
+            write_media(b"png", ctx=ctx, stem="screenshot", ext="png", kind="image"),
+            write_audio(_wav_bytes(), ctx=ctx, stem="clip", ext="wav"),
+        ):
+            assert ":" not in ref.path
+            assert "-7_mobile-" in ref.filename
+            assert resolve_media(ref, ctx=ctx).is_file()
+
     def test_sha256_matches_payload(self, tmp_path):
         import hashlib
 

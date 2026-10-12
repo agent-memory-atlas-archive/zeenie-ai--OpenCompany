@@ -145,7 +145,7 @@ construction for every node that adopts it.
 
 | Function | Use |
 |---|---|
-| `write_audio(payload, *, ctx, stem, ext, …) -> AudioRef` | Atomic write into `<workspace>/audio/`. Filename is `<slug>-<node8>-<rand6>.<ext>`, so retries and repeated runs never collide or overwrite. Probes the file and populates the metadata. |
+| `write_audio(payload, *, ctx, stem, ext, …) -> AudioRef` | Atomic write into `<workspace>/audio/`. Filename is `<slug>-<node8>-<rand6>.<ext>`, so retries and repeated runs never collide or overwrite. `<node8>` is the node id's first eight characters through `core.paths.safe_path_component`, because canvas ids carry colons (`7:mobile:1`) and Windows refuses a colon in a file name. Probes the file and populates the metadata. |
 | `resolve_media(ref_or_path, *, ctx \| workspace_dir) -> Path` | Contained absolute path. Absolute inputs are tolerated for back-compat but still contained. |
 | `read_media_bytes(...) -> (filename, bytes)` | `resolve_media` + non-empty and size checks. |
 | `coerce_file_param(value, *, ctx) -> (filename, bytes)` | **The one nodes should call.** Accepts all three shapes the UI can produce. |

@@ -188,7 +188,10 @@ def _persist(
     naming, containment and atomicity -- the filename shape
     ``<stem>-<node8>-<rand6>.<ext>`` carries a random suffix precisely so
     retries and repeated runs never collide or silently overwrite.
+    ``<node8>`` is the node id's start made safe for a file name: canvas ids
+    carry colons (``7:mobile:1``), which Windows refuses.
     """
+    from core.paths import safe_path_component
     from nodes.filesystem._backend import atomic_write_bytes
     from services.plugin import NodeUserError
 
@@ -196,8 +199,8 @@ def _persist(
         raise NodeUserError(empty_message)
 
     root = workspace_root(ctx)
-    node_id = str(getattr(ctx, "node_id", "") or "node")
-    name = f"{_slugify(stem)}-{node_id[:8]}-{uuid4().hex[:6]}.{ext.lstrip('.')}"
+    node = safe_path_component(str(getattr(ctx, "node_id", "") or "node")[:8], "node")
+    name = f"{_slugify(stem)}-{node}-{uuid4().hex[:6]}.{ext.lstrip('.')}"
     rel = f"{subdir}/{name}"
 
     target = resolve_media(rel, ctx=ctx)

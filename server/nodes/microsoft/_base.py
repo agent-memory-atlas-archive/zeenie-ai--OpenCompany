@@ -176,6 +176,7 @@ def write_attachment_bytes(payload, *, ctx, filename, mime_type=None):
     import mimetypes
     from uuid import uuid4
 
+    from core.paths import safe_path_component
     from nodes.filesystem._backend import atomic_write_bytes
     from services.media.refs import FileRef
     from services.media.workspace import _slugify, resolve_media, workspace_file_url, workspace_root
@@ -185,14 +186,15 @@ def write_attachment_bytes(payload, *, ctx, filename, mime_type=None):
         raise NodeUserError("Refusing to write an empty attachment file.")
 
     root = workspace_root(ctx)
-    node_id = str(getattr(ctx, "node_id", "") or "node")
+    # Canvas node ids carry colons (``7:mail:1``), which Windows refuses in a file name.
+    node = safe_path_component(str(getattr(ctx, "node_id", "") or "node")[:8], "node")
     workflow_id = getattr(ctx, "workflow_id", None)
 
     # Preserve the real extension (documentParser globs on *.pdf); slugify the stem.
     dot = filename.rfind(".") if filename else -1
     stem = filename[:dot] if dot > 0 else (filename or "attachment")
     ext = filename[dot + 1 :].lower() if dot > 0 else ""
-    safe = f"{_slugify(stem)}-{node_id[:8]}-{uuid4().hex[:6]}"
+    safe = f"{_slugify(stem)}-{node}-{uuid4().hex[:6]}"
     name = f"{safe}.{ext}" if ext else safe
     rel = f"attachments/{name}"
 
