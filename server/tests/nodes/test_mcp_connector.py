@@ -21,9 +21,9 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import Tool, ToolAnnotations
 
 from nodes.mcp import _client, _handlers, _oauth, mcp_connector
-from nodes.mcp._client import ConnectorError, SignIn, check_arguments, check_server, snapshots
+from nodes.mcp._client import ConnectorError, Discovery, SignIn, check_arguments, check_server, snapshots
 from nodes.mcp._credentials import McpConnectorCredential
-from nodes.mcp._store import new_slug
+from nodes.mcp._store import describe_new, new_slug
 from nodes.mcp.mcp_connector import McpConnectorNode
 from services.plugin import NodeContext
 
@@ -205,6 +205,14 @@ class TestSignIn:
         assert SignIn.load(sign_in.dump()) == sign_in
 
 
+def test_a_key_in_the_urls_path_is_never_kept_in_plain_text():
+    url = "https://mcp.example.com:8443/s/tok-123/mcp?key=q-456"
+    found = Discovery(transport="streamable_http", server={"name": "Orders"}, instructions=None, tools=[])
+    meta = describe_new("orders", "Orders", url, SignIn(), found)
+    assert meta["address"] == "https://mcp.example.com:8443"
+    assert "tok-123" not in json.dumps(meta) and "q-456" not in json.dumps(meta)
+
+
 def test_a_slug_starts_with_a_letter_as_a_tool_name_must():
     assert new_slug("Orders", URL) == "orders"
     assert new_slug("", URL) == "mcp-127-0-0-1"
@@ -343,7 +351,7 @@ class TestTheConnectorsPage:
         assert (card["consumer_category"], card["publisher"], card["verified"]) == ("custom", "you", False)
         assert card["description"] == "Custom connection · 127.0.0.1"
         assert card["stored"] is True and card["connected"] is True
-        assert card["mcp"]["address"] == URL and card["mcp"]["sign_in"] == {"kind": "bearer"}
+        assert card["mcp"]["address"] == SERVER and card["mcp"]["sign_in"] == {"kind": "bearer"}
         assert [(tool["name"], tool["enabled"], tool["ask"]) for tool in card["mcp"]["tools"]] == [
             ("lookup_order", True, False),
             ("send_reply", True, True),

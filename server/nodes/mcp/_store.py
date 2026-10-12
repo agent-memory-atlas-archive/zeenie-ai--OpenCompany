@@ -3,9 +3,10 @@ OpenAI-compatible endpoints are kept, through ``AuthService``.
 
 - ``mcp:<slug>``: the sign-in, encrypted. Its ``model_params["_mcp"]`` holds
   the rest, which is not encrypted, so no secret ever goes there: the name,
-  the server's address without credentials, the sign-in's kind and header
-  name, the server's name, the tools as last accepted with the owner's
-  settings for them, and a refresh waiting to be accepted.
+  the server's origin (scheme, host and port: a path can carry a key, as in
+  ``…/s/<token>/mcp``), the sign-in's kind and header name, the server's
+  name, the tools as last accepted with the owner's settings for them, and a
+  refresh waiting to be accepted.
 - ``mcp:<slug>_proxy``: the server's URL, encrypted, since it may carry a key.
 
 An OAuth sign-in's tokens are kept in the OAuth token store under
@@ -22,7 +23,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 
 from ._client import ConnectorError, Discovery, SignIn, snapshots
 
@@ -83,7 +84,7 @@ def describe_new(slug: str, name: str, url: str, sign_in: SignIn, found: Discove
     return {
         "name": name,
         "host": (urlsplit(url).hostname or "").lower(),
-        "address": redact_url(url),
+        "address": redact_url(urlunsplit(urlsplit(url)._replace(path=""))),
         "transport": found.transport,
         "sign_in": sign_in.public(),
         "server": found.server,

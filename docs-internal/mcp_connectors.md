@@ -70,7 +70,9 @@ kept:
 - `mcp:<slug>`: the sign-in, encrypted. Its `model_params["_mcp"]` holds the
   rest in plain text, so no secret ever goes there:
   - the name and host;
-  - the address, without credentials;
+  - the address as the server's origin (scheme, host and port): a path,
+    like a query, can carry a key (`…/s/<token>/mcp`), so the full URL is
+    kept only in the encrypted row below;
   - the transport;
   - the sign-in's kind, and its header name;
   - the server's name, title and version;
