@@ -2,11 +2,12 @@
  * Talking to an employee on their page: the shared chat (features/chat)
  * over the session whose id is their workflow id, with Home around it.
  *
- * - The thread scrolls under the header with the orb as its first item (and
- *   a new hire's notes under it); what they want to send waits for the
- *   owner on cards in the chat (features/chat), with the Ask first chip
- *   beside the box; the line under the box says whether they ask before
- *   sending anything.
+ * - The orb stays above the conversation: the thread scrolls under it, so a
+ *   long conversation never takes it out of view. A new hire's notes are
+ *   the thread's first item. What they want to send waits for the owner on
+ *   cards in the chat (features/chat), with the Ask first chip beside the
+ *   box; the line under the box says whether they ask before sending
+ *   anything.
  * - The message box follows their control state the way the server does: a
  *   message goes at once while they run, waits for Resume while they are
  *   paused, and cannot be sent otherwise. Above it, what to act on: Resume or
@@ -187,37 +188,37 @@ export function EmployeeChat({
   };
 
   return (
-    <ChatPane
-      ref={pane}
-      host={{
-        kind: 'home',
-        sessionId: workflowId,
-        scope: 'all',
-        persona: { name, colorRole: employee.color_role, photo: employee.photo_url },
-        composer,
-        placeholder: composer === 'wait' ? `${name} is starting…` : undefined,
-        notices: <Notices employee={employee} control={control} queued={lane?.state === 'queued'} firstDay={Boolean(firstDay)} />,
-        top: (
-          <div className="flex flex-col items-center gap-4">
-            <OrbSlot size="employee" />
-            <HireNotice workflowId={workflowId} />
-          </div>
-        ),
-        emptyState: firstDay && phase ? <FirstDay employee={employee} firstDay={firstDay} phase={phase} control={control} /> : undefined,
-        greetings: firstDay ? GREETINGS : undefined,
-        footnote: employee.asks_first
-          ? `${name} asks before sending anything on your behalf.`
-          : `${name} doesn’t ask before sending anything on your behalf.`,
-        notify: (message, tone) => pillToast(message, { tone }),
-        openArtifact: (artifact) => useHomeStore.getState().openCanvasItem(artifact),
-        onSendRefused,
-        onSent,
-        onComposerChange,
-        modelPicker: true,
-        liveNote,
-        onScrolledChange,
-      }}
-    />
+    <>
+      <div className="flex flex-none justify-center pt-7">
+        <OrbSlot size="employee" />
+      </div>
+      <ChatPane
+        ref={pane}
+        host={{
+          kind: 'home',
+          sessionId: workflowId,
+          scope: 'all',
+          persona: { name, colorRole: employee.color_role, photo: employee.photo_url },
+          composer,
+          placeholder: composer === 'wait' ? `${name} is starting…` : undefined,
+          notices: <Notices employee={employee} control={control} queued={lane?.state === 'queued'} firstDay={Boolean(firstDay)} />,
+          top: <HireNotice workflowId={workflowId} />,
+          emptyState: firstDay && phase ? <FirstDay employee={employee} firstDay={firstDay} phase={phase} control={control} /> : undefined,
+          greetings: firstDay ? GREETINGS : undefined,
+          footnote: employee.asks_first
+            ? `${name} asks before sending anything on your behalf.`
+            : `${name} doesn’t ask before sending anything on your behalf.`,
+          notify: (message, tone) => pillToast(message, { tone }),
+          openArtifact: (artifact) => useHomeStore.getState().openCanvasItem(artifact),
+          onSendRefused,
+          onSent,
+          onComposerChange,
+          modelPicker: true,
+          liveNote,
+          onScrolledChange,
+        }}
+      />
+    </>
   );
 }
 

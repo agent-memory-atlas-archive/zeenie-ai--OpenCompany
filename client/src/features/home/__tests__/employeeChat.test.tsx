@@ -264,6 +264,19 @@ describe('sending', () => {
 });
 
 describe('the orb and Ask first', () => {
+  it('keeps the orb above the conversation, outside what scrolls', async () => {
+    server.messages = [row(1, 'user', 'Morning!'), row(2, 'assistant', 'Two bookings today.')];
+    renderChat(employee());
+    const log = await screen.findByRole('log', { name: 'Conversation with Maya' });
+    await screen.findByText('Two bookings today.');
+    // The thread opens at its newest turn, so a slot inside its scroll area
+    // would take the orb out of view.
+    const slot = document.querySelector('[data-orb-slot="employee"]');
+    expect(slot).not.toBeNull();
+    expect(slot!.closest('[data-scrollable]')).toBeNull();
+    expect(slot!.compareDocumentPosition(log) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it('brightens while the owner writes and spikes when a message goes', async () => {
     orbState.spike = 0;
     orbState.target = ENERGY.idle;

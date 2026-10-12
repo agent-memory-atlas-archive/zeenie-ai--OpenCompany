@@ -644,7 +644,9 @@ sending and drafts belong to the chat (wire and client rules in
 - **The thread** is `get_chat_messages` with `all_generations: true` (the
   newest 200 messages): the conversation since the employee last started,
   since a Reset clears it (see [Turn on Talk and Apply](#turn-on-talk-and-apply)).
-  The orb sits at its top (`min(96px, 14vh)`), a new hire's notes under it.
+  The orb (`min(96px, 14vh)`) stays above it, outside its scroll area, so a
+  long conversation never takes it out of view; a new hire's notes are the
+  thread's first item.
   Where a message's `run_key` (its generation) differs from the one before (a
   message left from before a Start, such as a test run in Dev mode), a divider
   reads "{Name} restarted — they start fresh from here". The owner's messages
