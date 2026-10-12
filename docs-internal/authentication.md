@@ -176,9 +176,9 @@ the orb glides from one's slot to the other's. The schedule is `useRetrySchedule
 `CONNECT_RETRY.DELAYS_S` (2, 3, 5, 8, 8 s), each check being `checkAuth`;
 over the app the checks are HTTP session checks too, so a session that
 expired while the server was away goes to sign-in, and the overlay goes
-once the WebSocket is back. While a `ConnectScreen` shows, the theme is the
-base of the chosen family (`shellDialogsStore.connectScreenOpen`, read by
-`app/ShellThemeProvider.tsx`).
+once the WebSocket is back. A `ConnectScreen` shows the chosen theme like the
+rest of the app, and its theme button is the one in both modes' headers
+(`components/ui/ThemeButton.tsx`).
 
 ### Login Page (`client/src/components/auth/LoginPage.tsx`)
 Inside the gate's `ConnectScreen` (onboarding handoff R5): the orb's `login`

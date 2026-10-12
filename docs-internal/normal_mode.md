@@ -52,11 +52,12 @@ is the reference.
   rather than in `Dashboard`: the `.app-frame`, boot effects (current workflow,
   sound sync, page activity, UI defaults, the shortcut), and the Settings and
   Credentials dialogs.
-- **Themes**: Home shows only light and dark.
-  [app/ShellThemeProvider.tsx](../client/src/app/ShellThemeProvider.tsx) passes
-  `baseOnly` to `ThemeProvider` while Home is showing, so a stylized theme
-  chosen in the editor appears as its family's base (Atomic as light, Cyber as
-  dark) and applies again in Dev mode. See [Theme System](./theme_system.md).
+- **Themes**: Home shows the chosen theme, as the editor does: Light, Dark or
+  Atomic (until 2026-10-12 Home showed only light and dark). The theme button
+  ([components/ui/ThemeButton.tsx](../client/src/components/ui/ThemeButton.tsx)),
+  the same in the Home header and the editor's toolbar, steps through them, and
+  Settings → Profile → Appearance offers all three. See
+  [Theme System](./theme_system.md).
 
 ## The Home screen
 
