@@ -18,6 +18,14 @@ addresses are checked per request, not pinned for the connection.
 A tool as an employee sees it is ``<connector>__<tool>``. A tool whose name
 or input description no model could use is kept with the reason, never
 renamed (``unusable_reason``).
+
+A ``$ref`` in a server's schemas is followed only inside the schema: given
+no registry, jsonschema fetches whatever URL a ``$ref`` names, from this
+backend and outside the checks above. So arguments are checked with an
+empty registry (``check_arguments``), a tool whose inputs refer to another
+document is kept unusable, and a call goes as a plain ``tools/call``
+(``call_tool``): the SDK's own ``call_tool`` checks each result against the
+output schema the server sends at that moment.
 """
 
 from __future__ import annotations
@@ -351,14 +359,19 @@ class CallResult:
 
 
 def check_arguments(schema: Dict[str, Any], arguments: Dict[str, Any]) -> None:
-    """Refuse arguments the tool's input schema does not accept."""
+    """Refuse arguments the tool's input schema does not accept. Its
+    ``$ref``s resolve inside the schema only (an empty registry)."""
     from jsonschema import ValidationError
     from jsonschema.validators import validator_for
+    from referencing import Registry
+    from referencing.exceptions import Unresolvable
 
     try:
-        validator_for(schema)(schema).validate(arguments)
+        validator_for(schema)(schema, registry=Registry()).validate(arguments)
     except ValidationError as exc:
         raise ConnectorError(f"The arguments don't fit the tool: {exc.message}") from None
+    except Unresolvable:
+        raise ConnectorError("The tool's inputs refer to a schema it doesn't include, so they can't be checked.") from None
 
 
 def result_text(result: "CallToolResult") -> str:
@@ -387,12 +400,20 @@ async def call_tool(
     http_transport: Optional[httpx.AsyncBaseTransport] = None,
     auth: Optional[httpx.Auth] = None,
 ) -> CallResult:
-    """Call one of the server's tools, within ``CALL_TIMEOUT_S``."""
+    """Call one of the server's tools, within ``CALL_TIMEOUT_S``, as a plain
+    ``tools/call``: ``ClientSession.call_tool`` would check the result
+    against an output schema the server sends at call time (see the module
+    docstring)."""
+    from mcp import types
+
     host = await check_server(url)
+    request = types.ClientRequest(types.CallToolRequest(params=types.CallToolRequestParams(name=name, arguments=arguments)))
     try:
         async with asyncio.timeout(CALL_TIMEOUT_S):
             async with open_session(url, sign_in, transport, http_transport=http_transport, auth=auth) as (session, _init):
-                result = await session.call_tool(name, arguments, read_timeout_seconds=timedelta(seconds=CALL_TIMEOUT_S))
+                result = await session.send_request(
+                    request, types.CallToolResult, request_read_timeout_seconds=timedelta(seconds=CALL_TIMEOUT_S)
+                )
     except Exception as exc:  # noqa: BLE001 - described below, in words for the owner
         raise ConnectorError(describe(exc, host)) from None
     return CallResult(text=result_text(result), structured=result.structuredContent, is_error=bool(result.isError))
@@ -458,7 +479,21 @@ def unusable_reason(slug: str, tool: Dict[str, Any], taken: set) -> Optional[str
         validator_for(schema).check_schema(schema)
     except SchemaError:
         return "Its inputs aren't valid JSON Schema."
+    if _refers_elsewhere(schema):
+        return "Its inputs refer to another document."
     return None
+
+
+def _refers_elsewhere(schema: Any) -> bool:
+    """Whether a ``$ref`` in ``schema`` names something outside it."""
+    if isinstance(schema, dict):
+        ref = schema.get("$ref")
+        if isinstance(ref, str) and not ref.startswith("#"):
+            return True
+        return any(_refers_elsewhere(value) for value in schema.values())
+    if isinstance(schema, list):
+        return any(_refers_elsewhere(value) for value in schema)
+    return False
 
 
 def snapshots(slug: str, tools: List["Tool"]) -> List[Dict[str, Any]]:

@@ -7,7 +7,9 @@ from __future__ import annotations
 import contextlib
 import functools
 import json
+import threading
 from datetime import datetime, timedelta, timezone
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from types import SimpleNamespace
 from typing import Any, Dict, List, Tuple
 from unittest.mock import AsyncMock
@@ -19,7 +21,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import Tool, ToolAnnotations
 
 from nodes.mcp import _client, _handlers, _oauth, mcp_connector
-from nodes.mcp._client import ConnectorError, SignIn, check_server, snapshots
+from nodes.mcp._client import ConnectorError, SignIn, check_arguments, check_server, snapshots
 from nodes.mcp._credentials import McpConnectorCredential
 from nodes.mcp._store import new_slug
 from nodes.mcp.mcp_connector import McpConnectorNode
@@ -216,6 +218,8 @@ def test_a_tool_no_model_could_call_is_kept_with_the_reason():
         Tool(name="x" * 60, inputSchema={"type": "object"}),
         Tool(name="listing", inputSchema={"type": "array"}),
         Tool(name="broken", inputSchema={"type": "object", "properties": {"a": {"type": "nonsense"}}}),
+        Tool(name="elsewhere", inputSchema={"type": "object", "properties": {"q": {"$ref": "https://example.com/q.json"}}}),
+        Tool(name="inside", inputSchema={"type": "object", "$defs": {"q": {"type": "string"}}, "properties": {"q": {"$ref": "#/$defs/q"}}}),
         Tool(name="ok", inputSchema={"type": "object"}),
     ]
     kept = snapshots("orders", tools)
@@ -226,6 +230,8 @@ def test_a_tool_no_model_could_call_is_kept_with_the_reason():
         ("x" * 60, False),
         ("listing", False),
         ("broken", False),
+        ("elsewhere", False),
+        ("inside", True),
         ("ok", False),
     ]
     assert [tool["reason"] for tool in kept][1:] == [
@@ -233,8 +239,79 @@ def test_a_tool_no_model_could_call_is_kept_with_the_reason():
         "Its name is too long, or has characters a model can't use.",
         "Its inputs aren't described as an object.",
         "Its inputs aren't valid JSON Schema.",
+        "Its inputs refer to another document.",
+        None,
         "Another tool on this server has the same name.",
     ]
+
+
+@pytest.fixture
+def elsewhere():
+    """A web server a schema's ``$ref`` can point at: it serves a schema and
+    keeps the path of each request it gets."""
+    hits: List[str] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802 - the stdlib's name
+            hits.append(self.path)
+            body = b'{"type": "integer"}'
+            self.send_response(200)
+            self.send_header("Content-Type", "application/schema+json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    yield SimpleNamespace(url=f"http://127.0.0.1:{server.server_port}/schema.json", hits=hits)
+    server.shutdown()
+    server.server_close()
+
+
+class OutputSchemaServer(httpx.AsyncBaseTransport):
+    """A bare MCP server (JSON-RPC over HTTP) with one tool, ``lookup``,
+    whose output schema is ``output_schema``."""
+
+    def __init__(self, output_schema: Dict[str, Any]) -> None:
+        self.output_schema = output_schema
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        if request.method != "POST":
+            return httpx.Response(405, request=request)
+        message = json.loads(await request.aread())
+        if "id" not in message:  # a notification
+            return httpx.Response(202, request=request)
+        if message["method"] == "initialize":
+            version = message["params"]["protocolVersion"]
+            result = {"protocolVersion": version, "capabilities": {"tools": {}}, "serverInfo": {"name": "Orders", "version": "1"}}
+        elif message["method"] == "tools/list":
+            result = {"tools": [{"name": "lookup", "inputSchema": {"type": "object"}, "outputSchema": self.output_schema}]}
+        else:
+            result = {"content": [{"type": "text", "text": "found"}], "structuredContent": {"order": "A1"}, "isError": False}
+        return httpx.Response(200, json={"jsonrpc": "2.0", "id": message["id"], "result": result}, request=request)
+
+
+class TestARefIsFollowedOnlyInsideItsSchema:
+    """A server's ``$ref`` never makes the backend fetch anything."""
+
+    def test_arguments_are_checked_without_fetching_a_ref(self, elsewhere):
+        with pytest.raises(ConnectorError, match="refer to a schema it doesn't include"):
+            check_arguments({"type": "object", "properties": {"q": {"$ref": elsewhere.url}}}, {"q": "x"})
+        assert elsewhere.hits == []
+        # A reference inside the schema still checks.
+        inside = {"type": "object", "$defs": {"q": {"type": "string"}}, "properties": {"q": {"$ref": "#/$defs/q"}}}
+        check_arguments(inside, {"q": "x"})
+        with pytest.raises(ConnectorError, match="don't fit the tool"):
+            check_arguments(inside, {"q": 1})
+
+    async def test_a_result_is_not_checked_against_a_schema_the_server_sends(self, elsewhere):
+        server = OutputSchemaServer({"type": "object", "properties": {"order": {"$ref": elsewhere.url}}})
+        result = await _client.call_tool(URL, SignIn(), "streamable_http", "lookup", {"order": "A1"}, http_transport=server)
+        assert (result.text, result.structured, result.is_error) == ("found", {"order": "A1"}, False)
+        assert elsewhere.hits == []
 
 
 class TestTheConnectorsPage:

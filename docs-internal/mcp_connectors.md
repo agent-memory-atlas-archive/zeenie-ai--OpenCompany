@@ -89,7 +89,11 @@ A tool no model could call is kept with the reason and never renamed:
 - its name repeats another;
 - `<slug>__<tool>` breaks the strictest provider's rule,
   `^[A-Za-z0-9_-]{1,64}$`;
-- its input schema is not an object, or is not valid JSON Schema.
+- its input schema is not an object, or is not valid JSON Schema;
+- its input schema refers to another document: a `$ref` that does not start
+  with `#`. A `$ref` is followed only inside its schema, because jsonschema,
+  given no registry, fetches whatever URL one names, from the backend and
+  outside the address checks above.
 
 **Settings.** Each usable tool has `{enabled, ask}`. It starts on, and asks
 first unless the server marks it read-only. The owner changes both per tool.
@@ -195,11 +199,14 @@ settings, which are locked so the model never sets them: `mcp_tool`, `mcp_ask`
 
 - **A call**: the connector is read again, so a tool the server no longer
   offers or the owner turned off since the run began is refused. The
-  arguments are checked against the tool's input schema (jsonschema), then
-  the tool is called over the connector's transport within `CALL_TIMEOUT_S`
-  (300 s). The model gets the answer's text (each part that is not text is
-  named) and its structured result; an answer marked as an error comes back
-  as the tool's error.
+  arguments are checked against the tool's input schema (jsonschema with an
+  empty registry, so its `$ref`s resolve only inside it), then the tool is
+  called over the connector's transport within `CALL_TIMEOUT_S` (300 s), as a
+  plain `tools/call` request: the SDK's `ClientSession.call_tool` would check
+  the result against the output schema the server sends at that moment, and
+  follow any `$ref` in it. The model gets the answer's text (each part that
+  is not text is named) and its structured result; an answer marked as an
+  error comes back as the tool's error.
 - **Ask first**: the node's `approval` spec holds a call while the employee
   asks first, unless its tool is set not to (`mcp_ask`). A call whose binding
   says nothing asks first. The card names the connector and the tool, and
