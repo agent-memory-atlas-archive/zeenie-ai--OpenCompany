@@ -1,9 +1,9 @@
 /**
  * The orb's lifecycle (orb.ts): stages and slots are stacks, so a screen
  * mounted over another borrows the orb and hands it back; the engine loads
- * once; a failed engine load shows the mark until the next stage tries
- * again; a lost WebGL context shows it until the browser hands the context
- * back; no WebGL and reduced motion hold for good.
+ * once; a lost WebGL context shows the mark until the browser hands the
+ * context back; an engine that did not start, no WebGL and reduced motion
+ * hold it for good.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -116,7 +116,10 @@ describe('stages', () => {
 });
 
 describe('the static mark', () => {
-  it('shows while the engine failed to load, and the next stage tries again', async () => {
+  it('holds when the engine did not start, and says why in the console', async () => {
+    // A browser keeps a failed module load for the page, so a later stage
+    // could never load it either.
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     const { result } = renderHook(() => useOrbFallback());
     createOrbEngine.mockImplementationOnce(() => {
       throw new Error('the chunk did not load');
@@ -125,12 +128,14 @@ describe('the static mark', () => {
     mountOrb(first);
     await loaded();
     expect(result.current).toBe(true);
+    expect(consoleError).toHaveBeenCalledWith(expect.stringContaining('[Orb]'), expect.any(Error));
 
     unmountOrb(first);
     mountOrb(element());
     await loaded();
-    expect(createOrbEngine).toHaveBeenCalledTimes(2);
-    expect(result.current).toBe(false);
+    expect(createOrbEngine).toHaveBeenCalledTimes(1);
+    expect(result.current).toBe(true);
+    consoleError.mockRestore();
   });
 
   it('holds without WebGL, and nothing tries again', async () => {

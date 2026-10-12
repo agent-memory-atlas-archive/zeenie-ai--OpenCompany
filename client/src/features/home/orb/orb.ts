@@ -13,9 +13,11 @@
  * Slots show the static mark instead when the orb cannot run. No WebGL and
  * reduced motion hold for the session. While the browser has taken the
  * WebGL context away (after sleep, or a GPU switch), the mark shows until it
- * hands the context back, and the same engine carries on. An engine chunk
- * that failed to load shows the mark until the next stage mounts, which
- * tries again.
+ * hands the context back, and the same engine carries on. An engine that
+ * did not start (its chunk failed to load, or the renderer could not be
+ * created) holds the mark until the page reloads, and the console says why:
+ * a browser keeps a failed module load for the page's lifetime, so loading
+ * it again cannot succeed.
  */
 
 import { useSyncExternalStore } from 'react';
@@ -77,10 +79,9 @@ interface OrbEngine {
   dispose(): void;
 }
 
-/** Why slots show the mark: the engine's chunk did not load (`missing`),
- *  the orb cannot run here (`latched`), or the browser has the WebGL
- *  context for now (`lost`). */
-type Fallback = 'none' | 'missing' | 'latched' | 'lost';
+/** Why slots show the mark: the orb cannot run on this page (`latched`), or
+ *  the browser has the WebGL context for now (`lost`). */
+type Fallback = 'none' | 'latched' | 'lost';
 
 let engine: OrbEngine | null = null;
 let loading = false;
@@ -135,9 +136,10 @@ function show(): void {
       setFallback('none');
       show();
     })
-    .catch(() => {
+    .catch((error: unknown) => {
       loading = false;
-      setFallback('missing');
+      console.error('[Orb] The 3D orb did not start; showing the static mark until the page reloads:', error);
+      setFallback('latched');
     });
 }
 

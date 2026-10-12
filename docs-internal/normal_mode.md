@@ -204,8 +204,14 @@ browser takes the WebGL context away (after sleep, or when a laptop switches
 GPU), the engine asks for it back (`preventDefault` on `webglcontextlost`) and
 the slot shows the mark until `webglcontextrestored`; then the same engine
 carries on, three.js having rebuilt the scene's GPU resources. When the
-engine's chunk fails to load the slot shows the mark until the next stage
-mounts and tries again (`orb/__tests__/orb.test.ts`).
+engine does not start (its chunk fails to load, or the renderer cannot be
+created) the slot shows the mark until the page reloads, since a browser
+keeps a failed module load for the page, and the console logs why (`[Orb]`;
+`orb/__tests__/orb.test.ts`). One such failure: a server answering the
+engine's URL with the app's HTML page ("Expected a JavaScript module script
+but the server responded with a MIME type of text/html"); the backend's SPA
+fallback now answers missing file paths with a 404 and sends its shell with
+`Cache-Control: no-cache` (`core/approot.is_spa_route`).
 
 ## The Workspace
 
