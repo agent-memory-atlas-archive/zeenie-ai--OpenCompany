@@ -17,7 +17,9 @@ reaches ``server/``'s parent, i.e. the app root. Climbing *to* ``server/``
 (config files, skills, the Node sidecar) stays legal: that directory ships
 inside the bundle unchanged.
 
-Sanctioned: ``core/approot.py``. Same AST-walk style as
+Sanctioned: ``core/approot.py`` and explicitly identified dependency-package
+manifests. A dependency manifest allowance never permits climbing above
+``server/`` or spelling another sibling-layout path. Same AST-walk style as
 ``tests/test_no_raw_prints.py``.
 """
 
@@ -42,6 +44,14 @@ _SANCTIONED = {
 
 # Literal path joins that encode the sibling layout; only approot may spell them.
 _LAYOUT_LITERALS = {("client", "dist"), (".env.template",), ("package.json",)}
+
+# Pi verifies the pinned SDK's own manifest in its private dependency tree,
+# both in server/pi/ and in the extracted DATA_DIR cache. These are not the
+# application-version manifest owned by core.approot. Allow only this exact
+# literal suffix in this reader; all other joins and root climbs stay checked.
+_PRIVATE_PACKAGE_MANIFEST_JOINS = {
+    "services/pi_runtime.py": ("node_modules", "@earendil-works", "pi-coding-agent", "package.json"),
+}
 
 
 def _is_file_anchor(node: ast.AST) -> bool:
@@ -99,6 +109,10 @@ def _violations_in(path: Path, tree: ast.AST) -> List[str]:
                 cur = cur.left
             for literal in _LAYOUT_LITERALS:
                 n = len(literal)
+                private_manifest = _PRIVATE_PACKAGE_MANIFEST_JOINS.get(rel)
+                if (literal == ("package.json",) and private_manifest is not None
+                        and tuple(parts[-len(private_manifest):]) == private_manifest):
+                    continue
                 if any(tuple(parts[i : i + n]) == literal for i in range(len(parts) - n + 1)):
                     out.append(
                         f"  {rel}:{node.lineno} — path join spells {'/'.join(literal)!r}; "
@@ -144,3 +158,25 @@ def test_climbing_to_server_root_is_still_allowed() -> None:
     assert len(_violations_in(fake, ast.parse(chain_bad))) == 1
     literal_bad = "from pathlib import Path\nD = Path('x') / 'client' / 'dist'\n"
     assert len(_violations_in(fake, ast.parse(literal_bad))) == 1
+
+
+def test_pi_private_manifest_allowance_keeps_app_root_checks() -> None:
+    pi_reader = SERVER_ROOT / "services" / "pi_runtime.py"
+    suffix = " / 'node_modules' / '@earendil-works' / 'pi-coding-agent' / 'package.json'"
+    for base in ("root", "target", "temporary"):
+        assert _violations_in(pi_reader, ast.parse(f"manifest = {base}{suffix}\n")) == []
+
+    # The exception is for one dependency manifest, not the whole module,
+    # arbitrary package.json files, or application-root computation.
+    for source in (
+        "manifest = root / 'package.json'\n",
+        "manifest = root / 'node_modules' / 'another-package' / 'package.json'\n",
+        "template = root / '.env.template'\n",
+        "client = root / 'client' / 'dist'\n",
+        f"manifest = Path(__file__).resolve().parents[2]{suffix}\n",
+        f"manifest = Path(__file__).parent.parent.parent{suffix}\n",
+    ):
+        assert _violations_in(pi_reader, ast.parse(source)), source
+
+    other_reader = SERVER_ROOT / "services" / "another_reader.py"
+    assert _violations_in(other_reader, ast.parse(f"manifest = root{suffix}\n"))

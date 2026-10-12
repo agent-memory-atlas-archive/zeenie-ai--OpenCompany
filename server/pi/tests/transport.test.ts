@@ -1,5 +1,5 @@
 import {expect,test} from "bun:test";
-import {mkdtemp,rm,readFile,writeFile,symlink,mkdir} from "node:fs/promises";
+import {mkdtemp,realpath,rm,readFile,writeFile,symlink,mkdir} from "node:fs/promises";
 import {join,resolve,sep} from "node:path";
 import {tmpdir} from "node:os";
 import {ScopedProtocolBlobs} from "../src/transport.ts";
@@ -8,7 +8,9 @@ import {INLINE_LIMIT_BYTES,type FileReference} from "../src/types.ts";
 
 const scope={workflow_id:"wf",generation_id:"1",node_id:"coding"};
 async function fixture<T>(body:(root:string,blobs:ScopedProtocolBlobs)=>Promise<T>):Promise<T> {
-  const temp=resolve(tmpdir());const root=await mkdtemp(join(temp,"opencompany-pi-transport-"));
+  // macOS /var and Windows temporary-directory aliases are not canonical.
+  // Python admits resolved roots; fixtures must honor the same boundary.
+  const temp=await realpath(tmpdir());const root=await realpath(await mkdtemp(join(temp,"opencompany-pi-transport-")));
   try {return await body(root,await ScopedProtocolBlobs.create(root,scope,1));}
   finally {if(!resolve(root).startsWith(temp+sep))throw new Error("Invalid private transport test directory");await rm(root,{recursive:true,force:true});}
 }
@@ -46,4 +48,17 @@ test("scoped transport refuses symlink files",()=>fixture(async(root,blobs)=>{
   await writeFile(other,await readFile(path));await rm(path);
   try {await symlink(other,path);} catch(error) {if((error as {code?:string}).code==="EPERM") return;throw error;}
   await expect(blobs.decode(reference)).rejects.toMatchObject({code:"invalid_blob"});
+}));
+
+test("aliased temporary ancestors require a canonical private root",()=>fixture(async(root)=>{
+  const actual=join(root,"actual");const alias=join(root,"alias");await mkdir(actual);
+  await symlink(actual,alias,process.platform==="win32" ? "junction" : "dir");
+  const admittedAlias=await mkdtemp(join(alias,"private-"));
+  const canonical=await realpath(admittedAlias);
+  expect(resolve(admittedAlias)).not.toBe(canonical);
+  await expect(ScopedProtocolBlobs.create(admittedAlias,scope,1)).rejects.toMatchObject({code:"invalid_transport"});
+  const blobs=await ScopedProtocolBlobs.create(canonical,scope,1);
+  const value={text:"alias-regression".repeat(INLINE_LIMIT_BYTES)};
+  const reference=await blobs.encode(value);
+  expect(await blobs.decode(reference)).toEqual(value);
 }));

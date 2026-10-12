@@ -4,7 +4,7 @@ import {fileURLToPath} from "node:url";
 import {encodeFrame,losslessParse,canonicalDigest} from "../src/protocol.ts";
 import {ScopedProtocolBlobs} from "../src/transport.ts";
 import {INLINE_LIMIT_BYTES,MAX_FRAME_BYTES} from "../src/types.ts";
-import {mkdtemp,rm} from "node:fs/promises";
+import {mkdtemp,realpath,rm} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import {message,run,toolResult,call} from "./fixtures.ts";
 
@@ -86,7 +86,7 @@ test("park control returns successful maintenance completion",async()=>{
 },15000);
 
 test("large run, receipts and checkpoint use scoped refs within the inline frame bound",async()=>{
-  const temp=tmpdir();const root=await mkdtemp(join(temp,"opencompany-pi-large-round-"));
+  const temp=await realpath(tmpdir());const root=await realpath(await mkdtemp(join(temp,"opencompany-pi-large-round-")));
   let child:ReturnType<typeof Bun.spawn>|undefined;
   try {
     const input=run();input.blob_dir=root;input.messages[1]!.provider_state={large:"u".repeat(INLINE_LIMIT_BYTES),id:9007199254740993n};
@@ -123,7 +123,7 @@ test("large run, receipts and checkpoint use scoped refs within the inline frame
 },15000);
 
 test("an oversized complete snapshot emits a terminal protocol error after the failed write",async()=>{
-  const temp=tmpdir();const root=await mkdtemp(join(temp,"opencompany-pi-oversized-checkpoint-"));
+  const temp=await realpath(tmpdir());const root=await realpath(await mkdtemp(join(temp,"opencompany-pi-oversized-checkpoint-")));
   let child:ReturnType<typeof Bun.spawn>|undefined;
   try {
     const input=run();input.blob_dir=root;

@@ -359,11 +359,13 @@ class TestStartCanaryListener:
         assert call["id_conflict_policy"] == WorkflowIDConflictPolicy.USE_EXISTING
         assert call["task_queue"] == "machina-tasks"
         assert call["args"][0]["user_id"] == "account-21"
+        # New listeners freeze the Coding runtime before later graph firings.
         assert call["args"][0]["_temporal_routing_v1"] == {
             "version": 1,
             "agent_workflow_enabled": True,
             "per_type_dispatch_enabled": False,
             "worker_pool_enabled": False,
+            "pi_harness_version": 1,
         }
 
     @pytest.mark.asyncio

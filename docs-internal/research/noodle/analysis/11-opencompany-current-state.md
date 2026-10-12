@@ -1,6 +1,6 @@
 # OpenCompany frontend research snapshot, mapped against Noodle
 
-> Research snapshot: the original OpenCompany source revision was not recorded.
+> Historical research snapshot: the original OpenCompany source revision was not recorded.
 > Stop and chat behavior described below predates execution-control commit
 > `516ecaca`. For current acknowledged Stop/Resume and chat protocol v2, use
 > [workflow control](../../../temporal-workflow-control.md) and

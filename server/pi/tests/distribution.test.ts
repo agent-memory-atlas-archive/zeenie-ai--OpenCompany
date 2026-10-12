@@ -1,6 +1,6 @@
 import {expect,test} from "bun:test";
 import {createHash} from "node:crypto";
-import {readFile,mkdir,mkdtemp,rm} from "node:fs/promises";
+import {readFile,mkdir,mkdtemp,realpath,rm} from "node:fs/promises";
 import {dirname,join,resolve,sep} from "node:path";
 import {tmpdir} from "node:os";
 import {fileURLToPath} from "node:url";
@@ -18,8 +18,8 @@ distributionTest("production archive runs offline without source or root depende
   expect(manifest.universal).toBe(true);
   // Outside the repository so missing runtime packages cannot resolve from
   // server/pi/node_modules, root node_modules or any development workspace.
-  const buildRoot=resolve(tmpdir());
-  const isolated=await mkdtemp(join(buildRoot,"opencompany-pi-offline-"));
+  const buildRoot=await realpath(tmpdir());
+  const isolated=await realpath(await mkdtemp(join(buildRoot,"opencompany-pi-offline-")));
   try {
     const unpack=Bun.spawn(["tar","-xzf",archive,"-C",isolated],{stdout:"pipe",stderr:"pipe"});
     expect(await unpack.exited).toBe(0);
