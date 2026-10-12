@@ -59,19 +59,19 @@ describe('pre-paint theme script', () => {
 
   it.each<[string, Record<string, string>]>([
     ['nothing stored', {}],
-    ['a stored theme', { 'opencompany-theme': 'renaissance' }],
-    ['a stored dark-family theme', { 'opencompany-theme': 'surveillance' }],
-    ['only the pre-rebrand key', { 'machinaos-theme': 'cyber' }],
-    ['both brand keys', { 'opencompany-theme': 'edo', 'machinaos-theme': 'rot' }],
+    ['a stored theme', { 'opencompany-theme': 'atomic' }],
+    ['a stored dark theme', { 'opencompany-theme': 'dark' }],
+    ['only the pre-rebrand key', { 'machinaos-theme': 'atomic' }],
+    ['both brand keys', { 'opencompany-theme': 'atomic', 'machinaos-theme': 'dark' }],
     ['legacy darkMode false', { darkMode: 'false' }],
     ['legacy darkMode true', { darkMode: 'true' }],
     ['an unknown stored name', { 'opencompany-theme': 'neon' }],
     ['an unknown name with darkMode false', { 'opencompany-theme': 'neon', darkMode: 'false' }],
+    ['a removed theme', { 'opencompany-theme': 'cyber' }],
     ['Home with a stylized light theme', { 'opencompany-theme': 'atomic', ui_shell_mode: 'normal' }],
-    ['Home with a stylized dark theme', { 'opencompany-theme': 'cyber', ui_shell_mode: 'normal' }],
     ['the editor with a stylized theme', { 'opencompany-theme': 'atomic', ui_shell_mode: 'dev' }],
-    ['the old Dev palette choice', { 'opencompany-theme': 'renaissance', ui_pro_mode: 'true' }],
-    ['an unknown saved screen', { 'opencompany-theme': 'edo', ui_shell_mode: 'kiosk' }],
+    ['the old Dev palette choice', { 'opencompany-theme': 'atomic', ui_pro_mode: 'true' }],
+    ['an unknown saved screen', { 'opencompany-theme': 'atomic', ui_shell_mode: 'kiosk' }],
   ])('agrees with ThemeProvider for %s', (_label, stored) => {
     for (const [key, value] of Object.entries(stored)) localStorage.setItem(key, value);
     new Function(prePaintScript())();
@@ -92,8 +92,8 @@ describe('pre-paint theme script', () => {
 
   it.each<[string, Record<string, string>, string]>([
     ['Home shows a stylized light theme as light', { 'opencompany-theme': 'atomic' }, 'light'],
-    ['Home shows a stylized dark theme as dark', { 'opencompany-theme': 'surveillance' }, 'dark'],
     ['the editor shows the stored theme', { 'opencompany-theme': 'atomic', ui_shell_mode: 'dev' }, 'atomic'],
+    ['a removed theme opens in dark', { 'opencompany-theme': 'cyber', ui_shell_mode: 'dev' }, 'dark'],
   ])('%s', (_label, stored, expected) => {
     for (const [key, value] of Object.entries(stored)) localStorage.setItem(key, value);
     new Function(prePaintScript())();

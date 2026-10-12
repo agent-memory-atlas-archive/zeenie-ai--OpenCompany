@@ -18,18 +18,9 @@ import { useTheme, type ThemeName } from '../../contexts/ThemeContext';
 import { cn } from '@/lib/utils';
 
 const THEME_LABEL: Record<ThemeName, string> = {
-  light:        'LIGHT',
-  dark:         'DARK',
-  renaissance:  'RENAISSANCE',
-  greek:        'GREEK',
-  edo:          'EDO',
-  steampunk:    'STEAMPUNK',
-  atomic:       'ATOMIC',
-  cyber:        'CYBER',
-  wasteland:    'WASTELAND',
-  rot:          'ROT',
-  plague:       'PLAGUE',
-  surveillance: 'SURVEILLANCE',
+  light:  'LIGHT',
+  dark:   'DARK',
+  atomic: 'ATOMIC',
 };
 
 interface StatusBarProps {

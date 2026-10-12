@@ -39,27 +39,18 @@ import { BRAND_STORAGE_KEYS, readAndMigrateStorageValue } from '../lib/brandStor
 import { animate, dur, invalidateMotionTokens } from '../lib/motion';
 import { prefersReducedMotion } from '../lib/useReducedMotion';
 
-export type ThemeName =
-  | 'light' | 'dark'
-  | 'renaissance' | 'greek' | 'edo' | 'steampunk' | 'atomic'
-  | 'cyber' | 'wasteland' | 'rot' | 'plague' | 'surveillance';
+export type ThemeName = 'light' | 'dark' | 'atomic';
 
-/** Order matters — drives the ThemeSwitcher menu and keyboard rotation.
- *  Utopian set first (light + dark + 5 utopian), dystopian set after. */
-export const AVAILABLE_THEMES: readonly ThemeName[] = [
-  'light', 'dark',
-  'renaissance', 'greek', 'edo', 'steampunk', 'atomic',
-  'cyber', 'wasteland', 'rot', 'plague', 'surveillance',
-];
+/** Order matters: it is the order of the ThemeSwitcher menu and the
+ *  command palette's theme items. */
+export const AVAILABLE_THEMES: readonly ThemeName[] = ['light', 'dark', 'atomic'];
 
 const THEME_STORAGE_KEYS = BRAND_STORAGE_KEYS.theme;
 const LEGACY_DARK_MODE_KEY = 'darkMode';
 
 /** Themes whose backgrounds are dark — also flip the legacy `.dark`
  *  Tailwind variant so existing `dark:` utilities resolve correctly. */
-export const DARK_FAMILY: ReadonlySet<ThemeName> = new Set<ThemeName>([
-  'dark', 'cyber', 'wasteland', 'rot', 'surveillance', 'steampunk',
-]);
+export const DARK_FAMILY: ReadonlySet<ThemeName> = new Set<ThemeName>(['dark']);
 
 export function isDarkTheme(theme: ThemeName): boolean {
   return DARK_FAMILY.has(theme);

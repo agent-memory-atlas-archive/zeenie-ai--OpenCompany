@@ -61,18 +61,9 @@ export interface CommandPaletteHandlers {
 }
 
 const THEME_LABEL: Record<ThemeName, string> = {
-  light:        'Light',
-  dark:         'Dark',
-  renaissance:  'Renaissance',
-  greek:        'Greek',
-  edo:          'Edo',
-  steampunk:    'Steampunk',
-  atomic:       'Atomic Modern',
-  cyber:        'Cyber-Tyranny',
-  wasteland:    'Wasteland',
-  rot:          'Necromantic Rot',
-  plague:       'Plague City',
-  surveillance: 'Surveillance',
+  light:  'Light',
+  dark:   'Dark',
+  atomic: 'Atomic Modern',
 };
 
 interface Props {
