@@ -650,7 +650,9 @@ picker: each node keeps its model.
   when it can't answer (`available: false` with its `reason`).
 - **`capabilities.model_choice`** (`get_chat_context`) is whether the employee applies a choice: its answering agent
   runs as an AgentWorkflow (`AGENT_WORKFLOW_TYPES`, with `TEMPORAL_AGENT_WORKFLOW_ENABLED` on). A Claude Code or
-  RLM agent never does, so the client shows no picker for it.
+  RLM agent never does, so the client shows no picker for it. The saved graph decides it, so the client refetches
+  the context (`queryKeys.chatContext`) when the server saves a change to that graph (`workflow_ops_apply` with
+  `persisted`, handled by `useSavedGraphSync`): after Turn on Talk the picker shows without a reload.
 
 ## Branches
 

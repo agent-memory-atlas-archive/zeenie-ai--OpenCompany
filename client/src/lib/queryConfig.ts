@@ -82,10 +82,21 @@ const chatThread = createQueryKeys('chatThread', {
 });
 
 /**
+ * What one chat session's message box offers (`get_chat_context`; session
+ * id = the workflow id): its commands, attachments, Web, and whether the
+ * employee takes the model picker's choice. The workflow's saved graph
+ * decides it, so useSavedGraphSync invalidates it when the server saves a
+ * change to that graph (Turn on Talk, the Agent Builder).
+ */
+const chatContext = createQueryKeys('chatContext', {
+  bySession: (sessionId: string) => [sessionId],
+});
+
+/**
  * Merged factory. Consumers call e.g.
  *   queryKeys.credentialValues.byProvider(id).queryKey
  * for a specific key, and
  *   queryKeys.credentialValues._def
  * for partial-match invalidation across the namespace.
  */
-export const queryKeys = mergeQueryKeys(credentialValues, compactionStats, chatThread);
+export const queryKeys = mergeQueryKeys(credentialValues, compactionStats, chatThread, chatContext);

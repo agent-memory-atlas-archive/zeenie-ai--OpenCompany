@@ -19,6 +19,7 @@ import { renderHook, act } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { Node, Edge } from 'reactflow';
 
+import { queryKeys } from '../../lib/queryConfig';
 import { useSavedGraphSync, useWorkflowOpsListener } from '../useWorkflowOpsListener';
 import { WORKFLOWS_QUERY_KEY } from '../useWorkflowsQuery';
 import { nodeParamsQueryKey } from '../useNodeParamsQuery';
@@ -197,5 +198,17 @@ describe('useSavedGraphSync', () => {
 
     expect(storeMock.adoptSavedOperations).not.toHaveBeenCalled();
     expect(queryClient.getQueryData(nodeParamsQueryKey('7:duckduckgoSearch:1'))).toBeUndefined();
+  });
+
+  it('refetches what the workflow’s chat offers once the server saved a change to it', () => {
+    // Before Turn on Talk the employee took no model choice.
+    queryClient.setQueryData(queryKeys.chatContext.bySession('7').queryKey, { commands: [], attachments: true, web: false, modelChoice: false, maxAttachments: 6 });
+    queryClient.setQueryData(queryKeys.chatContext.bySession('8').queryKey, { commands: [], attachments: true, web: false, modelChoice: false, maxAttachments: 6 });
+    renderHook(() => useSavedGraphSync(), { wrapper });
+
+    push({ workflow_id: '7', operations: SAVED, persisted: true });
+
+    expect(queryClient.getQueryState(queryKeys.chatContext.bySession('7').queryKey)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(queryKeys.chatContext.bySession('8').queryKey)?.isInvalidated).toBe(false);
   });
 });

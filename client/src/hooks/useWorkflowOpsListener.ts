@@ -14,7 +14,9 @@
  * into the app store's copy of the workflow the editor holds, on either
  * screen, and puts their parameter rows in the parameter cache. Without it
  * a workflow left open in Dev while Home is showing keeps its old graph,
- * and the editor's next save replaces the server's additions.
+ * and the editor's next save replaces the server's additions. It also
+ * refetches what the workflow's chat offers, which its saved graph decides:
+ * after Turn on Talk the employee takes the model picker's choice.
  */
 
 import { useEffect } from 'react';
@@ -23,6 +25,7 @@ import { toast } from 'sonner';
 import { useQueryClient } from '@tanstack/react-query';
 
 import { useWebSocket, useWebSocketActions, type NodeParameters } from '../contexts/WebSocketContext';
+import { queryKeys } from '../lib/queryConfig';
 import { useAppStore } from '../store/useAppStore';
 import {
   addSavedEdges,
@@ -109,5 +112,6 @@ export function useSavedGraphSync(): void {
       }));
     }
     useAppStore.getState().adoptSavedOperations(raw.workflow_id, ops);
+    void queryClient.invalidateQueries({ queryKey: queryKeys.chatContext.bySession(raw.workflow_id).queryKey });
   }), [addEventListener, queryClient]);
 }

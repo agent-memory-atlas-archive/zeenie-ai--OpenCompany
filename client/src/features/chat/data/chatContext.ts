@@ -11,6 +11,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { z } from 'zod';
 import { useWebSocketActions } from '@/contexts/WebSocketContext';
+import { queryKeys } from '@/lib/queryConfig';
 
 export interface ChatCommand {
   command: string;
@@ -67,7 +68,7 @@ export function parseChatContext(reply: unknown): ChatContext {
 export function useChatContext(sessionId: string) {
   const { sendRequest, isReady } = useWebSocketActions();
   return useQuery<ChatContext, Error>({
-    queryKey: ['chatContext', sessionId],
+    queryKey: queryKeys.chatContext.bySession(sessionId).queryKey,
     enabled: isReady && Boolean(sessionId),
     staleTime: 60_000,
     queryFn: async () => {
