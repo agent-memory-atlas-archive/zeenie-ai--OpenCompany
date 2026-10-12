@@ -513,13 +513,14 @@ class MobileRuntime:
         if text:
             await record_phone_step(entry.get("workflow_id"), entry.get("node_id"), text)
 
-    def resume_waiting(self) -> None:
-        """Let the AI task that waits for the owner go on, without holding the
-        phone: Hand back after the view that held it went away. Refused while
-        someone uses the phone; nothing happens when no task waits."""
+    def resume_waiting(self, workflow_id: str) -> None:
+        """Let ``workflow_id``'s AI task that waits for the owner go on,
+        without holding the phone: Hand back after the view that held it went
+        away. Refused while someone uses the phone. Nothing happens when no
+        task of that workflow waits: the phone is shared by every employee."""
         if self.viewer is not None:
             raise MobileError("not_controller", "Someone is using the phone. Finish using it first.")
-        if self.active and self.active.get("status") == "awaiting_user":
+        if self.active and self.active.get("status") == "awaiting_user" and self.active.get("workflow_id") == workflow_id:
             self.resume_event.set()
 
     async def cancel(self, workflow_id: str, node_id: str, *, run_id: str | None = None):

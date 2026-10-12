@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { createRef } from 'react';
+import type { SurfaceControl } from '../../workspace/surface';
 import MobileWorkspace from '../MobileWorkspace';
 import { mobilePoint, mobileRequest } from '../api';
 
@@ -355,6 +357,28 @@ describe('Mobile Workspace', () => {
     expect(screen.getByText('Choose an APK file no larger than 256 MB.')).toBeInTheDocument();
     view.rerender(<MobileWorkspace workflowId="flow" nodes={nodes} visible={false} />);
     await waitFor(() => expect(fetchMock.mock.calls.some(([url, options]) => url.endsWith('/release') && JSON.parse(options.body).epoch === 7)).toBe(true));
+  });
+
+  it('gives the phone back from the Workspace’s Take over after its view went away', async () => {
+    snapshot.running = true;
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.endsWith('/takeover')) {
+        snapshot = { ...snapshot, controller: 'viewer:server-hash', control_state: 'human', epoch: 7 };
+        return json({ owner: 'viewer:server-hash', epoch: 7 });
+      }
+      return json(url.endsWith('/doctor') ? ready : snapshot);
+    });
+    const control = createRef<SurfaceControl>();
+    const view = render(<MobileWorkspace workflowId="flow" nodes={nodes} ref={control} />);
+    await screen.findByRole('button', { name: 'Use phone' });
+    let giveBack: (() => void) | null = null;
+    await act(async () => { giveBack = await control.current!.claim(); });
+    expect(giveBack).toBeTypeOf('function');
+    // The dock moved to another tab: the view lets the phone go, and the task it took it from still waits.
+    view.unmount();
+    await waitFor(() => expect(fetchMock.mock.calls.some(([url, options]) => url.endsWith('/release') && JSON.parse(options.body).resume === false)).toBe(true));
+    giveBack!();
+    await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => url.endsWith('/resume'))).toBe(true));
   });
 });
 

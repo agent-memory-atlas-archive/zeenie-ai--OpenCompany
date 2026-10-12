@@ -40,13 +40,14 @@ vi.mock('@/contexts/WebSocketContext', async (importOriginal) => ({
 }));
 
 vi.mock('../../../app/useShellActions', () => ({ enterDev: vi.fn() }));
-// The browser's Take over handle (components/workspace/surface.ts).
-const screenControl = vi.hoisted(() => ({ claim: vi.fn(), release: vi.fn() }));
+// The browser's Take over handle (components/workspace/surface.ts), and the
+// way to give back what a claim took.
+const screenControl = vi.hoisted(() => ({ claim: vi.fn(), giveBack: vi.fn() }));
 vi.mock('@/components/browser/BrowserWorkspace', async () => {
   const { useImperativeHandle } = await import('react');
   return {
-    default: function Browser({ workflowId, nodes, visible, ref }: { workflowId: string; nodes: { node_id: string; label: string }[]; visible: boolean; ref?: import('react').Ref<typeof screenControl> }) {
-      useImperativeHandle(ref, () => screenControl);
+    default: function Browser({ workflowId, nodes, visible, ref }: { workflowId: string; nodes: { node_id: string; label: string }[]; visible: boolean; ref?: import('react').Ref<{ claim: typeof screenControl.claim }> }) {
+      useImperativeHandle(ref, () => ({ claim: screenControl.claim }));
       return (
         <div data-testid="browser-workspace" data-workflow={workflowId} data-visible={String(visible)}>
           {nodes.length ? nodes.map((node) => <span key={node.node_id}>{node.label}</span>) : 'No Browser node in this workflow'}
@@ -223,11 +224,11 @@ describe('WorkspaceDock', () => {
   });
 
   it('takes over the screen and stops the employee, and hands both back', async () => {
-    screenControl.claim.mockReset().mockResolvedValue(true);
-    screenControl.release.mockReset();
+    screenControl.claim.mockReset().mockResolvedValue(screenControl.giveBack);
+    screenControl.giveBack.mockReset();
     actions.pauseWorkflow.mockReset().mockResolvedValue(normalizeWorkflowControlStatus({ generation: 1, state: 'paused', revision: 5 }, 'w1'));
     actions.resumeWorkflow.mockReset().mockResolvedValue(normalizeWorkflowControlStatus({ generation: 1, state: 'running', revision: 6 }, 'w1'));
-    useHomeStore.setState({ workspaceOpen: true, workspaceTab: 'browser', takeover: null });
+    useHomeStore.setState({ workspaceOpen: true, workspaceTab: 'browser', takeovers: {} });
     renderWith([employee({ control: normalizeWorkflowControlStatus({ generation: 1, state: 'running', revision: 4 }, 'w1') })]);
     await userEvent.click(screen.getByRole('button', { name: 'Take over' }));
     // The screen first, so the employee never acts on it again, then Stop.
@@ -235,20 +236,62 @@ describe('WorkspaceDock', () => {
     expect(actions.pauseWorkflow).toHaveBeenCalledWith('w1', 4);
     expect(screenControl.claim.mock.invocationCallOrder[0]).toBeLessThan(actions.pauseWorkflow.mock.invocationCallOrder[0]);
     expect(await screen.findByText('You’re in control · Maya is waiting')).toBeInTheDocument();
-    expect(useHomeStore.getState().takeover).toEqual({ workflowId: 'w1', stopped: true });
+    expect(useHomeStore.getState().takeovers).toEqual({ w1: { stopped: true, giveBack: screenControl.giveBack } });
 
     await userEvent.click(screen.getByRole('button', { name: 'Hand back' }));
-    expect(screenControl.release).toHaveBeenCalledOnce();
+    expect(screenControl.giveBack).toHaveBeenCalledOnce();
     expect(actions.resumeWorkflow).toHaveBeenCalledOnce();
     expect(screen.queryByText('You’re in control · Maya is waiting')).toBeNull();
-    expect(useHomeStore.getState().takeover).toBeNull();
+    expect(useHomeStore.getState().takeovers).toEqual({});
+  });
+
+  it('hands back the screen that was taken, whichever tab the dock shows', async () => {
+    screenControl.claim.mockReset().mockResolvedValue(screenControl.giveBack);
+    screenControl.giveBack.mockReset();
+    actions.pauseWorkflow.mockReset().mockResolvedValue(normalizeWorkflowControlStatus({ generation: 1, state: 'paused', revision: 5 }, 'w1'));
+    actions.resumeWorkflow.mockReset().mockResolvedValue(normalizeWorkflowControlStatus({ generation: 1, state: 'running', revision: 6 }, 'w1'));
+    useHomeStore.setState({ workspaceOpen: true, workspaceTab: 'browser', takeovers: {} });
+    renderWith([employee({ control: normalizeWorkflowControlStatus({ generation: 1, state: 'running', revision: 4 }, 'w1') })]);
+    await userEvent.click(screen.getByRole('button', { name: 'Take over' }));
+    expect(await screen.findByText('You’re in control · Maya is waiting')).toBeInTheDocument();
+    // The taken screen's view goes with its tab.
+    await userEvent.click(screen.getByRole('tab', { name: 'Canvas' }));
+    expect(screen.queryByTestId('browser-workspace')).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'Hand back' }));
+    expect(screenControl.giveBack).toHaveBeenCalledOnce();
+    expect(actions.resumeWorkflow).toHaveBeenCalledWith('w1', 4);
+  });
+
+  it('keeps each employee’s Take over while the dock shows another', async () => {
+    const giveBackMaya = vi.fn();
+    const giveBackLeo = vi.fn();
+    screenControl.claim.mockReset().mockResolvedValueOnce(giveBackMaya).mockResolvedValueOnce(giveBackLeo);
+    actions.pauseWorkflow.mockReset().mockResolvedValue(normalizeWorkflowControlStatus({ generation: 1, state: 'paused', revision: 5 }, 'w1'));
+    actions.resumeWorkflow.mockReset().mockResolvedValue(normalizeWorkflowControlStatus({ generation: 1, state: 'running', revision: 6 }, 'w1'));
+    useHomeStore.setState({ workspaceOpen: true, workspaceTab: 'browser', takeovers: {} });
+    renderWith([
+      employee({ control: normalizeWorkflowControlStatus({ generation: 1, state: 'running', revision: 4 }, 'w1') }),
+      employee({ workflow_id: 'w2', name: 'Leo', control: normalizeWorkflowControlStatus({ generation: 1, state: 'running', revision: 9 }, 'w2') }),
+    ]);
+    await userEvent.click(screen.getByRole('button', { name: 'Take over' }));
+    expect(await screen.findByText('You’re in control · Maya is waiting')).toBeInTheDocument();
+    act(() => useHomeStore.getState().showEmployee('w2'));
+    await userEvent.click(await screen.findByRole('button', { name: 'Take over' }));
+    expect(await screen.findByText('You’re in control · Leo is waiting')).toBeInTheDocument();
+
+    act(() => useHomeStore.getState().showEmployee('w1'));
+    await userEvent.click(await screen.findByRole('button', { name: 'Hand back' }));
+    expect(giveBackMaya).toHaveBeenCalledOnce();
+    expect(giveBackLeo).not.toHaveBeenCalled();
+    expect(actions.resumeWorkflow).toHaveBeenCalledWith('w1', 4);
+    expect(useHomeStore.getState().takeovers).toEqual({ w2: { stopped: true, giveBack: giveBackLeo } });
   });
 
   it('leaves a stopped employee stopped, and stops no one when the screen is refused', async () => {
-    screenControl.claim.mockReset().mockResolvedValue(true);
+    screenControl.claim.mockReset().mockResolvedValue(screenControl.giveBack);
     actions.pauseWorkflow.mockReset();
     actions.resumeWorkflow.mockReset();
-    useHomeStore.setState({ workspaceOpen: true, workspaceTab: 'browser', takeover: null });
+    useHomeStore.setState({ workspaceOpen: true, workspaceTab: 'browser', takeovers: {} });
     renderWith([employee({ status: 'paused' })]);
     await userEvent.click(screen.getByRole('button', { name: 'Take over' }));
     expect(await screen.findByText('You’re in control · Maya is waiting')).toBeInTheDocument();
@@ -256,14 +299,14 @@ describe('WorkspaceDock', () => {
     expect(actions.pauseWorkflow).not.toHaveBeenCalled();
     expect(actions.resumeWorkflow).not.toHaveBeenCalled();
 
-    screenControl.claim.mockResolvedValue(false);
+    screenControl.claim.mockResolvedValue(null);
     await userEvent.click(screen.getByRole('button', { name: 'Take over' }));
     expect(actions.pauseWorkflow).not.toHaveBeenCalled();
     expect(screen.queryByText('You’re in control · Maya is waiting')).toBeNull();
   });
 
   it('offers no Take over on the Canvas tab', () => {
-    useHomeStore.setState({ workspaceOpen: true, workspaceTab: 'board', takeover: null });
+    useHomeStore.setState({ workspaceOpen: true, workspaceTab: 'board', takeovers: {} });
     renderWith([employee({ canvas_node_id: null })]);
     expect(screen.queryByRole('button', { name: 'Take over' })).toBeNull();
   });
@@ -359,7 +402,7 @@ describe('Workspace timeline', () => {
   beforeEach(() => {
     steps = STEPS;
     answerSteps();
-    useHomeStore.setState({ workspaceOpen: true, workspaceTab: 'browser', takeover: null });
+    useHomeStore.setState({ workspaceOpen: true, workspaceTab: 'browser', takeovers: {} });
   });
 
   it('lists what the employee did, coloured by surface, and follows the newest step', async () => {

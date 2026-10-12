@@ -228,9 +228,9 @@ function MobileSession({ workflowId, nodeId, visible, isCurrentSession, canvasNo
       await mobileRequest(`${path}/resume`, {});
     }
   };
+  const giveBack = () => { void handBack().catch((cause) => { if (active.current) setError(cause instanceof Error ? cause.message : 'Could not hand the phone back.'); }); };
   useImperativeHandle(ref, () => ({
-    claim: () => takeControl().catch(() => false),
-    release: () => { void handBack().catch((cause) => { if (active.current) setError(cause instanceof Error ? cause.message : 'Could not hand the phone back.'); }); },
+    claim: async () => ((await takeControl().catch(() => false)) ? giveBack : null),
   }));
   // The phone's screen as a PNG in the workspace, then on the Canvas board.
   const screenshot = () => perform('saving a screenshot', async () => {

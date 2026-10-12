@@ -91,15 +91,18 @@ def test_hand_back_resumes_a_waiting_task_without_holding_the_phone():
 
     value = MobileRuntime()
     # Nothing waits: nothing happens.
-    value.resume_waiting()
+    value.resume_waiting("w1")
     assert not value.resume_event.is_set()
-    value.active = {"run_id": "run", "status": "awaiting_user"}
+    value.active = {"run_id": "run", "workflow_id": "w1", "status": "awaiting_user"}
     value.viewer = "someone"
     with pytest.raises(MobileError, match="using the phone"):
-        value.resume_waiting()
+        value.resume_waiting("w1")
     assert not value.resume_event.is_set()
     value.viewer = None
-    value.resume_waiting()
+    # The phone is shared: another employee's Hand back leaves this task waiting.
+    value.resume_waiting("w2")
+    assert not value.resume_event.is_set()
+    value.resume_waiting("w1")
     assert value.resume_event.is_set()
 
 

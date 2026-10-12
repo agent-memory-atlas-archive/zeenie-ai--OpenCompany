@@ -1,5 +1,7 @@
+import { createRef } from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { SurfaceControl } from '../../workspace/surface';
 
 const { actions } = vi.hoisted(() => ({ actions: { isReady: true, sendRequest: vi.fn() } }));
 vi.mock('@/contexts/WebSocketContext', () => ({ useWebSocketActions: () => actions }));
@@ -240,6 +242,31 @@ describe('browser frame and input lifecycle boundaries', () => {
     const count = socket.sent.length;
     fireEvent.keyDown(surface, { key: 'a', code: 'KeyA' });
     expect(socket.sent).toHaveLength(count);
+  });
+  it('answers the Workspace’s Take over no while the browser is stopped', async () => {
+    const control = createRef<SurfaceControl>();
+    render(<BrowserWorkspace workflowId="wf" nodes={nodes} ref={control} />);
+    const socket = MockSocket.instances[0];
+    act(() => { socket.open(); socket.message({ type: 'attached', running: false }); socket.message({ type: 'idle', reason: 'not running' }); });
+    let claim!: Promise<(() => void) | null>;
+    act(() => { claim = control.current!.claim(); });
+    expect(socket.sent.at(-1)).toEqual({ type: 'control_request', force: true });
+    // A stopped browser answers every request with `idle`.
+    act(() => socket.message({ type: 'idle', reason: 'not running' }));
+    await expect(claim).resolves.toBeNull();
+  });
+  it('gives back the control the Workspace’s Take over was granted', async () => {
+    const control = createRef<SurfaceControl>();
+    render(<BrowserWorkspace workflowId="wf" nodes={nodes} ref={control} />);
+    const socket = MockSocket.instances[0];
+    act(() => { socket.open(); socket.message({ type: 'state', state: 'agent' }); });
+    let claim!: Promise<(() => void) | null>;
+    act(() => { claim = control.current!.claim(); });
+    act(() => { socket.message({ type: 'control', granted: true }); socket.message({ type: 'state', state: 'user', controller: 'you' }); });
+    const giveBack = await claim;
+    expect(giveBack).toBeTypeOf('function');
+    act(() => giveBack!());
+    expect(socket.sent.at(-1)).toEqual({ type: 'control_release' });
   });
   it('cancels a pending takeover when the document becomes hidden', () => {
     render(<BrowserWorkspace workflowId="wf" nodes={nodes} />);

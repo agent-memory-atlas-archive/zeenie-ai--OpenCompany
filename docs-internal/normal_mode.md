@@ -289,13 +289,19 @@ Help in browser), else the first on the team.
   lease), and only then Stops a running employee (`pause_workflow`), so the
   employee never acts on the screen again once the owner has it. While the
   owner has it the body is framed in orange and a banner says "You’re in
-  control · {Name} is waiting". **Hand back** gives the screen back
-  (Browser hands control back; Mobile releases the lease and lets a waiting
-  phone task go on, through `/resume` when this view no longer holds the
-  lease) and resumes the employee only when Take over stopped them;
-  `homeStore.takeover` keeps that, so it holds across a closed dock or a
-  changed tab. Toasts: "You have control — {Name} will wait", "Handed back
-  to {Name}".
+  control · {Name} is waiting". **Hand back** gives back the screen that
+  was taken, whichever tab the dock shows: a granted `claim` resolves to
+  that screen's way of giving it back, which works after its view went
+  away (an inactive tab is unmounted). Browser hands control back (hiding
+  the view already did); Mobile releases the lease and lets a waiting
+  phone task go on, through `/resume` when the view no longer holds the
+  lease (the server resumes only this workflow's task, since the phone is
+  shared). It resumes the employee only when Take over stopped them.
+  `homeStore.takeovers` keeps each employee's, so it holds across a closed
+  dock, a changed tab or another employee's Take over. A browser that is
+  not running answers Take over's request `idle`, which the claim takes
+  as no. Toasts: "You have control — {Name} will wait", "Handed back to
+  {Name}".
 - **Size and motion**: 460px wide by default. The left edge drags from
   360px to the window less 420px, and Expand gives a bigger dock without
   a drag. At 1100px and wider the dock pushes the page aside; narrower, it

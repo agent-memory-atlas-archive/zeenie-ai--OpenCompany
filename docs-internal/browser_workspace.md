@@ -149,7 +149,9 @@ closed viewer, a protected login (`reason: "protected_login"`), a full queue,
 or a request the page outran before it ran (`viewer_unavailable`) is refused
 out loud (`LiveControlQueue._refuse_claim`), so a viewer never waits on
 "Taking control…". Home's Take over (`normal_mode.md`) relies on it: the
-viewer's `claim()` resolves on that answer.
+viewer's `claim()` resolves on that answer. While the browser is not
+running there is no queue, and the socket answers every message, a
+`control_request` included, with `idle`, which the claim takes as no.
 
 ## Transport and display
 

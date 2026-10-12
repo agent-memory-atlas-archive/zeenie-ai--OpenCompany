@@ -165,14 +165,15 @@ async def release(body: Release, request: Request, workflow_id: str, node_id: st
 
 
 @router.post(BASE + "/resume")
-async def resume(principal: str = Depends(authorize)):
-    """Let the AI task that waits for the owner go on (the Workspace's Hand
-    back), without holding the phone: the view that held it may be gone."""
+async def resume(workflow_id: str, principal: str = Depends(authorize)):
+    """Let this workflow's AI task that waits for the owner go on (the
+    Workspace's Hand back), without holding the phone: the view that held it
+    may be gone."""
     from ._runtime import get_runtime
 
     runtime = get_runtime()
     try:
-        runtime.resume_waiting()
+        runtime.resume_waiting(workflow_id)
     except MobileError as exc:
         raise HTTPException(409, str(exc)) from None
     return runtime.snapshot()

@@ -34,6 +34,14 @@ export interface GuideState {
   pendingDraft: boolean;
 }
 
+/** An employee's screen the owner took (Take over). */
+export interface Takeover {
+  /** Take over stopped them, so Hand back resumes them. */
+  stopped: boolean;
+  /** Gives back the screen that was taken (components/workspace/surface.ts). */
+  giveBack: () => void;
+}
+
 // View ids, not node types: the Canvas tab is 'board' so no id reads as the
 // `canvas` node type (tests/test_frontend_no_node_type_copies.py).
 const WORKSPACE_TABS = ['browser', 'board', 'android'] as const;
@@ -134,9 +142,9 @@ interface HomeState {
   /** A Canvas item to show (a reply's document card); the nonce lets the
    *  same one be asked for again. */
   workspaceFocus: WorkspaceFocus | null;
-  /** The owner took an employee's screen from the Workspace (Take over);
-   *  `stopped`: Take over stopped them, so Hand back resumes them. */
-  takeover: { workflowId: string; stopped: boolean } | null;
+  /** The employees whose screen the owner took from the Workspace (Take
+   *  over), by workflow id. */
+  takeovers: Record<string, Takeover>;
   /** The Welcome guide (onboarding/WelcomeGuide). */
   guide: GuideState;
   /** New hires on their first day, by workflow id. */
@@ -160,7 +168,8 @@ interface HomeState {
   setWorkspaceTab: (tab: WorkspaceTab) => void;
   /** Clamped to 360px .. the window less 420px; ends Expand. */
   setWorkspaceWidth: (px: number) => void;
-  setTakeover: (takeover: HomeState['takeover']) => void;
+  /** null: handed back. */
+  setTakeover: (workflowId: string, takeover: Takeover | null) => void;
   toggleWorkspaceWide: () => void;
   /** Open the Workspace on the Canvas tab, at an item and version of an
    *  employee's board. */
@@ -201,7 +210,7 @@ export const useHomeStore = create<HomeState>((set, get) => ({
   workspaceWide: false,
   workspaceFor: null,
   workspaceFocus: null,
-  takeover: null,
+  takeovers: {},
   guide: { open: false, step: 'welcome', furthest: 0, checked: false, provider: null, pendingDraft: false },
   firstDays: {},
 
@@ -251,7 +260,13 @@ export const useHomeStore = create<HomeState>((set, get) => ({
     set({ workspaceOpen: false });
     saveWorkspacePrefs(get());
   },
-  setTakeover: (takeover) => set({ takeover }),
+  setTakeover: (workflowId, takeover) =>
+    set((state) => {
+      const takeovers = { ...state.takeovers };
+      if (takeover) takeovers[workflowId] = takeover;
+      else delete takeovers[workflowId];
+      return { takeovers };
+    }),
   setWorkspaceTab: (tab) => {
     set({ workspaceTab: tab });
     saveWorkspacePrefs(get());

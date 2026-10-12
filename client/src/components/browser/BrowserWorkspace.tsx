@@ -115,20 +115,23 @@ function BrowserSessionView({ workflowId, nodeId, visible, agentName, ref }: { w
     claimRef.current?.(granted);
     claimRef.current = null;
   }, []);
-  useImperativeHandle(ref, () => ({
-    claim: () => new Promise<boolean>((resolve) => {
-      if (controlRef.current) { resolve(true); return; }
-      const socket = socketRef.current;
-      if (!socket || socket.readyState !== WebSocket.OPEN) { resolve(false); return; }
-      answerClaim(false);
-      claimRef.current = resolve;
-      setError(''); setTakingControl(true);
-      socket.send(JSON.stringify({ type: 'control_request', force: true }));
-    }),
-    release: () => {
+  useImperativeHandle(ref, () => {
+    // Hiding the view already gives control back, so after that there is nothing to do.
+    const giveBack = () => {
       if (controlRef.current) send({ type: 'control_release' });
-    },
-  }), [answerClaim, send, setError]);
+    };
+    return {
+      claim: () => new Promise<(() => void) | null>((resolve) => {
+        if (controlRef.current) { resolve(giveBack); return; }
+        const socket = socketRef.current;
+        if (!socket || socket.readyState !== WebSocket.OPEN) { resolve(null); return; }
+        answerClaim(false);
+        claimRef.current = (granted) => resolve(granted ? giveBack : null);
+        setError(''); setTakingControl(true);
+        socket.send(JSON.stringify({ type: 'control_request', force: true }));
+      }),
+    };
+  }, [answerClaim, send, setError]);
 
   useEffect(() => {
     if (!isReady) { setPhase('connecting'); return; }
@@ -167,7 +170,8 @@ function BrowserSessionView({ workflowId, nodeId, visible, agentName, ref }: { w
           const message = JSON.parse(event.data);
           if (message.type === 'attached') setPhase(message.running ? 'live' : 'idle');
           if (message.type === 'state') { setState(message); if (!terminalStreamError) setPhase('live'); setTakingControl(false); }
-          if (message.type === 'idle') { streamEpoch += 1; setPhase('idle'); setState({ state: 'idle' }); setHasFrame(false); frameRef.current = null; setAgentAction(null); setDialog(null); }
+          // A stopped browser answers every request, a control request too, with `idle`.
+          if (message.type === 'idle') { streamEpoch += 1; setPhase('idle'); setState({ state: 'idle' }); setHasFrame(false); frameRef.current = null; setAgentAction(null); setDialog(null); setTakingControl(false); answerClaim(false); }
           if (message.type === 'page') { setAddress(message.url || ''); setPageUrl(message.url || ''); }
           if (message.type === 'agent_action') {
             // Drawn on the picture shown: none before the first one, none for another tab.
