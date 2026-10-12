@@ -11,12 +11,6 @@
       the key migrations and every later write. The two theme lists must
       match AVAILABLE_THEMES and DARK_FAMILY there; the
       contexts/__tests__/themePrePaint.test.ts test enforces it.
-
-      Home (Normal mode) shows the base theme of the stored theme's family
-      (src/app/ShellThemeProvider.tsx); the saved screen is read the way
-      readStoredShellMode in src/store/useAppStore.ts reads it. With Normal
-      mode turned off (VITE_NORMAL_MODE=false) the app corrects the theme
-      on its first render.
     -->
     <script>
       (function () {
@@ -34,13 +28,6 @@
           }
         } catch (e) {
           // Storage blocked by browser policy: keep the default.
-        }
-        try {
-          var shell = localStorage.getItem('ui_shell_mode');
-          if (shell !== 'normal' && shell !== 'dev') shell = localStorage.getItem('ui_pro_mode') === 'true' ? 'dev' : 'normal';
-          if (shell === 'normal') theme = DARK_FAMILY.indexOf(theme) !== -1 ? 'dark' : 'light';
-        } catch (e) {
-          // Storage blocked: the stored theme could not be read either.
         }
         var html = document.documentElement;
         html.setAttribute('data-theme', theme);

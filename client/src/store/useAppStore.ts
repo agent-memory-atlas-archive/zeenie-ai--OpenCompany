@@ -219,9 +219,8 @@ const loadBooleanFromStorage = (
 };
 
 /** The saved screen: `ui_shell_mode`, else the old palette choice
- *  (`ui_pro_mode === 'true'` means Dev). index.html's pre-paint theme
- *  script repeats this rule. */
-export const readStoredShellMode = (): ShellMode => {
+ *  (`ui_pro_mode === 'true'` means Dev). */
+const readStoredShellMode = (): ShellMode => {
   try {
     const saved = localStorage.getItem(STORAGE_KEYS.shellMode);
     if (saved === 'normal' || saved === 'dev') return saved;

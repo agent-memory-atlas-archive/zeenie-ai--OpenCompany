@@ -55,7 +55,7 @@ import {
   type WorkflowControlPendingMutation,
   type WorkflowControlStatus,
 } from '../../contexts/WebSocketContext';
-import { ThemeSwitcher } from '@/components/ui/ThemeSwitcher';
+import { ThemeButton } from '@/components/ui/ThemeButton';
 import { cn } from '@/lib/utils';
 import { featureFlags } from '@/lib/featureFlags';
 import { ModeToggle } from '@/components/shell/ModeToggle';
@@ -415,7 +415,11 @@ const TopToolbar: React.FC<TopToolbarProps> = ({
           <KeyRound />
         </Button>
 
-        <ThemeSwitcher />
+        <ThemeButton
+          variant="outline"
+          size="icon-sm"
+          className="border-action-secret-border bg-action-secret-soft text-action-secret-ink hover:bg-action-secret-hover"
+        />
 
         {user && (
           <Button

@@ -4,24 +4,16 @@
  * top bar with the logo and the theme button. Connecting and sign-in render
  * inside one, so the orb glides from one's slot to the other's. As the
  * overlay (signed in, the server away) it covers the app, which stays
- * mounted underneath and inert, and borrows the orb until it goes. While
- * one shows, the theme is the base of the chosen family, as on Home.
+ * mounted underneath and inert, and borrows the orb until it goes.
  */
 
-import { useLayoutEffect, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import { OcLogo } from '@/components/brand/Logo';
-import { ThemeButton } from '@/features/home/header/ThemeButton';
+import { ThemeButton } from '@/components/ui/ThemeButton';
 import { OrbStage } from '@/features/home/orb/OrbStage';
 import { cn } from '@/lib/utils';
-import { useShellDialogsStore } from '@/stores/shellDialogsStore';
 
 export function ConnectScreen({ overlay = false, children }: { overlay?: boolean; children: ReactNode }) {
-  useLayoutEffect(() => {
-    const { setConnectScreenOpen } = useShellDialogsStore.getState();
-    setConnectScreenOpen(true);
-    return () => setConnectScreenOpen(false);
-  }, []);
-
   return (
     <div
       role={overlay ? 'dialog' : undefined}

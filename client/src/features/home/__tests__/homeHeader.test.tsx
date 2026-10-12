@@ -21,7 +21,7 @@ vi.mock('@/contexts/WebSocketContext', async (importOriginal) => ({
 vi.mock('../../../app/useShellActions', () => ({ enterDev: vi.fn(), enterNormal: vi.fn() }));
 vi.mock('../../../app/ShellModeSwitch', () => ({ useShellMode: () => 'normal' }));
 vi.mock('../workspace/WorkspaceButton', () => ({ WorkspaceButton: () => null }));
-vi.mock('../header/ThemeButton', () => ({ ThemeButton: () => null }));
+vi.mock('@/components/ui/ThemeButton', () => ({ ThemeButton: () => null }));
 vi.mock('../ui/pillToast', () => ({ pillToast: vi.fn() }));
 vi.mock('@/lib/workspaceUpload', () => ({ uploadToWorkspace: vi.fn() }));
 

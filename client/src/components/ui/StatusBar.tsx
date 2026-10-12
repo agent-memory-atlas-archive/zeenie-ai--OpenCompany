@@ -14,14 +14,8 @@
 import * as React from 'react';
 import { useEffect, useState } from 'react';
 import { useWebSocket } from '../../contexts/WebSocketContext';
-import { useTheme, type ThemeName } from '../../contexts/ThemeContext';
+import { THEME_LABEL, useTheme } from '../../contexts/ThemeContext';
 import { cn } from '@/lib/utils';
-
-const THEME_LABEL: Record<ThemeName, string> = {
-  light:  'LIGHT',
-  dark:   'DARK',
-  atomic: 'ATOMIC',
-};
 
 interface StatusBarProps {
   workflowName?: string;
@@ -87,7 +81,7 @@ export const StatusBar: React.FC<StatusBarProps> = ({ workflowName, nodeCount })
 
       <span className="ml-auto flex items-center gap-3">
         <span>
-          THEME: <span className="text-fg-default">{THEME_LABEL[theme]}</span>
+          THEME: <span className="text-fg-default">{THEME_LABEL[theme].toUpperCase()}</span>
         </span>
         <Sep />
         <span className="tabular-nums">{clock}</span>

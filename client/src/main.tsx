@@ -17,8 +17,8 @@ import './themes/atomic.css'
 import './themes/animations.css'
 import './index.css'
 import App from './App'
-import { ShellThemeProvider } from './app/ShellThemeProvider'
 import { AuthProvider } from './contexts/AuthContext'
+import { ThemeProvider } from './contexts/ThemeContext'
 import { WebSocketProvider } from './contexts/WebSocketContext'
 import { queryClient } from './lib/queryClient'
 import {
@@ -39,13 +39,13 @@ createRoot(document.getElementById('root')!).render(
         dehydrateOptions: { shouldDehydrateQuery: shouldPersistQuery },
       }}
     >
-      <ShellThemeProvider>
+      <ThemeProvider>
         <AuthProvider>
           <WebSocketProvider>
             <App />
           </WebSocketProvider>
         </AuthProvider>
-      </ShellThemeProvider>
+      </ThemeProvider>
       {import.meta.env.DEV && (
         <ReactQueryDevtools initialIsOpen={false} buttonPosition="bottom-right" />
       )}

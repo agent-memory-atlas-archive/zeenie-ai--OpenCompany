@@ -18,6 +18,7 @@ import { ModeToggle } from '@/components/shell/ModeToggle';
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
+import { ThemeButton } from '@/components/ui/ThemeButton';
 import { cn } from '@/lib/utils';
 import { useWorkflowControlPending } from '@/stores/workflowControlStore';
 import { PHOTO_TYPES, useRenameEmployee, useSetEmployeePhoto } from '../data/identity';
@@ -31,7 +32,6 @@ import { pillToast } from '../ui/pillToast';
 import { WorkspaceButton } from '../workspace/WorkspaceButton';
 import { GuideButton } from './GuideButton';
 import { NewConversationButton } from './NewConversationButton';
-import { ThemeButton } from './ThemeButton';
 
 /** "Receptionist · WhatsApp, Google Calendar". */
 function subtitleOf(employee: EmployeeSummary): string {

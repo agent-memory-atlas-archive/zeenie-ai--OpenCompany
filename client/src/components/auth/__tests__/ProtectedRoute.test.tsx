@@ -5,8 +5,7 @@
  * answers, then sign-in or the app; the sign-in screen kept up while a
  * sign-in finishes, for its welcome; and, signed in, Connecting over the
  * app while the WebSocket is down, the app staying mounted, an expired
- * session going to sign-in. The theme shows as its base while a
- * Connecting or sign-in screen is up.
+ * session going to sign-in.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -27,9 +26,18 @@ let ws: { reconnecting: boolean };
 vi.mock('../../../contexts/AuthContext', () => ({ useAuth: () => auth }));
 vi.mock('../../../contexts/WebSocketContext', () => ({ useWebSocketActions: () => ws }));
 vi.mock('../LoginPage', () => ({ default: () => <p>Sign in page</p> }));
-vi.mock('@/features/home/header/ThemeButton', () => ({ ThemeButton: () => null }));
+// Only the gate's screen (ConnectScreen) shows the theme button here, so the
+// button stands for that screen: whether it is up, and how often it mounted.
+let screens = 0;
+vi.mock('@/components/ui/ThemeButton', () => ({
+  ThemeButton: () => {
+    useEffect(() => {
+      screens += 1;
+    }, []);
+    return <span>Theme button</span>;
+  },
+}));
 
-import { useShellDialogsStore } from '@/stores/shellDialogsStore';
 import ProtectedRoute from '../ProtectedRoute';
 
 let mounts = 0;
@@ -60,6 +68,7 @@ beforeEach(() => {
   // No WebGL in jsdom: the orb's slots show the mark.
   getContext = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
   mounts = 0;
+  screens = 0;
   ws = { reconnecting: false };
   auth = {
     isAuthenticated: false,
@@ -89,7 +98,7 @@ describe('the sign-in gate', () => {
     expect(screen.getByText('Connecting')).toBeInTheDocument();
     expect(screen.getByText('Trying again in 2s')).toBeInTheDocument();
     expect(screen.getByText('Attempt 1')).toBeInTheDocument();
-    expect(useShellDialogsStore.getState().connectScreenOpen).toBe(true);
+    expect(screen.getByText('Theme button')).toBeInTheDocument();
 
     await seconds(2);
     expect(auth.checkAuth).toHaveBeenCalledTimes(1);
@@ -110,7 +119,8 @@ describe('the sign-in gate', () => {
     await seconds(1.5);
     expect(screen.getByText('Sign in page')).toBeInTheDocument();
     // One screen throughout, so the orb glides from Connecting to sign-in.
-    expect(useShellDialogsStore.getState().connectScreenOpen).toBe(true);
+    expect(screen.getByText('Theme button')).toBeInTheDocument();
+    expect(screens).toBe(1);
   });
 
   it('goes straight into the app after Connected when the session is good', async () => {
@@ -121,7 +131,7 @@ describe('the sign-in gate', () => {
     expect(screen.getByRole('heading', { name: 'Connected' })).toBeInTheDocument();
     await seconds(1.5);
     expect(screen.getByText('The app')).toBeInTheDocument();
-    expect(useShellDialogsStore.getState().connectScreenOpen).toBe(false);
+    expect(screen.queryByText('Theme button')).not.toBeInTheDocument();
   });
 
   it('keeps the sign-in screen up until the sign-in finishes, for its welcome', () => {
@@ -130,13 +140,13 @@ describe('the sign-in gate', () => {
     rerender(view());
     expect(screen.getByText('Sign in page')).toBeInTheDocument();
     expect(screen.queryByText('The app')).not.toBeInTheDocument();
-    expect(useShellDialogsStore.getState().connectScreenOpen).toBe(true);
+    expect(screen.getByText('Theme button')).toBeInTheDocument();
 
     auth = { ...auth, signingIn: false };
     rerender(view());
     expect(screen.getByText('The app')).toBeInTheDocument();
     expect(mounts).toBe(1);
-    expect(useShellDialogsStore.getState().connectScreenOpen).toBe(false);
+    expect(screen.queryByText('Theme button')).not.toBeInTheDocument();
   });
 
   it('shows the app when the session is good, and sign-in when it is not', () => {

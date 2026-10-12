@@ -1,15 +1,13 @@
 /**
  * index.html carries a pre-paint copy of ThemeProvider's initial-theme logic
- * and of the shell's Home rule (plain ES5, so it can run before the bundle).
- * These tests keep the two in lockstep: the same theme lists, and the same
- * answer for every storage state.
+ * (plain ES5, so it can run before the bundle). These tests keep the two in
+ * lockstep: the same theme lists, and the same answer for every storage
+ * state.
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { createElement, type ReactNode } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { renderHook } from '@testing-library/react';
-import { readStoredShellMode } from '../../store/useAppStore';
 import { AVAILABLE_THEMES, DARK_FAMILY, ThemeProvider, useTheme } from '../ThemeContext';
 
 // LF line endings, as the HTML parser produces, so a script's text can be
@@ -68,10 +66,6 @@ describe('pre-paint theme script', () => {
     ['an unknown stored name', { 'opencompany-theme': 'neon' }],
     ['an unknown name with darkMode false', { 'opencompany-theme': 'neon', darkMode: 'false' }],
     ['a removed theme', { 'opencompany-theme': 'cyber' }],
-    ['Home with a stylized light theme', { 'opencompany-theme': 'atomic', ui_shell_mode: 'normal' }],
-    ['the editor with a stylized theme', { 'opencompany-theme': 'atomic', ui_shell_mode: 'dev' }],
-    ['the old Dev palette choice', { 'opencompany-theme': 'atomic', ui_pro_mode: 'true' }],
-    ['an unknown saved screen', { 'opencompany-theme': 'atomic', ui_shell_mode: 'kiosk' }],
   ])('agrees with ThemeProvider for %s', (_label, stored) => {
     for (const [key, value] of Object.entries(stored)) localStorage.setItem(key, value);
     new Function(prePaintScript())();
@@ -81,19 +75,15 @@ describe('pre-paint theme script', () => {
 
     resetDom();
     for (const [key, value] of Object.entries(stored)) localStorage.setItem(key, value);
-    // What ShellThemeProvider passes, from the store's own reading of storage.
-    const baseOnly = readStoredShellMode() === 'normal';
-    const { result, unmount } = renderHook(() => useTheme(), {
-      wrapper: ({ children }: { children: ReactNode }) => createElement(ThemeProvider, { baseOnly, children }),
-    });
+    const { result, unmount } = renderHook(() => useTheme(), { wrapper: ThemeProvider });
     expect(prePainted).toEqual({ theme: result.current.theme, dark: result.current.isDarkMode });
     unmount();
   });
 
   it.each<[string, Record<string, string>, string]>([
-    ['Home shows a stylized light theme as light', { 'opencompany-theme': 'atomic' }, 'light'],
+    ['Home shows the stored theme', { 'opencompany-theme': 'atomic', ui_shell_mode: 'normal' }, 'atomic'],
     ['the editor shows the stored theme', { 'opencompany-theme': 'atomic', ui_shell_mode: 'dev' }, 'atomic'],
-    ['a removed theme opens in dark', { 'opencompany-theme': 'cyber', ui_shell_mode: 'dev' }, 'dark'],
+    ['a removed theme opens in dark', { 'opencompany-theme': 'cyber' }, 'dark'],
   ])('%s', (_label, stored, expected) => {
     for (const [key, value] of Object.entries(stored)) localStorage.setItem(key, value);
     new Function(prePaintScript())();

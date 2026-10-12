@@ -1,6 +1,6 @@
 /**
  * The Normal / Dev switch end to end: the real toggle, shell actions,
- * transition, screen switch and theme rule. Only the two screens are
+ * transition, screen switch and theme. Only the two screens are
  * stand-ins.
  */
 
@@ -14,8 +14,8 @@ vi.mock('../../features/home/HomeShell', () => ({ default: () => <div>Home scree
 
 import { ModeToggle } from '../../components/shell/ModeToggle';
 import { useAppStore } from '../../store/useAppStore';
+import { ThemeProvider } from '../../contexts/ThemeContext';
 import { ShellModeSwitch } from '../ShellModeSwitch';
-import { ShellThemeProvider } from '../ShellThemeProvider';
 
 const html = document.documentElement;
 
@@ -52,21 +52,21 @@ describe('mode switch', () => {
     expect(localStorage.getItem('ui_shell_mode')).toBe('dev');
   });
 
-  it('shows Home in the base theme and the editor in the chosen one', async () => {
+  it('shows the chosen theme in both modes', async () => {
     localStorage.setItem('opencompany-theme', 'atomic');
     const user = userEvent.setup();
     render(
-      <ShellThemeProvider>
+      <ThemeProvider>
         <ModeToggle />
         <ShellModeSwitch />
-      </ShellThemeProvider>,
+      </ThemeProvider>,
     );
     await screen.findByText('Workflow editor');
     expect(html.dataset.theme).toBe('atomic');
 
     await user.click(screen.getByRole('radio', { name: 'Normal' }));
     await screen.findByText('Home screen');
-    expect(html.dataset.theme).toBe('light');
+    expect(html.dataset.theme).toBe('atomic');
     expect(localStorage.getItem('opencompany-theme')).toBe('atomic');
 
     await user.click(screen.getByRole('radio', { name: 'Dev' }));

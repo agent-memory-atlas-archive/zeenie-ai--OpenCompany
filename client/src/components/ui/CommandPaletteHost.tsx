@@ -32,7 +32,7 @@ import {
   Upload,
 } from 'lucide-react';
 import { CommandPalette, type CommandItem } from './CommandPalette';
-import { AVAILABLE_THEMES, useTheme, type ThemeName } from '../../contexts/ThemeContext';
+import { AVAILABLE_THEMES, THEME_LABEL, useTheme } from '../../contexts/ThemeContext';
 import {
   type WorkflowControlPendingMutation,
   type WorkflowControlStatus,
@@ -59,12 +59,6 @@ export interface CommandPaletteHandlers {
    *  editor's way to what ⌘K does on Home, where ⌘K is the palette). */
   focusChat?: () => void;
 }
-
-const THEME_LABEL: Record<ThemeName, string> = {
-  light:  'Light',
-  dark:   'Dark',
-  atomic: 'Atomic Modern',
-};
 
 interface Props {
   open: boolean;

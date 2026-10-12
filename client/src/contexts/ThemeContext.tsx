@@ -7,20 +7,16 @@
  * write the theme to `<html data-theme>` (and the legacy
  * `<html class="dark">` flag for any `dark:` Tailwind variants still
  * in use), persist the user's choice to localStorage, and migrate legacy
- * callers reading `isDarkMode` / `toggleTheme`.
- *
- * Two themes are tracked: the one the user chose (`chosenTheme`, persisted)
- * and the one on the page (`theme`). They differ only under `baseOnly`,
- * which shows a chosen stylized theme as its family's base theme (light or
- * dark) and keeps the choice for when it clears. Home sets it (see
- * app/ShellThemeProvider): Home is designed for the two base themes only.
+ * callers reading `isDarkMode`. Home, the editor and the sign-in gate all
+ * show the chosen theme; the theme button steps through the themes with
+ * `cycleTheme`.
  *
  * The DOM is written synchronously inside `setTheme`, before React state
  * changes, so any effect reacting to the new theme (the sound pack reads
  * `--sound-pack` from computed style) already sees the new tokens.
- * `index.html` runs a pre-paint copy of `loadInitialTheme` and the
- * `baseOnly` rule so the first frame is already themed; its theme lists
- * are locked to the ones below by `contexts/__tests__/themePrePaint.test.ts`.
+ * `index.html` runs a pre-paint copy of `loadInitialTheme` so the first
+ * frame is already themed; its theme lists are locked to the ones below by
+ * `contexts/__tests__/themePrePaint.test.ts`.
  *
  * `setTheme(next, { reveal: true, origin })` animates the switch: the new
  * theme grows as a circle from `origin` over the old one (View Transitions),
@@ -29,8 +25,8 @@
  *
  * Adding a new theme: drop a new CSS file under client/src/themes/
  * scoped to `:root[data-theme="<name>"]`, import it in main.tsx, and
- * add the name to `AVAILABLE_THEMES` below and to the pre-paint script
- * in index.html.
+ * add the name to `AVAILABLE_THEMES` and `THEME_LABEL` below and to the
+ * pre-paint script in index.html.
  */
 
 import React, { createContext, useCallback, useContext, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -41,9 +37,16 @@ import { prefersReducedMotion } from '../lib/useReducedMotion';
 
 export type ThemeName = 'light' | 'dark' | 'atomic';
 
-/** Order matters: it is the order of the ThemeSwitcher menu and the
- *  command palette's theme items. */
+/** Order matters: the theme button steps through it in this order, and it
+ *  is the order of Settings → Appearance and the command palette. */
 export const AVAILABLE_THEMES: readonly ThemeName[] = ['light', 'dark', 'atomic'];
+
+/** Each theme's name, wherever one is shown. */
+export const THEME_LABEL: Record<ThemeName, string> = {
+  light: 'Light',
+  dark: 'Dark',
+  atomic: 'Atomic',
+};
 
 const THEME_STORAGE_KEYS = BRAND_STORAGE_KEYS.theme;
 const LEGACY_DARK_MODE_KEY = 'darkMode';
@@ -52,20 +55,9 @@ const LEGACY_DARK_MODE_KEY = 'darkMode';
  *  Tailwind variant so existing `dark:` utilities resolve correctly. */
 export const DARK_FAMILY: ReadonlySet<ThemeName> = new Set<ThemeName>(['dark']);
 
-export function isDarkTheme(theme: ThemeName): boolean {
-  return DARK_FAMILY.has(theme);
-}
-
-/** The base theme of the other family: any dark-family theme maps to
- *  `light`, any light-family theme to `dark`. Drives the sun/moon toggle. */
-export function oppositeBaseTheme(theme: ThemeName): ThemeName {
-  return DARK_FAMILY.has(theme) ? 'light' : 'dark';
-}
-
-/** The base theme of the same family: `dark` for a dark-family theme,
- *  `light` otherwise. What `baseOnly` shows for a chosen theme. */
-export function familyBaseTheme(theme: ThemeName): ThemeName {
-  return DARK_FAMILY.has(theme) ? 'dark' : 'light';
+/** The theme after `theme` in `AVAILABLE_THEMES`, wrapping round. */
+export function nextTheme(theme: ThemeName): ThemeName {
+  return AVAILABLE_THEMES[(AVAILABLE_THEMES.indexOf(theme) + 1) % AVAILABLE_THEMES.length];
 }
 
 export interface SetThemeOptions {
@@ -76,17 +68,14 @@ export interface SetThemeOptions {
 }
 
 interface ThemeContextType {
-  /** The theme on the page (what `<html data-theme>` says). */
+  /** The chosen theme, which is the one on the page (`<html data-theme>`). */
   theme: ThemeName;
-  /** The theme the user chose. Differs from `theme` only under `baseOnly`. */
-  chosenTheme: ThemeName;
-  /** Choose a theme. Under `baseOnly` the page shows its family's base. */
   setTheme: (t: ThemeName, options?: SetThemeOptions) => void;
   availableThemes: readonly ThemeName[];
   /** True for every theme in `DARK_FAMILY`. */
   isDarkMode: boolean;
-  /** Flip to the other family's base theme (see `oppositeBaseTheme`). */
-  toggleTheme: (options?: SetThemeOptions) => void;
+  /** Switch to the next theme (see `nextTheme`). */
+  cycleTheme: (options?: SetThemeOptions) => void;
 }
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
@@ -113,8 +102,7 @@ function loadInitialTheme(): ThemeName {
   return 'dark';
 }
 
-/** Write `theme` to `<html>`. Idempotent. Storage holds the chosen theme,
- *  which is not always the one on the page, so it is saved separately. */
+/** Write `theme` to `<html>`. Idempotent. */
 export function applyThemeToDom(theme: ThemeName): void {
   const html = document.documentElement;
   if (html.dataset.theme !== theme) html.dataset.theme = theme;
@@ -122,7 +110,7 @@ export function applyThemeToDom(theme: ThemeName): void {
   invalidateMotionTokens();
 }
 
-function saveChosenTheme(theme: ThemeName): void {
+function saveTheme(theme: ThemeName): void {
   try {
     localStorage.setItem(THEME_STORAGE_KEYS.canonical, theme);
   } catch {
@@ -153,49 +141,30 @@ function revealRadius(origin: { x: number; y: number }): number {
 
 let fadeTimer: number | undefined;
 
-interface ThemeProviderProps {
-  children: React.ReactNode;
-  /** Show only the base themes: a chosen stylized theme appears as its
-   *  family's base (`familyBaseTheme`). The choice itself is kept and
-   *  shows again once this clears. */
-  baseOnly?: boolean;
-}
-
-export const ThemeProvider: React.FC<ThemeProviderProps> = ({ children, baseOnly = false }) => {
-  const [chosen, setChosen] = useState<ThemeName>(loadInitialTheme);
-  const shown = baseOnly ? familyBaseTheme(chosen) : chosen;
+export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [theme, setThemeState] = useState<ThemeName>(loadInitialTheme);
   // The most recently requested theme. A revealed switch commits React state
   // only inside the View Transition callback, so a second click before then
-  // must toggle from the pending theme, not the rendered one.
-  const requestedRef = useRef<ThemeName>(chosen);
-  const baseOnlyRef = useRef(baseOnly);
-
-  useLayoutEffect(() => {
-    baseOnlyRef.current = baseOnly;
-  }, [baseOnly]);
+  // must step on from the pending theme, not the rendered one.
+  const requestedRef = useRef<ThemeName>(theme);
 
   // Safety net for the first render (no pre-paint script, e.g. tests), and
-  // the path for `baseOnly` changing (a mode switch). Layout effects run
-  // before every passive effect, so consumers still see the DOM already
-  // switched.
+  // the save of every choice. Layout effects run before every passive
+  // effect, so consumers still see the DOM already switched.
   useLayoutEffect(() => {
-    applyThemeToDom(shown);
-  }, [shown]);
-
-  useLayoutEffect(() => {
-    saveChosenTheme(chosen);
-  }, [chosen]);
+    applyThemeToDom(theme);
+    saveTheme(theme);
+  }, [theme]);
 
   const setTheme = useCallback((next: ThemeName, options?: SetThemeOptions) => {
     requestedRef.current = next;
     const html = document.documentElement;
-    const onPage = (theme: ThemeName) => (baseOnlyRef.current ? familyBaseTheme(theme) : theme);
     const commit = () => {
-      applyThemeToDom(onPage(next));
-      setChosen(next);
+      applyThemeToDom(next);
+      setThemeState(next);
     };
 
-    if (!options?.reveal || prefersReducedMotion() || html.dataset.theme === onPage(next)) {
+    if (!options?.reveal || prefersReducedMotion() || html.dataset.theme === next) {
       commit();
       return;
     }
@@ -218,8 +187,8 @@ export const ThemeProvider: React.FC<ThemeProviderProps> = ({ children, baseOnly
       // keeps a stale callback from overriding it.
       transition = doc.startViewTransition(() => {
         const latest = requestedRef.current;
-        applyThemeToDom(onPage(latest));
-        flushSync(() => setChosen(latest));
+        applyThemeToDom(latest);
+        flushSync(() => setThemeState(latest));
       });
     } catch {
       html.classList.remove(SWAPPING_CLASS);
@@ -251,23 +220,22 @@ export const ThemeProvider: React.FC<ThemeProviderProps> = ({ children, baseOnly
       .finally(() => html.classList.remove(SWAPPING_CLASS));
   }, []);
 
-  const toggleTheme = useCallback(
+  const cycleTheme = useCallback(
     (options?: SetThemeOptions) => {
-      setTheme(oppositeBaseTheme(requestedRef.current), options);
+      setTheme(nextTheme(requestedRef.current), options);
     },
     [setTheme],
   );
 
   const value = useMemo<ThemeContextType>(
     () => ({
-      theme: shown,
-      chosenTheme: chosen,
+      theme,
       setTheme,
       availableThemes: AVAILABLE_THEMES,
-      isDarkMode: DARK_FAMILY.has(shown),
-      toggleTheme,
+      isDarkMode: DARK_FAMILY.has(theme),
+      cycleTheme,
     }),
-    [shown, chosen, setTheme, toggleTheme],
+    [theme, setTheme, cycleTheme],
   );
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;

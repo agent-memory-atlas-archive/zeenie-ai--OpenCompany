@@ -15,7 +15,7 @@ import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
-import { isDarkTheme, useTheme } from '@/contexts/ThemeContext';
+import { AVAILABLE_THEMES, THEME_LABEL, useTheme } from '@/contexts/ThemeContext';
 import { animate } from '@/lib/motion';
 import {
   browserTimezone,
@@ -167,27 +167,27 @@ export function ProfileTab({ onDone }: { onDone: () => void }) {
         />
 
         <div data-stagger className="flex flex-col">
-          <SettingRow title="Appearance" detail="Choose light or dark.">
+          <SettingRow title="Appearance" detail="Choose a theme.">
             <ToggleGroup
               type="single"
               variant="segmented"
               aria-label="Appearance"
-              value={isDarkTheme(theme) ? 'dark' : 'light'}
+              value={theme}
               // The new theme grows from where it was clicked.
               onPointerDown={(event) => {
                 revealFrom.current = { x: event.clientX, y: event.clientY };
               }}
               onValueChange={(next) => {
-                if (next === 'light' || next === 'dark') setTheme(next, { reveal: true, origin: revealFrom.current });
+                const chosen = AVAILABLE_THEMES.find((name) => name === next);
+                if (chosen) setTheme(chosen, { reveal: true, origin: revealFrom.current });
                 revealFrom.current = undefined;
               }}
             >
-              <ToggleGroupItem value="light" className="px-3.5 text-xs">
-                Light
-              </ToggleGroupItem>
-              <ToggleGroupItem value="dark" className="px-3.5 text-xs">
-                Dark
-              </ToggleGroupItem>
+              {AVAILABLE_THEMES.map((name) => (
+                <ToggleGroupItem key={name} value={name} className="px-3.5 text-xs">
+                  {THEME_LABEL[name]}
+                </ToggleGroupItem>
+              ))}
             </ToggleGroup>
           </SettingRow>
           <FormField
