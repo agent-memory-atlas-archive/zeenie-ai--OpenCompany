@@ -38,7 +38,7 @@ const unwrap = (d: any) =>
 const fmt = (s: string) => s.replace(/\\n/g, '\n').replace(/\\t/g, '\t');
 
 /** Terminal-style surface for CLI stdout — the same --code-* tokens the
- * JSON viewer uses, so all 12 themes paint it in their own palette. */
+ * JSON viewer uses, so every theme paints it in its own palette. */
 const TERMINAL_STYLE = {
   background: 'var(--code-bg)',
   color: 'var(--code-text)',

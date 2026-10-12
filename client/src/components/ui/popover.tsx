@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils"
  * Popover — floating content anchored to a trigger or an anchor (shadcn,
  * on the repo's tokens). Radix supplies placement, collision handling,
  * focus management and dismissal. `menu-pop` is the design-handoff hook
- * the stylized themes decorate, as on the dropdown menu.
+ * per-theme CSS can decorate, as on the dropdown menu.
  */
 function Popover({ ...props }: React.ComponentProps<typeof PopoverPrimitive.Root>) {
   return <PopoverPrimitive.Root data-slot="popover" {...props} />

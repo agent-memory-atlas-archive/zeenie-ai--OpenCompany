@@ -20,7 +20,7 @@
 //     and a few non-color UI primitives.
 //
 // AUTHORITATIVE SOURCE for color tokens: the `:root[data-theme="..."]`
-// blocks in `client/src/themes/<name>.css` (10 themes) plus the shadcn
+// blocks in `client/src/themes/<name>.css` (light, dark, atomic) plus the shadcn
 // HSL-triplet bridge in `client/src/index.css`. New components consume
 // those via Tailwind utilities (`bg-bg-app`, `text-fg-default`,
 // `bg-action-run-soft`, `bg-node-agent-soft`) — never `theme.colors.X`

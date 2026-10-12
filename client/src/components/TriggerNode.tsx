@@ -137,9 +137,8 @@ const TriggerNode: React.FC<NodeProps<NodeData>> = ({ id, type, data, isConnecta
 
   return (
     // `sq-node` + `node-trigger` + `selected` co-classes activate per-theme
-    // square-node decorations (Renaissance wax seal, Steampunk rivets, Edo
-    // hanko seal, Surveillance REC LED, Cyber neon underglow). The
-    // `node-trigger` co-class lets per-type theme rules narrow further.
+    // square-node styling (Atomic's). The `node-trigger` co-class lets
+    // per-type theme rules narrow further.
     // `data-executing` binds the CSS pulse animation owned by base.css.
     <div
       className={`sq-node node-trigger ${selected ? 'selected' : ''}`}
@@ -157,8 +156,8 @@ const TriggerNode: React.FC<NodeProps<NodeData>> = ({ id, type, data, isConnecta
     >
       {/* Main Trigger Node — visual styling lives in base.css + per-theme
           CSS targeting `.sq-node-box`. Inner box keeps only layout
-          (size, flex), and per-theme decorations like Cyber neon glow,
-          Renaissance wax seal, and Steampunk rivets reach the pixels. */}
+          (size, flex), so per-theme styling (Atomic's) reaches the
+          pixels. */}
       <div
         className={`sq-node-box ${isArmed ? 'opencompany-trigger-armed' : ''}`}
         style={{

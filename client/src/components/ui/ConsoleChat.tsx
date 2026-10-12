@@ -9,7 +9,7 @@
  *
  * The console's font size applies to the conversation. The `chat` panel
  * hook stays on ConsolePanel's root; the turns carry `chat-msg-user` /
- * `chat-msg-bot` for the stylized themes.
+ * `chat-msg-bot` for the theme (Atomic paints them).
  */
 
 import type { Ref } from 'react';

@@ -297,10 +297,8 @@ const SquareNode: React.FC<NodeProps<NodeData>> = ({ id, type, data, isConnectab
 
   return (
     // `sq-node` + `selected` co-classes are the design-handoff structural
-    // hooks for per-theme square-node decorations (rivets on Steampunk
-    // sq-node-box::before/::after, hanko seal on Edo, REC LED + surv-blink
-    // on Surveillance, tombstone shape on Rot, gold-foil emblem on
-    // Renaissance, neon underglow on Cyber, etc.).
+    // hooks for per-theme square-node styling (Atomic's `.sq-node-box`
+    // and its selected state).
     <div
       className={`sq-node ${selected ? 'selected' : ''}`}
       data-executing={isExecuting ? '' : undefined}

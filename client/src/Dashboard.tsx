@@ -548,9 +548,8 @@ const DashboardContent: React.FC = () => {
   // `.canvas-host` / `.canvas` background-image (per-theme
   // `--canvas-grid` + multi-layer gradient stack from
   // client/src/themes/<theme>.css) paints through. Painting a
-  // backgroundColor here would hide every theme decoration —
-  // Cyber perspective grid, Renaissance fleur-de-lis, Surveillance
-  // CCTV reticle, Steampunk brass bolts, etc.
+  // backgroundColor here would hide the theme's canvas decoration
+  // (Atomic's starburst).
   const reactFlowStyle = React.useMemo(() => ({
     width: '100%',
     height: '100%',
@@ -1207,12 +1206,9 @@ const DashboardContent: React.FC = () => {
             display: 'flex',
             position: 'relative',
           }}>
-            {/* `canvas-host` + `canvas` activate per-theme canvas
-                decorations (cyber grid backplane, atomic starburst, rot
-                candlelight pools, surveillance crosshair brackets,
-                renaissance fleur-de-lis + marginalia, greek temple key
-                pattern). The `canvas` co-class is the handoff selector
-                used by every per-theme CSS file. Decorative pseudo-
+            {/* `canvas-host` + `canvas` activate the per-theme canvas
+                decoration (Atomic's starburst). The `canvas` co-class is
+                the handoff selector per-theme CSS uses. Decorative pseudo-
                 elements declare pointer-events: none. */}
             <div
               className="canvas-host canvas"

@@ -38,8 +38,7 @@ const StartNode: React.FC<NodeProps<NodeData>> = ({ id, type, data, isConnectabl
 
   return (
     // `sq-node` + `selected` co-classes activate per-theme square-node
-    // decorations (Renaissance wax seal, Steampunk rivets, Edo hanko
-    // seal, Surveillance REC LED, Cyber neon underglow). Visual styling
+    // styling (Atomic's). Visual styling
     // (background, border, radius, shadow) lives in base.css
     // `.sq-node-box { ... }` defaults + per-theme overrides and reads
     // `var(--node-color)` for the per-definition accent.

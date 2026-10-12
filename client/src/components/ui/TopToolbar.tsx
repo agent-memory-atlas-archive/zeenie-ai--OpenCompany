@@ -67,7 +67,7 @@ import { AI_PROVIDER_META } from '../icons/AIProviderIcons';
 
 // New-contract token: --border-default ↔ Tailwind utility `bg-border-default`.
 // Same colour as `bg-border` under light/dark, retints automatically under
-// renaissance / cyber via the per-theme [data-theme="..."] block.
+// Atomic via its [data-theme="atomic"] block.
 const Divider = () => <div className="mx-1 h-6 w-px bg-border-default" />;
 
 interface TopToolbarProps {
@@ -191,18 +191,16 @@ const TopToolbar: React.FC<TopToolbarProps> = ({
   return (
     // border-default + bg-bg-panel are the new-contract tokens. They
     // resolve to the existing colours under light/dark (no visual
-    // change) but pick up the parchment / void surfaces under
-    // renaissance / cyber automatically.
+    // change) and pick up Atomic's surfaces automatically.
     // `toolbar` is the design-handoff structural class — per-theme CSS
-    // attaches panel textures (vellum on Renaissance, scanlines on Cyber,
-    // marble veins on Greek, riveted leather on Steampunk, etc.) +
-    // border treatments via `:root[data-theme="..."] .toolbar`.
+    // attaches its border treatment via `:root[data-theme="..."] .toolbar`
+    // (Atomic's thick slate rule).
     <div className="toolbar flex h-12 items-center justify-between gap-3 border-b border-border-default bg-bg-panel px-3">
       {/* ---------- Left Section ---------- */}
       {/* Design-handoff layout contract: every toolbar cluster is pinned
           (shrink-0) except the workflow-name chip, which is the ONE
-          shrinkable group. Wide-tracking themes (Cyber/Greek uppercase at
-          0.10-0.18em) widen every label; without pinning, the mode toggle
+          shrinkable group. Wide-tracking themes (Atomic's uppercase
+          display type) widen every label; without pinning, the mode toggle
           and action cluster collapse before the name does. */}
       <div className="flex shrink-0 items-center gap-1.5">
         <Button
@@ -230,7 +228,7 @@ const TopToolbar: React.FC<TopToolbarProps> = ({
               {/* font-display + tracking-display drive the per-theme display
                   font + letter-spacing; uppercase is gated by --type-uppercase
                   via the new-contract `tracking-display` token (light/dark
-                  use 0 + none, renaissance + cyber turn it on). */}
+                  use 0 + none, Atomic turns it on). */}
               <span className="font-display tracking-[var(--type-tracking-display)] [text-transform:var(--type-uppercase)]">
                 File
               </span>
@@ -288,8 +286,7 @@ const TopToolbar: React.FC<TopToolbarProps> = ({
             {/* font-display + tracking-display + [text-transform] are
                 theme-driven via the new-contract typography tokens. Under
                 light/dark the workflow name reads as our regular sans-serif;
-                under Renaissance it becomes Cinzel uppercase, under Cyber it
-                becomes Space Mono uppercase. */}
+                under Atomic it becomes Bevan uppercase. */}
             <span className="truncate text-sm font-display font-medium tracking-[var(--type-tracking-display)] text-fg-default [text-transform:var(--type-uppercase)]">
               {workflowName}
             </span>
@@ -531,8 +528,7 @@ const TopToolbar: React.FC<TopToolbarProps> = ({
         </ActionButton>
 
         {/* Status Indicator — font-mono tracks the new-contract --font-mono
-            so renaissance gets IM Fell English and cyber gets JetBrains
-            Mono. Stays system mono under light/dark. */}
+            so Atomic gets Space Mono. Stays system mono under light/dark. */}
         <div
           className={cn(
             'flex items-center gap-2 rounded-sm px-3 py-1 text-xs font-mono',

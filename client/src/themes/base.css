@@ -154,8 +154,8 @@
   --blur-scrim: 6px;         /* backdrop blur behind Home dialogs */
 
   /* ── Home radii — multiples of the per-theme --radius-lg (8px in light and
-   * dark), so the themes that square their corners off (edo 0, greek 2px)
-   * stay square instead of growing pills. ─────────────────────────────── */
+   * dark, 4px in Atomic), so a theme with squarer corners stays
+   * square instead of growing pills. ─────────────────────────────── */
   --radius-row: calc(var(--radius-lg, 8px) * 1.25);      /* 10 — rows, tiles */
   --radius-card: calc(var(--radius-lg, 8px) * 1.5);      /* 12 — cards */
   --radius-panel: calc(var(--radius-lg, 8px) * 2);       /* 16 — settings */
@@ -286,22 +286,22 @@
   --canvas-grid: none;
   --canvas-grid-opacity: 0.4;
   /* The editor canvas's dot grid (React Flow <Background>, index.css). Only
-   * the two base themes draw it (light.css, dark.css); every stylized theme
-   * keeps its own --canvas-grid decoration alone. */
+   * the two base themes draw it (light.css, dark.css); Atomic keeps its own
+   * --canvas-grid decoration alone. */
   --grid-dot: transparent;
 
   /* Node execution pulse colour (Wave 30). Independent of `--node-color`
    * (the node's accent) so the executing-node glow stays high-contrast
    * against the canvas background regardless of which plugin is running.
-   * Each theme overrides this to its most visible accent (Cyber neon
-   * cyan, Renaissance gold, Surveillance REC red, etc.). The default
-   * resolves to the theme's `--info` accent. */
+   * A theme may override this with its most visible accent (Atomic uses
+   * its orange accent). The default resolves to the theme's `--info`
+   * accent. */
   --node-pulse-color: var(--info);
 
   /* Canvas-edge tokens (design-handoff contract). Resting edges are one
    * pale neutral derived from the theme foreground, dashed, thin — so
-   * they stay legible on Renaissance vellum and Cyber's near-black void
-   * alike. Status recolors (executing / completed / error / ...) live in
+   * they stay legible on every theme's canvas, light or dark. Status
+   * recolors (executing / completed / error / ...) live in
    * styles/canvasAnimations.ts and reference ONLY these tokens plus the
    * semantic color tokens. Themes may override any of them. */
   --edge-stroke: color-mix(in srgb, var(--fg-default) var(--tint-edge), transparent);
@@ -311,11 +311,10 @@
   --edge-dash: 5 5;                   /* resting dash rhythm */
   --edge-dash-active: 8 4;            /* executing / pending dash-march rhythm */
 
-  /* Semantic-status alias + soft fills. Several skins (greek / plague /
-   * rot / atomic / wasteland / surveillance) reference `--danger` and the
-   * `--*-soft` family in their decoration rules; before these fallback
-   * declarations existed those var() reads computed to invalid and the
-   * fills silently dropped. The color side (--info/--success/--warning/
+  /* Semantic-status alias + soft fills. Theme decoration rules read
+   * `--danger` and the `--*-soft` family (Atomic's selected workflow card
+   * uses `--warning-soft`); before these fallback declarations existed
+   * such var() reads computed to invalid and the fills silently dropped. The color side (--info/--success/--warning/
    * --destructive) resolves per-theme at computed-value time; themes may
    * override any of these wholesale. */
   --danger: var(--destructive);
@@ -347,9 +346,8 @@
  * frames in the compositor queue). When the tab becomes visible, all
  * paused frames flush at once — with W30's three-layer box-shadow
  * `node-pulse` (peak `0 0 56px 16px color-mix(...)` × 3 layers) running
- * on every executing node, plus Cyber theme's full-viewport
- * `cyber-flicker` (5s opacity) + `cyber-roll` (8s viewport-height
- * translateY), the GPU compositor stalls for 100-200ms. During the stall
+ * on every executing node, the GPU compositor stalls for 100-200ms.
+ * During the stall
  * input events queue but don't dispatch — first click on tab return
  * appears unresponsive.
  *
@@ -392,8 +390,8 @@ html[data-page-hidden] *::after {
  * `--node-workflow`). These rules consume that custom property
  * to draw a sensible default border / gradient / shadow so light, dark,
  * and any theme that doesn't define its own `.node` rule still renders
- * correctly. Per-theme CSS in client/src/themes/<theme>.css overrides
- * these with material-specific decorations (vellum, neon, marble, etc.).
+ * correctly. Per-theme CSS in client/src/themes/<theme>.css may override
+ * these with its own decorations.
  * ============================================================================ */
 
 .node {
@@ -428,8 +426,7 @@ html[data-page-hidden] *::after {
    via canvasAnimations.ts (`.react-flow__node.executing`). The keyframe
    uses --node-pulse-color (theme-controlled high-contrast accent) NOT
    --node-color (plugin accent), so the glow stays visible against any
-   theme background — Cyber's near-black, Renaissance's vellum,
-   Surveillance's grey, etc. */
+   theme background. */
 .react-flow__node.executing .node {
   animation: var(--pulse-keyframe, node-pulse) var(--pulse-duration, 1.4s) var(--pulse-timing, ease-in-out) infinite;
 }

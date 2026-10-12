@@ -4,10 +4,10 @@
  *
  * Why the attribute exists (Wave 33): browsers keep advancing CSS keyframe
  * timing on hidden tabs, and when the tab returns every paused frame of
- * every executing node's three-layer `node-pulse` (plus Cyber's
- * full-viewport flicker/roll) flushes at once. The compositor stalls for
- * 100-200 ms and the first click after returning is swallowed. base.css
- * pauses every CSS animation while the attribute is present. Script-driven
+ * every executing node's three-layer `node-pulse` flushes at once. The
+ * compositor stalls for 100-200 ms and the first click after returning is
+ * swallowed. base.css pauses every CSS animation while the attribute is
+ * present. Script-driven
  * motion (lib/motion, the Home orb) reads `pageActivity` for the same signal.
  *
  * "Can be seen" is the Page Visibility API alone. Chrome also reports a

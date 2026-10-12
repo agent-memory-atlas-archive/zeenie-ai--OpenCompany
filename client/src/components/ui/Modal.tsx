@@ -123,8 +123,7 @@ const Modal: React.FC<ModalProps> = ({
     <Dialog open={isOpen} onOpenChange={(next) => { if (!next) onClose(); }}>
       <DialogPortal>
         {/* bg-bg-overlay reads --bg-overlay (each theme owns its own
-            scrim alpha + tone — Renaissance uses ink-brown, Cyber uses
-            void-near-black, light/dark use plain blacks). */}
+            scrim alpha + tone). */}
         <DialogOverlay className={cn('bg-bg-overlay supports-backdrop-filter:backdrop-blur-xs', OVERLAY_MOTION[motion])} />
         <DialogPrimitive.Content
           onOpenAutoFocus={onOpenAutoFocus}
@@ -134,8 +133,7 @@ const Modal: React.FC<ModalProps> = ({
           className={cn(
             // bg-bg-app + border-border-default consume the new-contract
             // tokens directly so modals inherit the surface hierarchy
-            // defined by the active theme (parchment under Renaissance,
-            // void under Cyber).
+            // defined by the active theme.
             //
             // `modal` is the design-handoff structural hook; Atomic's CSS
             // styles it (with `.modal-head` / `.modal-title`).
@@ -158,9 +156,9 @@ const Modal: React.FC<ModalProps> = ({
           {showHeader ? (
             // Header: bg-bg-panel sits one elevation step above bg-bg-app
             // (panel surface above page surface). font-display + tracking
-            // + text-transform are theme-driven so titles read as Cinzel
-            // uppercase under Renaissance and Space Mono under
-            // Cyber, while staying clean sans-serif under light/dark.
+            // + text-transform are theme-driven so titles read as Bevan
+            // uppercase under Atomic, while staying clean sans-serif
+            // under light/dark.
             <div className="modal-head relative flex min-h-14 w-full shrink-0 items-center border-b border-border-default bg-bg-panel px-5 py-3">
               <DialogTitle className="absolute left-5 flex max-w-[calc(100%_-_5rem)] items-center gap-2 font-display text-base font-semibold tracking-[var(--type-tracking-display)] text-fg-default [text-transform:var(--type-uppercase)]">
                 {titleIcon}

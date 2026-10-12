@@ -45,9 +45,7 @@ function DropdownMenuContent({
         sideOffset={sideOffset}
         align={align}
         // `menu-pop` co-class is the design-handoff structural hook
-        // for per-theme dropdown decorations (parchment + gilded
-        // border on Renaissance, neon outline + > prefix on Cyber,
-        // etc.).
+        // for per-theme dropdown decorations.
         className={cn("menu-pop z-50 max-h-(--radix-dropdown-menu-content-available-height) w-(--radix-dropdown-menu-trigger-width) min-w-32 origin-(--radix-dropdown-menu-content-transform-origin) overflow-x-hidden overflow-y-auto rounded-lg bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10 duration-100 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 data-[state=closed]:overflow-hidden data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95", className )}
         {...props}
       />
@@ -91,9 +89,8 @@ function DropdownMenuItem({
       data-inset={inset}
       data-variant={variant}
       onSelect={handleSelect}
-      // `menu-pop-item` co-class powers per-theme item decorations
-      // (Renaissance ink-spread hover + ✦ marker; Cyber `> ` prefix +
-      // neon glow; etc.) and the W18 hover-sound delegate.
+      // `menu-pop-item` co-class is the per-theme item hook and powers
+      // the W18 hover-sound delegate.
       className={cn(
         "menu-pop-item group/dropdown-menu-item relative flex cursor-default items-center gap-1.5 rounded-md px-1.5 py-1 text-sm outline-hidden select-none focus:bg-accent focus:text-accent-foreground not-data-[variant=destructive]:focus:**:text-accent-foreground data-inset:pl-7 data-[variant=destructive]:text-destructive data-[variant=destructive]:focus:bg-destructive/10 data-[variant=destructive]:focus:text-destructive dark:data-[variant=destructive]:focus:bg-destructive/20 data-disabled:pointer-events-none data-disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 data-[variant=destructive]:*:[svg]:text-destructive",
         className

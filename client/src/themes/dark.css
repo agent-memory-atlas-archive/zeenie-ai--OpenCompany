@@ -138,8 +138,7 @@
   color-scheme: dark;
 }
 
-/* The dark theme only, not the stylized dark themes that share .dark: the
- * editor canvas's dot grid. */
+/* The dark theme's editor canvas dot grid. */
 :root[data-theme="dark"] {
   --grid-dot: color-mix(in srgb, var(--fg-muted) 22%, transparent);
 }

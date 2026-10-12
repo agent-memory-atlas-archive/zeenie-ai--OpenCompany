@@ -2,10 +2,8 @@
  * StatusBar — fixed-bottom system console line.
  *
  * Lives below the canvas, shows workflow name, node count, WebSocket
- * connection state, active theme, and a live clock. Designed to read
- * as a "shell prompt" line under Cyber and a "manuscript footer" under
- * Renaissance via the new-contract typography tokens (font-mono,
- * tracking, uppercase).
+ * connection state, active theme, and a live clock. Its type comes from
+ * the new-contract typography tokens (font-mono, tracking, uppercase).
  *
  * Per the handoff this is the `.statusbar` surface — it always exists,
  * height is 24px, sits above the ConsolePanel toggle bar.
@@ -43,13 +41,11 @@ export const StatusBar: React.FC<StatusBarProps> = ({ workflowName, nodeCount })
 
   return (
     // Fixed-bottom strip: bg-bg-panel + 1px top rule. font-mono carries
-    // through to IM Fell English under Renaissance and JetBrains Mono
-    // under Cyber, system mono under light/dark.
+    // through to Space Mono under Atomic, system mono under light/dark.
     <div
       className={cn(
         // `statusbar` is the handoff structural hook for per-theme
-        // decorations (gauge readouts on Steampunk, REC blink on
-        // Surveillance, illuminated footer on Renaissance).
+        // decorations (Atomic's slate bar).
         'statusbar flex h-6 items-center gap-3 border-t border-border-default bg-bg-panel px-3.5',
         'font-mono text-[11px] tracking-[0.04em] text-fg-muted',
         '[text-transform:var(--type-uppercase)]',
@@ -58,8 +54,8 @@ export const StatusBar: React.FC<StatusBarProps> = ({ workflowName, nodeCount })
       aria-label="Status bar"
     >
       <span className={cn('flex items-center gap-1.5 font-medium', wsTone)}>
-        {/* `pip` is the handoff hook for the per-theme blinking dot
-            (Surveillance fires `surv-blink`, Cyber fires `cyber-blink`). */}
+        {/* `pip` is the handoff hook for the per-theme dot (Atomic
+            colours it). */}
         <span
           className={cn(
             'pip inline-block h-1.5 w-1.5 rounded-full',

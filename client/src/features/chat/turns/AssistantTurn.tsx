@@ -12,8 +12,8 @@
  * replaces it. A run that waits for Resume, failed or was stopped says so
  * where its answer would be.
  *
- * `chat-msg chat-msg-bot` (on the text only) is the theme hook the stylized
- * themes paint as a bubble.
+ * `chat-msg chat-msg-bot` (on the text only) is the theme hook Atomic
+ * paints as a bubble.
  */
 
 import { CircleAlert, Pause, RotateCcw, Square } from 'lucide-react';

@@ -1,9 +1,9 @@
 /**
  * Where the editor's dot grid, the light colour scheme and the scrollbars
  * get their values. The grid is drawn by the two base themes only: light.css
- * and dark.css also style the stylized themes through `:root` and `.dark`,
- * so `--grid-dot` (and the light `color-scheme`) must live in blocks that
- * match only `[data-theme="light"]` / `[data-theme="dark"]`.
+ * also styles Atomic through `:root`, so `--grid-dot` (and the light
+ * `color-scheme`) must live in blocks that match only `[data-theme="light"]`
+ * / `[data-theme="dark"]`.
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';

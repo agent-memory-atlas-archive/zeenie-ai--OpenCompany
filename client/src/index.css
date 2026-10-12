@@ -333,14 +333,13 @@
  * `--canvas-grid` + multi-layer gradient stack) paints through.
  * Per the upstream v11 stylesheet, `.react-flow` ships with only
  * `direction: ltr;` — no background. Painting one here would hide
- * the per-theme decorations (Cyber perspective grid, Renaissance
- * fleur-de-lis, Surveillance CCTV reticle, etc.). When migrating
+ * the per-theme decoration (Atomic's starburst). When migrating
  * to @xyflow/react v12, set `--xy-background-color: transparent;`
  * on `.xy-flow` (v12 sets a default opaque background via custom
  * property). */
 
-/* The editor's dot grid (Dashboard's <Background>): drawn in the base
- * themes, transparent in the stylized ones (--grid-dot, themes/*.css). */
+/* The editor's dot grid (Dashboard's <Background>): drawn in light and
+ * dark, transparent in Atomic (--grid-dot, themes/*.css). */
 .react-flow__background pattern circle {
   fill: var(--grid-dot) !important;
 }
@@ -584,7 +583,7 @@ html.oc-theme-fade *::after {
  * esm/index.js), so its documented theming API is plain CSS custom properties.
  * Declaring them here rather than passing one of its bundled theme objects
  * through the `style` prop means: every <JsonView> in the app is themed with no
- * per-call-site code, and all 12 themes repaint on `data-theme` change through
+ * per-call-site code, and every theme repaints on `data-theme` change through
  * the normal cascade instead of a React re-render.
  * -------------------------------------------------------------------------- */
 
@@ -704,10 +703,6 @@ html.oc-theme-fade *::after {
   border-top: 1px solid var(--border-default);
   margin: 12px 0;
 }
-/* The stylized themes paint a reply (.chat-msg-bot) as a glowing or tinted
- * bubble; code blocks and tables inside keep their own surfaces unglowed. */
-.chat-msg-bot pre,
-.chat-msg-bot table { text-shadow: none; }
 /* While an answer streams, a pulsing dot follows its last words (design
  * handoff chat, "Streaming"): at the end of the last block, or of a list's
  * last item. */

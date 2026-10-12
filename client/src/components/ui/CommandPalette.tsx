@@ -8,11 +8,10 @@
  * the codebase.
  *
  * Token-driven: chrome reads bg-bg-elevated + border-border-strong;
- * active row reads bg-bg-active + text-accent. Under Renaissance the
- * panel becomes an "open scroll" via the per-theme background image
- * (declared in renaissance.css `.cmdk` block — wired through here by
- * applying the `cmdk` class on the outer wrapper). Under Cyber it
- * becomes a "root terminal" with neon-cyan border + scanlines.
+ * active row reads bg-bg-active + text-accent. Under Atomic the panel
+ * takes the theme's thick slate frame and offset shadow (atomic.css
+ * `.cmdk` block — wired through here by applying the `cmdk` class on the
+ * outer wrapper).
  */
 
 import * as React from 'react';
@@ -74,8 +73,8 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ open, onOpenChan
         <DialogPrimitive.Content
           data-slot="command-palette"
           className={cn(
-            // `cmdk` class is the per-theme decorative hook (renaissance
-            // and cyber CSS apply backgrounds + borders + scanlines via
+            // `cmdk` class is the per-theme decorative hook (Atomic's CSS
+            // applies its background, border and shadow via
             // `:root[data-theme="..."] .cmdk`).
             'cmdk fixed left-1/2 top-[14%] z-50 w-[min(560px,92vw)] -translate-x-1/2 overflow-hidden rounded-md border border-border-strong bg-bg-elevated shadow-2xl outline-none',
             'data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 duration-100',

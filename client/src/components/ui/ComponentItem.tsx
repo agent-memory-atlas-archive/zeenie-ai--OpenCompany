@@ -35,8 +35,8 @@ const ComponentItem: React.FC<ComponentItemProps> = ({ definition: localDefiniti
       onDragEnd={() => setIsDragging(false)}
       className={cn(
         // `comp` + `row` are handoff structural hooks: comp activates
-        // per-theme component-card decorations (left accent bar on Cyber,
-        // boomerang corners on Atomic, gold border on Renaissance hover);
+        // per-theme component-card decorations (boomerang corners on
+        // Atomic);
         // row enables the global hover-sound delegate.
         'comp row group relative flex-row items-center gap-3 px-3 py-2 cursor-grab select-none',
         'border-border-default bg-bg-app transition-all duration-150 ease-out',

@@ -124,7 +124,7 @@ const ComponentPalette: React.FC<ComponentPaletteProps> = ({
 
   return (
     // Palette shell: `palette` co-class activates per-theme decorations
-    // (panel textures, neon side-glow on Cyber, marble grain on Greek).
+    // (Atomic's slate edge).
     <div className="palette flex h-full w-full flex-col overflow-hidden border-l border-border-default bg-bg-panel">
       {/* Header Section — bg-bg-app drops one elevation step. */}
       <div className="border-b border-border-default bg-bg-app p-4">

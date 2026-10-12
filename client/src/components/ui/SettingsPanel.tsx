@@ -67,7 +67,7 @@ interface SectionProps {
 const Section: React.FC<SectionProps> = ({ title, Icon, tone, children }) => (
   // bg-bg-elevated + border-default — settings sections are elevated
   // cards stacked inside the modal body. font-display + tracking gives
-  // Renaissance/Cyber their typographic identity on section headers.
+  // Atomic its display type on section headers.
   <div className="mb-4 rounded-md border border-border-default bg-bg-elevated p-4">
     <div className="mb-4 flex items-center gap-2 border-b border-border-default pb-3">
       <div className={`flex h-8 w-8 items-center justify-center rounded-md ${TONE_CLASSES[tone]}`}>
