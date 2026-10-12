@@ -7,6 +7,10 @@ import { Card, CardContent } from '@/components/ui/card';
 interface Props {
   children: ReactNode;
   fallback?: ReactNode;
+  /** The card's wording. The defaults describe the workflow canvas. */
+  title?: string;
+  description?: string;
+  resetLabel?: string;
 }
 
 interface State {
@@ -38,6 +42,11 @@ class ErrorBoundary extends Component<Props, State> {
   public render() {
     if (!this.state.hasError) return this.props.children;
     if (this.props.fallback) return this.props.fallback;
+    const {
+      title = 'Canvas Error Detected',
+      description = 'The workflow canvas encountered an error and needs to be reset. Your workflow data is safe and will be restored.',
+      resetLabel = 'Reset Canvas',
+    } = this.props;
 
     return (
       <div className="flex h-full w-full items-center justify-center bg-background p-8">
@@ -45,17 +54,14 @@ class ErrorBoundary extends Component<Props, State> {
           <CardContent className="space-y-4 p-6 text-center">
             <Alert variant="destructive">
               <AlertTriangle className="h-4 w-4" />
-              <AlertTitle>Canvas Error Detected</AlertTitle>
-              <AlertDescription>
-                The workflow canvas encountered an error and needs to be reset.
-                Your workflow data is safe and will be restored.
-              </AlertDescription>
+              <AlertTitle>{title}</AlertTitle>
+              <AlertDescription>{description}</AlertDescription>
             </Alert>
 
             <div className="flex flex-wrap justify-center gap-3">
               <Button onClick={this.handleReset}>
                 <RotateCcw className="h-4 w-4" />
-                Reset Canvas
+                {resetLabel}
               </Button>
               <Button variant="outline" onClick={this.handleReload}>
                 <RefreshCw className="h-4 w-4" />

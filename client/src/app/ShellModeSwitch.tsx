@@ -72,7 +72,13 @@ export function ShellModeSwitch() {
   const mode = useShellMode();
   return (
     <ShellScreen key={mode} mode={mode}>
-      <ErrorBoundary>
+      {/* A screen whose chunk failed to load stays failed (React.lazy keeps
+          the error), so the card also points at Reload. */}
+      <ErrorBoundary
+        title="This screen didn't load"
+        description="Try again, or reload the page if it still doesn't load."
+        resetLabel="Try again"
+      >
         <Suspense fallback={<ScreenLoading />}>{mode === 'normal' ? <LazyHome /> : <LazyEditor />}</Suspense>
       </ErrorBoundary>
     </ShellScreen>
