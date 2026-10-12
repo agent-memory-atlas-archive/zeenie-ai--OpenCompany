@@ -17,8 +17,8 @@
  *
  * The host is measured every frame and the drawing buffer follows it;
  * nothing is drawn until the host has a size, so a first 0x0 measure never
- * leaves a 1x1 buffer. Frames stop while the page is hidden or the window
- * is blurred (lib/pageActivity).
+ * leaves a 1x1 buffer. Frames stop while the page is hidden
+ * (lib/pageActivity); a visible window keeps them going, focused or not.
  *
  * The browser can take the WebGL context away (after sleep, or when a
  * laptop switches GPU) and hand it back. The engine asks for it back and

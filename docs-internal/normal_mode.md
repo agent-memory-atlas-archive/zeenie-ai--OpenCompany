@@ -191,8 +191,8 @@ a double heartbeat in the core, the heads breathing out and back in turn
 (each head and its crescent are one group), one searching ping per line,
 slightly dimmer, blended in and out over about a second with no jump. The
 engine measures its host every frame, draws nothing until the host has a size,
-and stops its frames while the page is hidden or the window blurred
-(`lib/pageActivity`). The logo itself is one
+and stops its frames while the page is hidden (`lib/pageActivity`); a visible
+window keeps it moving whether or not it has focus. The logo itself is one
 colour; in dark the orb keeps colours of its own (a purple-to-cyan ring; pink,
 yellow and green heads) with white particles and packets; in light it is
 glossy piano-black under a white rim light. Its glows and particles blend

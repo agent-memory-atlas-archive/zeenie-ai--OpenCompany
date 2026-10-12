@@ -1,6 +1,6 @@
 /**
  * Keeps `<html data-page-hidden>` and the `pageActivity` store in step with
- * whether anyone can see the app.
+ * whether the page can be seen.
  *
  * Why the attribute exists (Wave 33): browsers keep advancing CSS keyframe
  * timing on hidden tabs, and when the tab returns every paused frame of
@@ -10,11 +10,11 @@
  * pauses every CSS animation while the attribute is present. Script-driven
  * motion (lib/motion, the Home orb) reads `pageActivity` for the same signal.
  *
- * "Not visible" is the tab being hidden OR the window being blurred:
- * `visibilitychange` alone misses window-minimize on Windows and app
- * switching on macOS, which do fire blur/focus. On resume the attribute is
- * removed two frames later, so the first input dispatches before the
- * composite resumes.
+ * "Can be seen" is the Page Visibility API alone. Chrome also reports a
+ * minimised or fully covered window as hidden, so a window that is only
+ * unfocused (the app beside an editor, or DevTools focused) stays visible
+ * and keeps animating. On resume the attribute is removed two frames later,
+ * so the first input dispatches before the composite resumes.
  *
  * Moved from Dashboard so it runs on both screens, with two fixes: the
  * resume frames are cancelled on unmount and on every new signal (they
@@ -28,7 +28,6 @@ import { pageActivity } from '../lib/pageActivity';
 export function usePageActivitySync(): void {
   useEffect(() => {
     const root = document.documentElement;
-    let blurred = false;
     let outer = 0;
     let inner = 0;
 
@@ -41,7 +40,7 @@ export function usePageActivitySync(): void {
 
     const apply = () => {
       cancelResume();
-      if (document.hidden || blurred) {
+      if (document.hidden) {
         root.setAttribute('data-page-hidden', '');
         pageActivity.set(false);
         return;
@@ -50,32 +49,18 @@ export function usePageActivitySync(): void {
         outer = 0;
         inner = requestAnimationFrame(() => {
           inner = 0;
-          if (document.hidden || blurred) return;
+          if (document.hidden) return;
           root.removeAttribute('data-page-hidden');
           pageActivity.set(true);
         });
       });
     };
 
-    const onVisibility = () => apply();
-    const onBlur = () => {
-      blurred = true;
-      apply();
-    };
-    const onFocus = () => {
-      blurred = false;
-      apply();
-    };
-
     // A page opened in a background tab starts hidden.
     if (document.hidden) apply();
-    document.addEventListener('visibilitychange', onVisibility);
-    window.addEventListener('blur', onBlur);
-    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', apply);
     return () => {
-      document.removeEventListener('visibilitychange', onVisibility);
-      window.removeEventListener('blur', onBlur);
-      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', apply);
       cancelResume();
       root.removeAttribute('data-page-hidden');
       pageActivity.set(true);

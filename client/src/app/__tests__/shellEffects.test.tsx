@@ -28,6 +28,12 @@ import { useWorkflowSettingsStore } from '../../stores/workflowSettingsStore';
 const root = document.documentElement;
 const hidden = () => root.hasAttribute('data-page-hidden');
 
+/** The tab goes to the background (`true`) or comes back. */
+function setTabHidden(isHidden: boolean) {
+  vi.spyOn(document, 'hidden', 'get').mockReturnValue(isHidden);
+  document.dispatchEvent(new Event('visibilitychange'));
+}
+
 describe('usePageActivitySync', () => {
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ['requestAnimationFrame', 'cancelAnimationFrame', 'setTimeout', 'clearTimeout'] });
@@ -35,21 +41,18 @@ describe('usePageActivitySync', () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.restoreAllMocks();
     root.removeAttribute('data-page-hidden');
     pageActivity.set(true);
   });
 
-  it('pauses on blur and resumes two frames after focus', () => {
+  it('pauses while the tab is hidden and resumes two frames after it shows', () => {
     renderHook(() => usePageActivitySync());
-    act(() => {
-      window.dispatchEvent(new Event('blur'));
-    });
+    act(() => setTabHidden(true));
     expect(hidden()).toBe(true);
     expect(pageActivity.isActive()).toBe(false);
 
-    act(() => {
-      window.dispatchEvent(new Event('focus'));
-    });
+    act(() => setTabHidden(false));
     expect(hidden()).toBe(true);
     act(() => {
       vi.advanceTimersToNextFrame();
@@ -59,12 +62,21 @@ describe('usePageActivitySync', () => {
     expect(pageActivity.isActive()).toBe(true);
   });
 
-  it('a hide during the resume frames wins', () => {
+  it('keeps animating while the window is visible but not focused', () => {
     renderHook(() => usePageActivitySync());
     act(() => {
       window.dispatchEvent(new Event('blur'));
-      window.dispatchEvent(new Event('focus'));
-      window.dispatchEvent(new Event('blur'));
+    });
+    expect(hidden()).toBe(false);
+    expect(pageActivity.isActive()).toBe(true);
+  });
+
+  it('a hide during the resume frames wins', () => {
+    renderHook(() => usePageActivitySync());
+    act(() => {
+      setTabHidden(true);
+      setTabHidden(false);
+      setTabHidden(true);
     });
     act(() => {
       vi.advanceTimersToNextFrame();
@@ -79,8 +91,8 @@ describe('usePageActivitySync', () => {
     const cancel = vi.spyOn(window, 'cancelAnimationFrame');
     const { unmount } = renderHook(() => usePageActivitySync());
     act(() => {
-      window.dispatchEvent(new Event('blur'));
-      window.dispatchEvent(new Event('focus'));
+      setTabHidden(true);
+      setTabHidden(false);
     });
     unmount();
     expect(cancel).toHaveBeenCalled();

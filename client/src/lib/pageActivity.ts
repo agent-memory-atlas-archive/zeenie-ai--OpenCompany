@@ -2,11 +2,12 @@
  * Page activity — whether anyone can currently see the app.
  *
  * `html[data-page-hidden] * { animation-play-state: paused }` (themes/base.css)
- * pauses CSS keyframe animations while the tab is hidden or the window is
- * blurred, but it cannot reach Web Animations started from script or
- * requestAnimationFrame loops (the Home orb). Those subscribe here instead.
- * `App.tsx` keeps this in sync (`usePageActivitySync`) with the same
- * visibility / focus events that toggle `data-page-hidden`.
+ * pauses CSS keyframe animations while the page is hidden, but it cannot
+ * reach Web Animations started from script or requestAnimationFrame loops
+ * (the Home orb). Those subscribe here instead. `App.tsx` keeps this in sync
+ * (`usePageActivitySync`) with the same `visibilitychange` events that
+ * toggle `data-page-hidden`; a visible window that is only unfocused counts
+ * as active.
  *
  * A plain module store: read it without re-rendering (`isActive()`), or
  * subscribe for changes. Deliberately not React state.

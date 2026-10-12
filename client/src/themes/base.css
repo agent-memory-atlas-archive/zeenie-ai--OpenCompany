@@ -355,11 +355,11 @@
  * input events queue but don't dispatch — first click on tab return
  * appears unresponsive.
  *
- * The Dashboard mounts a small `visibilitychange` listener that toggles
- * this attribute on `<html>`. Setting `animation-play-state: paused`
- * flushes the keyframe queue so resume has nothing to catch up on. The
- * dashboard defers the unpause via `requestAnimationFrame` so input
- * dispatch happens before composite.
+ * `usePageActivitySync` (app/usePageActivitySync.ts, mounted by App)
+ * toggles this attribute on `<html>` on `visibilitychange`. Setting
+ * `animation-play-state: paused` flushes the keyframe queue so resume has
+ * nothing to catch up on. It defers the unpause via
+ * `requestAnimationFrame` so input dispatch happens before composite.
  * ============================================================================ */
 
 html[data-page-hidden] *,
