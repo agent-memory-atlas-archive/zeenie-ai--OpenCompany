@@ -57,7 +57,7 @@ def test_a_rejected_gateway_key_points_at_the_gateway_card():
     error = explain(LLMError.from_exception("openai", exc), exc)
     assert error.category is LLMErrorCategory.AUTHENTICATION
     assert "OpenCompany Gateway" in error.user_message
-    assert "Reconnect the OpenCompany Gateway" in error.hint
+    assert "Reconnect the Gateway connector" in error.hint
 
 
 def test_wording_never_changes_retry_behaviour():

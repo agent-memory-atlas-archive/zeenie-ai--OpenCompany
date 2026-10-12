@@ -8,6 +8,8 @@ Default key (needed to show the allowance) from an LLM-API one.
 
 from __future__ import annotations
 
+from typing import Any, Dict, Optional
+
 from services.plugin.credential import ApiKeyCredential, ProbeResult
 
 from .allowance import parse_user_info, user_info
@@ -20,6 +22,13 @@ class OpenCompanyGatewayCredential(ApiKeyCredential):
     category = "AI"
     key_location = "bearer"
     docs_url = "https://docs.litellm.ai/docs/proxy/virtual_keys"
+
+    @classmethod
+    async def catalogue_extras(cls, *, principal: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        # No 1Password source: the router reads the key on every LLM call
+        # (services/gateway/routing.py), which a 1Password lookup can't
+        # serve, so a bound key would show as connected and never be used.
+        return {"sourceSupported": False}
 
     @classmethod
     async def _probe(cls, api_key: str) -> ProbeResult:

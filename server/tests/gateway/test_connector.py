@@ -53,6 +53,21 @@ async def test_a_rejected_key_is_left_to_validate_to_word(monkeypatch):
         await credential_module.OpenCompanyGatewayCredential._probe("sk-wrong")
 
 
+async def test_the_card_offers_no_1password_source(monkeypatch):
+    """The router reads the key on every LLM call, which a 1Password lookup
+    can't serve: a bound key would show as connected and never be used."""
+    from services.credential_registry import provider_connection_state
+    from services.plugin.credential import CREDENTIAL_REGISTRY
+
+    # A plain API-key credential would get the 1Password tab; this one opts out.
+    assert CREDENTIAL_REGISTRY.get("opencompany_gateway") is credential_module.OpenCompanyGatewayCredential
+    auth = MagicMock(distributed_credentials=False)
+    auth.has_valid_key = AsyncMock(return_value=True)
+    auth.get_oauth_tokens = AsyncMock(return_value=None)
+    state = await provider_connection_state({"id": "opencompany_gateway", "kind": "apiKey"}, auth)
+    assert state["sourceSupported"] is False
+
+
 async def test_status_without_a_stored_key(monkeypatch):
     from core.container import container
 

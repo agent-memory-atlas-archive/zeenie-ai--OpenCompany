@@ -93,6 +93,18 @@ describe('useApiKeys.validateApiKey', () => {
     expect(result.current.isValidating).toBe(false);
   });
 
+  it("keeps a valid key's message out of error, which panels show as a failure", async () => {
+    wsMock.validateApiKey.mockResolvedValue({ valid: true, message: 'Connected: $0.00 of $50.00 used.' });
+    const { result } = renderHook(() => useApiKeys());
+    let validation: any;
+    await act(async () => {
+      validation = await result.current.validateApiKey('opencompany_gateway', 'sk-gw');
+    });
+    expect(validation.isValid).toBe(true);
+    expect(validation.error).toBeUndefined();
+    expect(result.current.validationError).toBeNull();
+  });
+
   it('sets validationError on invalid response', async () => {
     wsMock.validateApiKey.mockResolvedValue({
       valid: false,

@@ -179,9 +179,11 @@ export const useApiKeys = (): UseApiKeysResult => {
         setValidationError(result.message || 'Validation failed');
       }
 
+      // A valid key's message ("API key validated", the gateway's allowance)
+      // is not an error: panels show `error` as a failure.
       return {
         isValid: result.valid,
-        error: result.message,
+        error: result.valid ? undefined : result.message,
         models: result.models
       };
     } catch (error: any) {
@@ -296,7 +298,7 @@ export const useApiKeys = (): UseApiKeysResult => {
 
       return {
         isValid: result.valid,
-        error: result.message
+        error: result.valid ? undefined : result.message
       };
     } catch (error: any) {
       const errorMsg = error.message || 'Validation failed';
@@ -328,7 +330,7 @@ export const useApiKeys = (): UseApiKeysResult => {
 
       return {
         isValid: result.valid,
-        error: result.message
+        error: result.valid ? undefined : result.message
       };
     } catch (error: any) {
       const errorMsg = error.message || 'Validation failed';

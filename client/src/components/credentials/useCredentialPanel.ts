@@ -212,8 +212,10 @@ export function useCredentialPanel(config: ProviderConfig, visible: boolean) {
     }),
     remove: (key: string) => execute('remove', async () => {
       await removeApiKey(key);
-      setStored(false);
+      // Refetch before clearing `stored`: the sync above would read the
+      // pre-removal `hadStored` and flip it straight back to true.
       await invalidateValues();
+      setStored(false);
     }),
     oauthLogin: () => execute('login', async () => {
       const res = await sendRequest(config.ws!.login, {});
