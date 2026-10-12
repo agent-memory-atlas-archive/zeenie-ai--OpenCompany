@@ -298,7 +298,7 @@ const TopToolbar: React.FC<TopToolbarProps> = ({
       {/* ---------- Global Model Selector (pinned) ---------- */}
       {globalModelState.providers.length > 0 && (
         <div className="flex shrink-0 items-center gap-2">
-          <span className="text-sm font-semibold whitespace-nowrap text-node-model">
+          <span className="text-sm font-semibold whitespace-nowrap text-node-model-ink">
             Set Global Model
           </span>
           <Select value={globalSelectValue} onValueChange={handleSelectGlobalModel}>
@@ -358,7 +358,7 @@ const TopToolbar: React.FC<TopToolbarProps> = ({
         {/* Mode Toggle - segmented control. With Normal mode on it switches
             screens (Home / this editor); otherwise it filters the palette. */}
         <div className="flex items-center gap-2">
-          <span className="text-sm font-semibold text-node-model">Mode:</span>
+          <span className="text-sm font-semibold text-node-model-ink">Mode:</span>
           {featureFlags.normalMode ? <ModeToggle /> : <div
             className="flex items-center rounded-md border border-border bg-card p-0.5"
             title={proMode ? 'Dev mode: All components visible' : 'Normal mode: Only AI components'}
@@ -368,8 +368,8 @@ const TopToolbar: React.FC<TopToolbarProps> = ({
               className={cn(
                 'flex items-center gap-1 rounded-sm border px-2.5 py-1 text-xs font-semibold transition-all',
                 !proMode
-                  ? 'border-node-skill-border bg-node-skill-soft text-node-skill cursor-default'
-                  : 'cursor-pointer border-transparent text-node-workflow hover:bg-muted'
+                  ? 'border-node-skill-border bg-node-skill-soft text-node-skill-ink cursor-default'
+                  : 'cursor-pointer border-transparent text-node-workflow-ink hover:bg-muted'
               )}
             >
               <Clock className="h-3 w-3" />
@@ -380,8 +380,8 @@ const TopToolbar: React.FC<TopToolbarProps> = ({
               className={cn(
                 'flex items-center gap-1 rounded-sm border px-2.5 py-1 text-xs font-semibold transition-all',
                 proMode
-                  ? 'border-node-agent-border bg-node-agent-soft text-node-agent cursor-default'
-                  : 'cursor-pointer border-transparent text-node-workflow hover:bg-muted'
+                  ? 'border-node-agent-border bg-node-agent-soft text-node-agent-ink cursor-default'
+                  : 'cursor-pointer border-transparent text-node-workflow-ink hover:bg-muted'
               )}
             >
               <Zap className="h-3 w-3" />

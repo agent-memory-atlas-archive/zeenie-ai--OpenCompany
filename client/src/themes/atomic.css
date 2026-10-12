@@ -244,9 +244,11 @@
 :root[data-theme="atomic"] .chat-msg-bot { padding: 8px 12px; background: var(--turquoise); color: var(--bg-elevated); border-color: var(--slate); }
 
 /* Status bar */
+/* The bar is dark here, so its values (text-fg-default) take its light text. */
 :root[data-theme="atomic"] .statusbar {
   background: var(--slate); color: var(--bg-elevated); border-top: 4px solid var(--accent);
   font-family: var(--font-mono); letter-spacing: 0.06em;
+  --fg-default: var(--bg-elevated);
 }
 :root[data-theme="atomic"] .statusbar .pip { background: var(--success); }
 

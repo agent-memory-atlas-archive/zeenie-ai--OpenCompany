@@ -48,10 +48,10 @@ interface SettingsPanelProps {
 type SectionTone = 'agent' | 'model' | 'workflow' | 'tool';
 
 const TONE_CLASSES: Record<SectionTone, string> = {
-  agent:    'bg-node-agent-soft text-node-agent',
-  model:    'bg-node-model-soft text-node-model',
-  workflow: 'bg-node-workflow-soft text-node-workflow',
-  tool:     'bg-node-tool-soft text-node-tool',
+  agent:    'bg-node-agent-soft text-node-agent-ink',
+  model:    'bg-node-model-soft text-node-model-ink',
+  workflow: 'bg-node-workflow-soft text-node-workflow-ink',
+  tool:     'bg-node-tool-soft text-node-tool-ink',
 };
 
 /** The Tool Result Limit slider shows and edits characters in thousands. */
@@ -327,7 +327,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                     Fraction of context window that triggers memory compaction
                   </div>
                 </div>
-                <span className="min-w-[42px] text-right text-sm font-semibold text-node-model">
+                <span className="min-w-[42px] text-right text-sm font-semibold text-node-model-ink">
                   {Math.round(settings.compactionRatio * 100)}%
                 </span>
               </div>
@@ -360,7 +360,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                     Most characters one tool call can add to an agent's conversation
                   </div>
                 </div>
-                <span className="min-w-[42px] text-right text-sm font-semibold text-node-model">
+                <span className="min-w-[42px] text-right text-sm font-semibold text-node-model-ink">
                   {toThousands(settings.toolResultMaxChars)}K
                 </span>
               </div>

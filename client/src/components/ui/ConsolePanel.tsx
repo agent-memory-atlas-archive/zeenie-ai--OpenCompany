@@ -412,7 +412,7 @@ const ConsolePanel: React.FC<ConsolePanelProps> = ({
                   className={cn(
                     'flex items-center gap-1 rounded-sm px-2 py-0.5 text-xs transition-colors',
                     activeTab === 'chat'
-                      ? 'bg-node-trigger-soft font-semibold text-node-trigger'
+                      ? 'bg-node-trigger-soft font-semibold text-node-trigger-ink'
                       : 'text-muted-foreground hover:bg-muted'
                   )}
                 >
@@ -427,7 +427,7 @@ const ConsolePanel: React.FC<ConsolePanelProps> = ({
                 className={cn(
                   'flex items-center gap-1 rounded-sm px-2 py-0.5 text-xs transition-colors',
                   activeTab === 'console'
-                    ? 'bg-node-agent-soft font-semibold text-node-agent'
+                    ? 'bg-node-agent-soft font-semibold text-node-agent-ink'
                     : 'text-muted-foreground hover:bg-muted'
                 )}
               >
@@ -441,7 +441,7 @@ const ConsolePanel: React.FC<ConsolePanelProps> = ({
                 className={cn(
                   'flex items-center gap-1 rounded-sm px-2 py-0.5 text-xs transition-colors',
                   activeTab === 'terminal'
-                    ? 'bg-node-model-soft font-semibold text-node-model'
+                    ? 'bg-node-model-soft font-semibold text-node-model-ink'
                     : 'text-muted-foreground hover:bg-muted'
                 )}
               >
@@ -457,7 +457,7 @@ const ConsolePanel: React.FC<ConsolePanelProps> = ({
                 className={cn(
                   'ml-1 flex items-center rounded-sm px-1.5 py-0.5 text-xs transition-colors',
                   splitView
-                    ? 'bg-node-tool-soft text-node-tool'
+                    ? 'bg-node-tool-soft text-node-tool-ink'
                     : 'text-muted-foreground hover:bg-muted'
                 )}
               >
@@ -528,7 +528,7 @@ const ConsolePanel: React.FC<ConsolePanelProps> = ({
                 <label
                   className={cn(
                     'flex cursor-pointer items-center gap-1 rounded-sm px-1.5 py-0.5 text-xs text-muted-foreground transition-colors',
-                    prettyPrint && 'bg-node-model-soft text-node-model'
+                    prettyPrint && 'bg-node-model-soft text-node-model-ink'
                   )}
                   title="Format JSON and convert escaped newlines"
                 >
@@ -600,7 +600,7 @@ const ConsolePanel: React.FC<ConsolePanelProps> = ({
                     </span>
                     {log.source_node_label && (
                       <span
-                        className="min-w-[80px] max-w-[120px] truncate font-mono text-xs text-node-trigger opacity-85"
+                        className="min-w-[80px] max-w-[120px] truncate font-mono text-xs text-node-trigger-ink opacity-85"
                         title={`Source: ${log.source_node_type} (${log.source_node_id})`}
                       >
                         {log.source_node_label}

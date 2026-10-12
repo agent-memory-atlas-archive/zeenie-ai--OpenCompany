@@ -11,7 +11,7 @@ import { cn } from '@/lib/utils';
 const LEAD_TYPES = new Set(['orchestrator_agent', 'ai_employee']);
 const STATUS_STYLE: Record<string, string> = {
   blocked: 'text-fg-muted', queued: 'text-warning', running: 'text-info',
-  submitted: 'text-node-agent', accepted: 'text-success', failed: 'text-destructive',
+  submitted: 'text-node-agent-ink', accepted: 'text-success', failed: 'text-destructive',
   cancelled: 'text-fg-muted', working: 'text-info', idle: 'text-success', connected: 'text-success',
 };
 

@@ -457,7 +457,7 @@ const InputSection: React.FC<InputSectionProps> = ({ nodeId, visible = true }) =
         <div key={currentPath} className={cn('mb-2', indentClass)}>
           <div className="mb-1 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
             {key}
-            <Badge variant="secondary" className="bg-node-agent-soft px-1.5 text-[10px] text-node-agent">
+            <Badge variant="secondary" className="bg-node-agent-soft px-1.5 text-[10px] text-node-agent-ink">
               [{value.length} items]
             </Badge>
           </div>

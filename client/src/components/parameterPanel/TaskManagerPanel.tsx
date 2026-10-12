@@ -89,7 +89,7 @@ const STATUS_STYLES: Record<string, string> = {
   blocked: 'border-fg-muted/30 bg-bg-panel text-fg-muted',
   queued: 'border-warning/30 bg-warning/10 text-warning',
   running: 'border-info/30 bg-info/10 text-info',
-  submitted: 'border-node-agent/30 bg-node-agent/10 text-node-agent',
+  submitted: 'border-node-agent/30 bg-node-agent/10 text-node-agent-ink',
   accepted: 'border-success/30 bg-success/10 text-success',
   failed: 'border-destructive/30 bg-destructive/10 text-destructive',
   cancelled: 'border-fg-muted/30 bg-bg-panel text-fg-muted',
