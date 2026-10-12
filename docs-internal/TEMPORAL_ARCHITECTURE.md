@@ -10,11 +10,12 @@
 
 Executable workflow nodes run as **Temporal Activities** or, for supported agents,
 child Workflows. Each receives its own execution context, enabling distributed
-workers to run independent steps. The orchestrator dispatches in one of three
-ways depending on the run's frozen settings flags:
+workers to run independent steps. The orchestrator dispatches in one of four
+ways depending on the run's recorded runtime and frozen settings flags:
 
 | Dispatch | Trigger | Use case |
 |---|---|---|
+| **Pi Coding Agent child** (`PiCodingAgentWorkflow`) | Recorded `pi_harness_version=1` for `coding_agent` | New Coding executions use the pinned Pi SDK through a private maintenance driver. Model/tool effects remain native leaf Activities. This dispatch takes precedence over the general agent/per-type flags; absent markers retain native execution. |
 | **Legacy single activity** (`execute_node_activity`) | `TEMPORAL_PER_TYPE_DISPATCH=false` | Every node routed through one dispatcher activity. WebSocket round-trip back to the FastAPI server. Stable since Wave 11; kept as the fallback path. |
 | **Per-type activity** (`node.{type}.v{version}`) | `TEMPORAL_PER_TYPE_DISPATCH=true` (production default) | Each plugin gets its own Activity definition. Graph dispatch applies plugin retry and, with the frozen worker-pool flag on, `cls.task_queue`. Ordinary graph timeout/heartbeat remain 24 h / 2 min; Workspace-task patches use plugin values. Version 1 agent-tool dispatch records and uses all declared Activity policies. |
 | **Agent-as-child-workflow** (`AgentWorkflow`) | `TEMPORAL_AGENT_WORKFLOW_ENABLED=true` | Agent types in `AGENT_WORKFLOW_TYPES` in `services/temporal/workflow.py` run as child Workflows. Each LLM turn and ordinary tool call is a regular Activity; direct delegations can start attached agent children and Task Manager assignments start detached runners. |
@@ -22,6 +23,16 @@ ways depending on the run's frozen settings flags:
 `rlm_agent`, `claude_code_agent` and `vertex_managed_agent` are intentionally excluded from AgentWorkflow — their externalised loops (RLM REPL / Claude CLI `--resume` / Vertex Interactions API `previous_interaction_id` chaining) require single-process state continuity. The authoritative list is `AGENT_WORKFLOW_TYPES` in `services/temporal/workflow.py`; any agent type outside it runs as an ordinary per-type activity.
 
 **Routing snapshot (`_temporal_routing_v1`).** The three dispatch flags — `TEMPORAL_PER_TYPE_DISPATCH`, `TEMPORAL_AGENT_WORKFLOW_ENABLED` and `TEMPORAL_WORKER_POOL_ENABLED` (which picks the task queue) — are read once by whoever starts the run and frozen into the workflow input under `_temporal_routing_v1` (`services/temporal/executor.py::capture_temporal_routing_input`). `TemporalExecutor.execute_workflow` captures them per run; `DeploymentManager` captures them when it registers a push/poll listener or creates a cron Schedule, and the listener hands the same snapshot to every run it spawns. `MachinaWorkflow.run` dispatches only from that snapshot (`_frozen_routing_from_input`) and never re-reads `Settings`, so changing a flag affects runs started, and triggers registered, afterwards — never a run already in flight. An input without a snapshot (or with an unknown version) gets `_SAFE_FROZEN_ROUTING`: agent workflow and per-type dispatch on, worker pool off. Locked by `tests/temporal/test_frozen_routing.py`.
+
+**Coding runtime admission.** New generations and invocations also freeze the
+internal Pi marker before preparation. Restored native generations retain their
+absence of that marker through Temporal retries and in-process fallback paths.
+Pi requires Temporal and never silently falls back after a failure. Its mandatory
+`coding-pi-driver` worker has independent capacity even when the general worker
+pool is off; parents park their SDK driver while nested children or durable task
+waits are pending. Standalone workers initialize the shared native compactor
+before polling. See [Pi Coding Agent](pi_coding_agent.md) for protocol, checkpoint,
+distribution and validation details.
 
 **Browser owner routing (`browser_routing_version: 1`).** Distributed starts
 also capture server-resolved `browser_bindings`, including profile, principal,

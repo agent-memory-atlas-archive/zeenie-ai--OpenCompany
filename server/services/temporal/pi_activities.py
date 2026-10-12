@@ -301,7 +301,8 @@ class PiDriverActivities:
                 elif kind == "error":
                     code = event.get("code")
                     transient = code in {"transport_failure", "transport_write_failed"}
-                    error_type = "PiTransportFailure" if transient else "PiSDKFailure" if code == "sdk_failure" else "PiProtocolConflict"
+                    error_type = {"sdk_failure": "PiSDKFailure", "snapshot_incompatible": "PiSnapshotIncompatible"}.get(
+                        code, "PiTransportFailure" if transient else "PiProtocolConflict")
                     raise ApplicationError("Pi SDK host could not complete the coding turn", type=error_type, non_retryable=not transient)
                 else:
                     raise conflict("Pi SDK host emitted an unknown frame")

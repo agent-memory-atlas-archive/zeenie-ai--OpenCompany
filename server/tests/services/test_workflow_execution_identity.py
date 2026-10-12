@@ -219,3 +219,47 @@ async def test_deploy_workflow_preserves_authenticated_user():
     )
 
     assert manager.deploy.await_args.kwargs["user_id"] == "account-12"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("parallel", [False, True])
+async def test_old_native_generation_fallback_keeps_runtime_and_frozen_configuration(parallel):
+    from services.workflow import _fallback_execution_scope
+
+    service = WorkflowService.__new__(WorkflowService)
+    service.settings = SimpleNamespace(temporal_enabled=False, redis_enabled=parallel,
+        coding_pi_admissions_enabled=False)
+    service._settings = {"stop_on_error": True}
+    service._temporal_executor = None
+    service.database = SimpleNamespace(get_latest_workflow_control=AsyncMock(return_value=
+        SimpleNamespace(generation=5, resource_manifest={"execution_control_version": 1})))
+    service.clear_all_outputs = AsyncMock()
+    service._resolve_workflow_slug = AsyncMock(return_value="saved")
+    service._get_workspace_dir = lambda _slug: "managed-workspace"
+    service._node_executor = SimpleNamespace(execute=AsyncMock(return_value={"success": True, "result": {}}))
+    service._param_resolver = SimpleNamespace(resolve=AsyncMock())
+    nodes = [{"id": "start", "type": "start", "data": {}},
+             {"id": "coding", "type": "coding_agent", "data": {}}]
+    edges = [{"source": "start", "target": "coding"}]
+
+    class Executor:
+        async def execute_workflow(self, *, workflow_id, nodes, edges, session_id, enable_caching):
+            # The existing parallel executor passes no generation/manifest.
+            await asyncio.sleep(0)
+            await service._execute_node_adapter("coding", "coding_agent", {},
+                {"workflow_id": workflow_id, "session_id": session_id, "nodes": nodes,
+                 "edges": edges, "execution_id": "parallel-run"})
+            return {"success": True, "execution_id": "parallel-run", "nodes_executed": ["coding"], "outputs": {}}
+
+    service._get_workflow_executor = lambda _callback: Executor()
+    snapshot = {"coding": {"model": "admitted-model", "prompt": "frozen native request"}}
+    result = await service.execute_workflow(nodes, edges, workflow_id="graph", generation=5,
+        graph_version=8, parameter_snapshot=snapshot, user_id="alice", use_parallel=parallel,
+        use_temporal=False)
+    assert result["success"]
+    context = service._node_executor.execute.await_args.kwargs["context"]
+    assert context["generation"] == 5 and context["graphVersion"] == 8
+    assert context["parameter_snapshot"] == snapshot
+    assert context["coding_native_version"] == 1 and "pi_harness_version" not in context
+    assert context["user_id"] == "alice"
+    assert _fallback_execution_scope.get() is None

@@ -41,6 +41,9 @@ _parallel_user_id: ContextVar[str] = ContextVar(
     "workflow_parallel_user_id",
     default="owner",
 )
+_fallback_execution_scope: ContextVar[Optional[Dict[str, Any]]] = ContextVar(
+    "workflow_fallback_execution_scope", default=None,
+)
 
 
 # A Run's result reports failures as ``errors`` plus their first message as
@@ -391,12 +394,14 @@ class WorkflowService:
                 "context_session_id",
                 "data_scope_id",
                 "pi_harness_version",
+                "coding_native_version",
                 "pi_local_control_version",
                 "pi_local_control_state",
                 "pi_local_control_revision",
             )
             if key in context
         }
+        extras.update(_fallback_execution_scope.get() or {})
         return await self.execute_node(
             node_id=node_id,
             node_type=node_type,
@@ -542,28 +547,26 @@ class WorkflowService:
                 extra={"workflow_id": workflow_id},
             )
 
-        # Use parallel executor if enabled and Redis available
-        if use_parallel and self.settings.redis_enabled:
-            return await self._execute_parallel(
-                nodes,
-                edges,
-                session_id,
-                status_callback,
-                start_time,
-                workflow_id,
-                user_id,
+        # Freeze the same generation/configuration at the fallback boundary.
+        # A pre-Pi generation must not become a new manual Pi admission merely
+        # because the in-process executor omitted its recorded runtime marker.
+        fallback_scope = {"generation": int(generation or 0), "graphVersion": graph_version}
+        if parameter_snapshot is not None:
+            fallback_scope["parameter_snapshot"] = parameter_snapshot
+        if (admitted_control is not None and admitted_control.generation == int(generation or 0)
+                and (admitted_control.resource_manifest or {}).get("pi_harness_version") != 1):
+            fallback_scope["coding_native_version"] = 1
+        scope_token = _fallback_execution_scope.set(fallback_scope)
+        try:
+            if use_parallel and self.settings.redis_enabled:
+                return await self._execute_parallel(
+                    nodes, edges, session_id, status_callback, start_time, workflow_id, user_id,
+                )
+            return await self._execute_sequential(
+                nodes, edges, session_id, status_callback, start_time, workflow_id, user_id,
             )
-
-        # Fall back to sequential
-        return await self._execute_sequential(
-            nodes,
-            edges,
-            session_id,
-            status_callback,
-            start_time,
-            workflow_id,
-            user_id,
-        )
+        finally:
+            _fallback_execution_scope.reset(scope_token)
 
     async def _execute_temporal(
         self,
@@ -748,6 +751,7 @@ class WorkflowService:
                 execution_id=execution_id,
                 workflow_id=workflow_id,
                 user_id=user_id,
+                extras=_fallback_execution_scope.get(),
             )
 
             results[node_id] = result

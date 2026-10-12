@@ -1790,7 +1790,9 @@ async def prepare_agent_payload(context: Dict[str, Any]) -> Dict[str, Any]:
             or ""
         ),
     }
-    if browser_runtime_version == 1 or context.get("native_workspace_version") == 1 or context.get("pi_harness_version") == 1:
+    if context.get("pi_harness_version") == 1:
+        return _strip_pi_credentials(prepared)
+    if browser_runtime_version == 1 or context.get("native_workspace_version") == 1:
         return _strip_credentials(prepared)
     return prepared
 
@@ -1931,11 +1933,13 @@ async def refresh_agent_tools(payload: Dict[str, Any]) -> Dict[str, Any]:
     old_snapshot = payload.get("graph_snapshot") or {}
     runtime_graph = extend_runtime_graph(old_snapshot, graph, operations) if old_snapshot else graph
     result = {"tools": new_tools_payload, "graph_snapshot": runtime_graph, "parameter_updates": parameter_updates}
-    if payload.get("browser_runtime_version") == 1 or payload.get("browser_routing_version") == 1:
+    browser_runtime = payload.get("browser_runtime_version") == 1 or payload.get("browser_routing_version") == 1
+    if browser_runtime:
         bindings, version = await _freeze_browser_tools(database, new_tools_payload, payload)
         result.update(browser_bindings=bindings, browser_runtime_version=version)
-        return _strip_credentials(result)
     if payload.get("pi_harness_version") == 1:
+        return _strip_pi_credentials(result)
+    if browser_runtime:
         return _strip_credentials(result)
     return result
 
@@ -2534,6 +2538,37 @@ def _strip_credentials(value: Any) -> Any:
     if isinstance(value, tuple):
         return [_strip_credentials(item) for item in value]
     return value
+
+
+def _strip_pi_credentials(payload: Mapping[str, Any]) -> Dict[str, Any]:
+    """Redact runtime configuration without rewriting admitted model data.
+
+    Credential-shaped names in tool arguments, provider continuation state,
+    media metadata, and tool schemas are part of their canonical contracts.
+    Preserve only those explicit payload paths. Everything else, including
+    parameter snapshots, tool execution configuration, and runtime graphs,
+    keeps the recursive configuration redaction; an arbitrary configuration
+    dictionary named ``provider_state`` or ``properties`` grants no exemption.
+    """
+
+    canonical_fields = {"conversation", "user_images", "tools"}
+    result = _strip_credentials({
+        key: value for key, value in payload.items() if key not in canonical_fields
+    })
+    for key in ("conversation", "user_images"):
+        if key in payload:
+            result[key] = payload[key]
+    if "tools" in payload:
+        result["tools"] = []
+        for tool in payload["tools"]:
+            redacted = _strip_credentials({
+                key: value for key, value in tool.items() if key != "definition"
+            })
+            if "definition" in tool:
+                redacted["definition"] = tool["definition"]
+            result["tools"].append(redacted)
+    return result
+
 def _non_retryable(message: str, error_type: str) -> ApplicationError:
     return ApplicationError(
         message,

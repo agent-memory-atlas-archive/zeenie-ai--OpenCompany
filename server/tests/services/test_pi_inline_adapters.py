@@ -50,7 +50,8 @@ async def test_claude_mcp_uses_authenticated_request_identity_and_trusted_princi
     monkeypatch.setattr("services.handlers.tools.execute_tool", execute)
     monkeypatch.setattr("services.plugin.deps.get_ai_service", lambda: object())
     monkeypatch.setattr("services.plugin.deps.get_database", lambda: object())
-    monkeypatch.setattr(workflow_tools, "_get_mcp", lambda: SimpleNamespace(get_context=lambda: SimpleNamespace(request_id="rpc-23")))
+    request_context = SimpleNamespace(request_id="rpc-23", request=SimpleNamespace(headers={"mcp-session-id": "session-1"}))
+    monkeypatch.setattr(workflow_tools, "_get_mcp", lambda: SimpleNamespace(get_context=lambda: SimpleNamespace(request_context=request_context)))
     ctx = mcp_server.BatchContext(workflow_id="wf", node_id="parent", execution_id="run", workspace_dir=Path("workspace"),
         user_id="owner", broadcaster=SimpleNamespace(update_node_status=AsyncMock(), broadcast_agent_capability=AsyncMock()),
         connected_tools=[{"node_id": "coding", "node_type": "coding_agent", "_agent_tool_name": "delegate",
@@ -62,10 +63,32 @@ async def test_claude_mcp_uses_authenticated_request_identity_and_trusted_princi
         mcp_server._current_batch.reset(token)
     assert result["status"] == "DELEGATED"
     config = execute.await_args.args[2]
-    assert config["tool_call_id"] == "mcp:rpc-23"
+    from services.temporal.pi_protocol import canonical_digest
+    assert config["tool_call_id"] == "mcp:" + canonical_digest({"session": "session-1", "request": "rpc-23"})
     assert config["user_id"] == "alice" and config["root_execution_id"] == "root"
     assert config["execution_control_revision"] == 8
     assert execute.await_args.args[1] == {"task": "edit"}
+
+    # Independent clients can both call request 1 in the same admitted batch.
+    # A matching retry attaches; another client or a differently typed ID does
+    # not accidentally attach to the first client's durable Coding operation.
+    token = mcp_server._current_batch.set(ctx)
+    try:
+        handler = workflow_tools._build_handler("delegate", "coding_agent", DelegationInput)
+        request_context.request_id = 1
+        await handler(task="edit")
+        first = execute.await_args.args[2]["tool_call_id"]
+        await handler(task="edit")
+        assert execute.await_args.args[2]["tool_call_id"] == first
+        request_context.request.headers["mcp-session-id"] = "session-2"
+        await handler(task="edit")
+        second = execute.await_args.args[2]["tool_call_id"]
+        assert second != first
+        request_context.request_id = "1"
+        await handler(task="edit")
+        assert execute.await_args.args[2]["tool_call_id"] not in {first, second}
+    finally:
+        mcp_server._current_batch.reset(token)
 
 
 @pytest.mark.asyncio

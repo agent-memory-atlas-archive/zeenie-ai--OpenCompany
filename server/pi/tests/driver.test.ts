@@ -113,6 +113,28 @@ test("corrupt, stale-scope and unrecorded snapshot content cannot become Context
   await expect(new TurnDriver(next,async()=>({assistant_message:message("assistant","done")})).execute()).rejects.toMatchObject({code:"invalid_snapshot"});
 });
 
+test.each(["version","sdk_version"])("incompatible snapshot %s is terminal even when canonical state needs rebuilding",async(field)=>{
+  const input=run();
+  const first=await new TurnDriver(input,async()=>({assistant_message:message("assistant","done")})).execute();
+  const next=run([...input.messages,first.assistant_message]);next.turn=1;next.snapshot=structuredClone(first.snapshot);
+  (next.snapshot as unknown as Record<string,unknown>)[field]=field==="version" ? 999 : "999.0.0";
+  next.config_digest=canonicalDigest({model:"changed"});
+  let requests=0;
+  await expect(new TurnDriver(next,async()=>{requests++;return {assistant_message:message("assistant","done")};}).execute())
+    .rejects.toMatchObject({code:"snapshot_incompatible"});
+  expect(requests).toBe(0);
+});
+
+test.each(["context_digest","binding_digest","config_digest"])("supported snapshots rebuild on changed %s",async(field)=>{
+  const input=run();
+  const first=await new TurnDriver(input,async()=>({assistant_message:message("assistant","first")})).execute();
+  const next=run([...input.messages,first.assistant_message]);next.turn=1;next.snapshot=structuredClone(first.snapshot);
+  next.snapshot[field]=canonicalDigest({stale:field});
+  const output=await new TurnDriver(next,async()=>({assistant_message:message("assistant","next")})).execute();
+  expect(output.projection_digest).toBe(canonicalDigest([...next.messages,output.assistant_message]));
+  expect(output.snapshot.entries.filter(entry=>entry.type==="message" && entry.message.role==="user")).toHaveLength(1);
+});
+
 test("unsafe provider and argument integers survive SDK validation and snapshot replay",async()=>{
   const input=run();input.tools[0]!.parameters={type:"object",properties:{id:{type:"integer"}},required:["id"]};
   const c=call("c1","file_read",{id:9007199254740993n});c.raw_arguments='{"id":9007199254740993}';

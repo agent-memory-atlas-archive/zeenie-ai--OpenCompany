@@ -13,13 +13,16 @@ const pending=new Map<string,{resolve:(value:OperationResult)=>void;reject:(erro
 let driver:InstanceType<typeof TurnDriver>|undefined;
 let task:Promise<void>|undefined;
 let terminal=false;
+let closing=false;
 let transportError:Error|undefined;
 let transport:ScopedProtocolBlobs|undefined;
 let lastInput=performance.now();
 let outputChain=Promise.resolve();
 
 function output(value:HostOutput):Promise<void> {
-  outputChain=outputChain.then(async()=>{
+  // A rejected large checkpoint must not poison the queue that sends its
+  // bounded terminal error. Each caller still receives its own write failure.
+  outputChain=outputChain.catch(()=>{}).then(async()=>{
     let wire:unknown=value;
     if(value.type==="turn_checkpoint") {
       // Canonical assistant/tool bodies already appear in the snapshot and
@@ -38,12 +41,17 @@ function output(value:HostOutput):Promise<void> {
   return outputChain;
 }
 function interrupt(parked:boolean):void {
+  if(terminal || closing) return;
+  closing=true;
   driver?.interrupt(parked);
   for (const request of pending.values()) {request.cleanup();request.reject(new DriverInterrupted(parked));}
   pending.clear();
+  // Before run_turn there is no task whose finally block can close the pipe.
+  // The input iterator otherwise keeps an expired or terminated host alive.
+  if(!task) process.stdin.destroy();
 }
 async function start(input:RunTurn):Promise<void> {
-  if (driver || terminal) throw new ProtocolError("duplicate_run","A Pi host accepts one round");
+  if (driver || terminal || closing) throw new ProtocolError("duplicate_run","A Pi host accepts one round");
   driver=new TurnDriver(input,async(operation,signal)=>{
     if (pending.has(operation.id)) throw new ProtocolError("duplicate_operation","Pi issued a concurrent duplicate operation");
     const response=new Promise<OperationResult>((resolve,reject)=>{
@@ -95,24 +103,26 @@ async function input(frame:HostInput):Promise<void> {
   }
   throw new ProtocolError("unknown_frame","Unknown Pi protocol frame");
 }
-const watchdog=setInterval(()=>{if (!terminal && performance.now()-lastInput>120000) interrupt(false);},1000);
+const watchdog=setInterval(()=>{if (!terminal && !closing && performance.now()-lastInput>120000) interrupt(false);},1000);
 watchdog.unref();
 process.on("SIGTERM",()=>{interrupt(false);});
 process.on("SIGINT",()=>{interrupt(false);});
 
 try {
   for await (const chunk of process.stdin) {
-    for (const frame of decoder.push(chunk)) await input(frame);
-    if (terminal) break;
+    for (const frame of decoder.push(chunk)) {if(terminal || closing) break;await input(frame);}
+    if (terminal || closing) break;
   }
   decoder.end();
-  if (!terminal) interrupt(false);
+  if (!terminal && !closing) interrupt(false);
   await task;
 } catch(error) {
-  if (!terminal) transportError=error instanceof Error ? error : new ProtocolError("transport_failure","Pi host transport failed");
+  // destroy() can reject the input iterator. An intentional bootstrap shutdown
+  // has no round to report and is already being reaped by this control path.
+  if (!terminal && !closing) transportError=error instanceof Error ? error : new ProtocolError("transport_failure","Pi host transport failed");
   interrupt(false);
   await task;
-  if (!terminal) await output({type:"error",code:error instanceof ProtocolError ? error.code : "transport_failure",
+  if (!terminal && transportError) await output({type:"error",code:error instanceof ProtocolError ? error.code : "transport_failure",
     message:error instanceof ProtocolError ? error.message : "Pi host transport failed"});
   if (transportError) process.exitCode=1;
 } finally {

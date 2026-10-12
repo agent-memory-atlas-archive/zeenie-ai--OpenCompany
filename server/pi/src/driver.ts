@@ -106,8 +106,11 @@ export class TurnDriver {
     const snapshot = this.run.snapshot;
     let manager: SessionManager;
     if (snapshot && canonicalDigest(snapshot.scope)!==canonicalDigest(this.run.scope)) throw new ProtocolError("snapshot_scope_mismatch", "Pi snapshot belongs to another execution scope");
+    if (snapshot && (snapshot.version !== 1 || snapshot.sdk_version !== SDK_VERSION)) {
+      throw new ProtocolError("snapshot_incompatible", "Pi snapshot format or SDK version is incompatible with this runtime");
+    }
     // The snapshot is a derived cache: canonical context/bindings/config decide reuse.
-    if (snapshot && snapshot.version === 1 && snapshot.sdk_version === SDK_VERSION && snapshot.context_digest === this.run.context_digest
+    if (snapshot && snapshot.context_digest === this.run.context_digest
       && snapshot.binding_digest === this.run.binding_digest && snapshot.config_digest === this.run.config_digest) {
       if (!snapshot.header || !Array.isArray(snapshot.entries) || snapshot.entries.some(entry => !["message", "model_change", "thinking_level_change"].includes(entry.type))) {
         throw new ProtocolError("invalid_snapshot", "Unsupported Pi snapshot entries");

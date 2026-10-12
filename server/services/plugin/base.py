@@ -867,17 +867,13 @@ class BaseNode:
                     context.raw.pop(key, None)
                 else:
                     context.raw[key] = previous
-        # ToolNode skips the envelope wrap entirely — its _wrap_success
-        # returns the flat Output dict directly. Detect by the absence
-        # of the {success, ...} envelope keys.
-        if "success" not in envelope:
-            return envelope
+        # ToolNode._wrap_success already returns the flat Output payload.
+        # A plugin's public payload can itself contain success and result
+        # (Task Manager and MCP tools do), so those keys cannot distinguish
+        # it from the BaseNode envelope used by ActionNodes above.
         if envelope.get("success") is False:
             return self._tool_error_payload(envelope)
-        result = envelope.get("result")
-        if isinstance(result, dict):
-            return result
-        return {"result": result}
+        return envelope
 
     def _tool_error_payload(self, envelope: Dict[str, Any]) -> Dict[str, Any]:
         """Copy only explicitly declared public metadata from a tool error."""

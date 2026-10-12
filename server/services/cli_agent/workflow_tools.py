@@ -334,13 +334,21 @@ def _build_handler(
             "parameters": dict(entry.get("parameters") or {}),
             **({"pi_harness_version": 1} if entry.get("pi_harness_version") == 1 else {}),
         }
-        if config.get("node_type") in {"coding_agent", "_builtin_check_delegated_tasks"} and config.get("pi_harness_version") == 1:
-            # FastMCP supplies the authenticated JSON-RPC request identity;
-            # arguments never supply a delegation operation id.
+        if config.get("node_type") in {"coding_agent", "taskManager", "_builtin_check_delegated_tasks"} and config.get("pi_harness_version") == 1:
+            # Request IDs are local to one client. The stateful HTTP transport
+            # validates its server-issued session ID before calling this tool,
+            # so parallel CLI sessions need that namespace as well.
             mcp = _get_mcp()
             if mcp is not None:
                 try:
-                    config["tool_call_id"] = f"mcp:{mcp.get_context().request_id}"
+                    request_context = mcp.get_context().request_context
+                    request = request_context.request
+                    session_id = request.headers.get("mcp-session-id") if request is not None else None
+                    if session_id:
+                        from services.temporal.pi_protocol import canonical_digest
+                        config["tool_call_id"] = "mcp:" + canonical_digest({
+                            "session": session_id, "request": request_context.request_id,
+                        })
                 except ValueError:
                     pass  # The admission guard reports the missing identity.
             from services.plugin.deps import get_ai_service, get_database

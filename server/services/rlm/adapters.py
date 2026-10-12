@@ -244,7 +244,7 @@ class ToolBridgeAdapter:
                         if context.get("pi_harness_version") == 1:
                             config["pi_harness_version"] = 1
                         config["user_id"] = context.get("user_id", "owner")
-                    if t_type == "coding_agent" and config.get("pi_harness_version") == 1:
+                    if t_type in {"coding_agent", "taskManager"} and config.get("pi_harness_version") == 1:
                         # RLM executes Python rather than emitting function-call
                         # IDs. Admit a source-position receipt before child work:
                         # code, instruction and occurrence identify the call;

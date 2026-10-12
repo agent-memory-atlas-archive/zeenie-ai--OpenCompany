@@ -194,6 +194,7 @@ async def test_host_eof_is_a_retryable_transport_interruption(monkeypatch, tmp_p
     ("transport_failure", True, "PiTransportFailure"),
     ("transport_write_failed", True, "PiTransportFailure"),
     ("sdk_failure", False, "PiSDKFailure"),
+    ("snapshot_incompatible", False, "PiSnapshotIncompatible"),
     ("invalid_blob", False, "PiProtocolConflict"),
 ])
 async def test_host_error_codes_are_classified_without_exposing_diagnostics(monkeypatch, tmp_path, code, retryable, error_type):

@@ -1,4 +1,4 @@
-"""Generate history with the unmodified HEAD workflow, replay with Pi edits."""
+"""Replay genuine pre-Pi histories and exercise current native v1 rollover."""
 
 import asyncio
 from pathlib import Path
@@ -6,7 +6,6 @@ import subprocess
 import sys
 import types
 import os
-import hashlib
 import base64
 import json
 import zlib
@@ -61,9 +60,9 @@ async def _legacy_v1_tool(payload):
 
 
 async def _main():
-    source = subprocess.check_output(["git", "show", "HEAD:server/services/temporal/agent_workflow.py"],
-        cwd=Path(__file__).parents[3]).decode("utf-8")
-    name = "services.temporal._pre_pi_workflow_fixture"
+    source_path = Path(__file__).parents[2] / "services" / "temporal" / "agent_workflow.py"
+    source = source_path.read_text(encoding="utf-8")
+    name = "services.temporal._current_native_workflow_fixture"
     baseline = types.ModuleType(name)
     baseline.__package__ = "services.temporal"
     baseline.__file__ = str(Path(__file__).parents[2] / "services" / "temporal" / "agent_workflow.py")
@@ -106,21 +105,11 @@ async def _main():
                 result = await Replayer(workflows=[AgentWorkflow]).replay_workflow(
                     WorkflowHistory.from_json(history.workflow_id, history.to_json()))
                 assert result.replay_failure is None
-            if os.environ.get("PI_WRITE_NATIVE_FIXTURE") == "1":
-                fixture = {"origin_commit": subprocess.check_output(["git", "rev-parse", "HEAD"],
-                    cwd=Path(__file__).parents[3]).decode().strip(),
-                    "native_source_sha256": hashlib.sha256(source.encode()).hexdigest(),
-                    "description": "Pre-Pi native v1 tool retry and legacy Continue-As-New histories",
-                    "histories": [{"workflow_id": item.workflow_id, "history": json.loads(item.to_json())}
-                        for item in histories]}
-                FROZEN_HISTORY.parent.mkdir(exist_ok=True)
-                FROZEN_HISTORY.write_text(base64.b64encode(zlib.compress(json.dumps(fixture).encode())).decode() + "\n",
-                    encoding="ascii")
         finally:
             agent_workflow._AGENT_HISTORY_SOFT_CAP = previous_cap
 
 
-def test_pre_pi_native_head_history_replays_with_current_workflow():
+def test_current_native_v1_retry_and_legacy_rollover_histories_replay():
     completed = subprocess.run([sys.executable, "-m", "tests.temporal.test_pi_native_compatibility"],
         cwd=Path(__file__).parents[2], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT, timeout=90, env={**os.environ, "DEBUG": "false"})
@@ -130,7 +119,10 @@ def test_pre_pi_native_head_history_replays_with_current_workflow():
 def test_frozen_pre_pi_v1_retry_and_legacy_rollover_histories_replay():
     from services.temporal import agent_workflow
     fixture = json.loads(zlib.decompress(base64.b64decode(FROZEN_HISTORY.read_text(encoding="ascii"))))
-    assert len(fixture["origin_commit"]) == 40 and len(fixture["native_source_sha256"]) == 64
+    # Pinned provenance prevents the current-history helper from accidentally
+    # replacing the only genuine pre-cutover compatibility evidence.
+    assert fixture["origin_commit"] == "ca0144e1e4af48a0ba48161f2e449e130a7299a5"
+    assert fixture["native_source_sha256"] == "d0303c254a21ecb6019a3fcbee4a6cc413fc9535fe606a0d4481cf1dbdea5da1"
     assert len(fixture["histories"]) == 2
     previous = agent_workflow._AGENT_HISTORY_SOFT_CAP
     agent_workflow._AGENT_HISTORY_SOFT_CAP = 1

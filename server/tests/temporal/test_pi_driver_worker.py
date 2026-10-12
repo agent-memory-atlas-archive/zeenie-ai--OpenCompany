@@ -105,3 +105,50 @@ def test_virtual_workspace_leaf_is_registered_on_its_plugin_queue(monkeypatch):
     assert pool._build_queue_worker("machina-default") is not None
     assert factory.call_args.kwargs["activities"] == [agent_activities.coding_workspace_tool]
     assert pool._build_queue_worker("code-exec") is None
+
+
+@pytest.mark.asyncio
+async def test_standalone_bootstrap_wires_native_compaction_before_polling(monkeypatch):
+    from core.container import container
+    from services import compaction, model_registry
+    from services.llm.protocol import LLMResponse, Message, Usage, message_to_wire
+    from services.temporal import agent_activities, worker
+
+    database = SimpleNamespace(startup=AsyncMock(),
+        get_or_create_session_token_state=AsyncMock(return_value={"cumulative_total": 300, "compaction_count": 0}),
+        save_token_metric=AsyncMock(), save_compaction_event=AsyncMock(), update_session_token_state=AsyncMock())
+    unifier = SimpleNamespace(chat=AsyncMock(return_value=LLMResponse(content="Retain the current assignment",
+        usage=Usage(input_tokens=2, output_tokens=1, total_tokens=3))))
+    ai_service = SimpleNamespace(chat_unifier=unifier)
+    monkeypatch.setattr(compaction, "_service", None)
+    monkeypatch.setattr(container, "database", lambda: database)
+    monkeypatch.setattr(container, "ai_service", lambda: ai_service)
+    monkeypatch.setattr(container, "compaction_service", lambda: compaction.get_compaction_service() or
+        compaction.init_compaction_service(database, SimpleNamespace(compaction_enabled=True)))
+    monkeypatch.setattr(model_registry, "get_model_registry", lambda: SimpleNamespace(startup=lambda: None,
+        get_max_output_tokens=lambda *_args: 4096))
+    monkeypatch.setattr(worker, "create_runtime", lambda: None)
+    monkeypatch.setattr(worker.Client, "connect", AsyncMock(return_value=object()))
+    monkeypatch.setattr("core.config.Settings", lambda: SimpleNamespace(distributed_mode=False))
+    monkeypatch.setattr(agent_activities.activity, "heartbeat", lambda *_args: None)
+    monkeypatch.setattr(agent_activities, "_resolve_activity_api_key", AsyncMock(return_value="owner-key"))
+
+    class BeforePolling(Exception):
+        pass
+
+    async def check_compaction_then_stop(_pool_size):
+        database.startup.assert_awaited_once()
+        assert compaction.get_compaction_service() is not None
+        result = await agent_activities.compact_context({"node_id": "coding", "provider": "openai", "model": "stub",
+            "messages": [message_to_wire(Message(role="user", content="Continue the existing assignment. " * 10))]})
+        assert result["success"] and "Retain the current assignment" in result["summary"]
+        assert result["usage"]["total_tokens"] == 3
+        call = unifier.chat.await_args.kwargs
+        assert call["provider"] == "openai" and call["api_key"] == "owner-key"
+        assert call["sdk_max_retries"] == 0
+        database.save_compaction_event.assert_awaited_once()
+        raise BeforePolling
+
+    monkeypatch.setattr(worker, "create_shared_session", check_compaction_then_stop)
+    with pytest.raises(BeforePolling):
+        await worker.run_standalone_worker(server_address="test-only")

@@ -865,6 +865,10 @@ async def run_standalone_worker(
     if getattr(Settings(), "distributed_mode", False) is True:
         import nodes  # noqa: F401 -- populate the native plugin registry
     await container.database().startup()
+    # Context pressure relief runs here without the backend's lifespan. Its
+    # Activity resolves the shared compactor, which needs the same native
+    # AI service and provider/credential routing as model leaf Activities.
+    container.compaction_service().set_ai_service(container.ai_service())
 
     # Create shared session and activities
     session = await create_shared_session(pool_size)

@@ -26,6 +26,10 @@ delegation from RLM, Claude Code or Vertex managed runtimes starts a durable
 `PiInlineDelegationWorkflow` and returns the existing task acknowledgement.
 The wrapper owns the attached child, control registration and terminal result
 bookkeeping; callers continue polling through `check_delegated_tasks`.
+Task Manager keeps the same trusted scope when assigning Coding work or starting
+an EmployeeJob. Polling admits only this principal/root/parent's task receipts.
+Claude MCP call identities include the validated HTTP session and JSON-RPC ID,
+so parallel CLI clients cannot merge separate recorded operations.
 Admission records bind retries to the recorded caller operation and reject
 conflicting reuse. Existing native invocations retain their recorded behavior.
 
@@ -56,7 +60,7 @@ round through `finishTurn`.
 
 A custom ModelRuntime provider exchanges model operations with the Python
 broker. Custom tool callbacks exchange recorded tool call identities. Neither
-performs business I/O. All credentials resolve inside existing model/tool
+performs business I/O. Provider credentials resolve inside existing model/tool
 Activities and never enter the host, prepared payload or workflow history.
 
 The broker uses bounded LF-delimited JSON frames with correlated operation
@@ -113,6 +117,9 @@ state/signatures and durable media references. Native model Activities save
 the assistant before tools; idempotent tool-result bookkeeping closes the turn.
 Pi declaration-only system entries cannot modify canonical policy or grant
 tools. Hydrated images and duplicate message bodies are not durable metadata.
+Credential redaction applies to saved configuration. It preserves complete tool
+schemas and canonical wires, including arbitrary tool-argument and opaque
+provider-state field names that happen to resemble credential fields.
 
 Immutable scoped blobs hold complete Pi headers/entries/leaf IDs and large
 receipts, with SHA-256 integrity and a 256 KiB inline threshold. Protocol frames
@@ -128,6 +135,8 @@ derived session. Rebuild from retained MessageWire and frozen bindings. Keep
 OpenCompany's existing pressure relief, summary under the user role, original
 byte-stable system prompt and unread latest tool turn. Never let Pi and native
 automatic compaction run independently.
+An unsupported snapshot format or SDK version fails terminally; it cannot enter
+the ordinary canonical/configuration/binding rebuild path.
 
 ## Distribution and validation
 
@@ -138,10 +147,28 @@ verifies and safely unpacks it into its private data cache offline. No runtime
 package installation or dependency on the root workspace is permitted.
 
 SDK contract tests exercise reconstruction, declaration refresh, raw arguments,
-provider state, media and non-effect failures. Temporal integration tests cover
-lost replies, worker death after successful effects, Stop/Resume and parking,
-Continue-As-New, legacy replay and capacity-one nested delegation. Distribution
-smoke tests must launch the archive without the root dependency tree.
+provider state, media, incompatible snapshots, bootstrap lease cleanup, bounded
+terminal errors and non-effect failures. Temporal integration tests cover lost
+replies, snapshot-write interruption, Stop/Resume, parking and Continue-As-New.
+The worker-recovery gate hard-kills a Python driver after a successful tool,
+checks orphan Bun disposal, and waits for the real heartbeat timeout before
+receipt reconstruction. The nested-control gate runs five children and five
+grandchildren with one SDK driver slot and two teammate permits, checks central
+Stop/Resume, ordering and exact usage, then replays all twelve histories.
+Frozen pre-cutover histories prove native v1 retries and legacy rollover
+compatibility independently of histories produced by current source.
+
+Public-boundary regressions exercise actual AIService/RLM/Claude/Vertex plugin
+dispatch, Task Manager, EmployeeJob admission, scoped polling, locked schemas
+and approvals. Standalone bootstrap tests run the native compaction Activity
+before any queue polls. Distribution smoke tests launch the archive offline
+without the root dependency tree.
+
+Temporal durability scenarios use fixture model/blob/permit Activities. They
+do not prove database-backed permit recovery or live paid-provider execution.
+Context branches, clear, Reset and every public feature do not yet have combined
+Pi end-to-end coverage. Cross-platform packaged startup is configured in CI;
+Linux/macOS/Docker execution still requires that release validation to run.
 
 Primary references: [Pi SDK](https://github.com/earendil-works/pi/blob/v1.1.0/packages/coding-agent/docs/sdk.md),
 [Pi agent loop](https://github.com/earendil-works/pi/blob/v1.1.0/packages/agent/src/agent-loop.ts),

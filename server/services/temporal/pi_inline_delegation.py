@@ -7,6 +7,7 @@ the attached delegation runner and the legacy polling receipt across restarts.
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import timedelta
 from typing import Any
 
@@ -131,6 +132,10 @@ async def start_inline_pi_delegation(args: dict, config: dict, *, precreated_tas
     root_id = str(config.get("root_execution_id") or config.get("execution_id") or "")
     call_id = str(config.get("operation_id") or config.get("tool_call_id") or "")
     mission = str(args.get("task") or "").strip()
+    original_context = args.get("context")
+    context_text = (original_context if isinstance(original_context, str)
+                    else json.dumps(original_context, default=str, ensure_ascii=False)
+                    if original_context is not None else "")
     if not database or not all((node_id, parent_id, workflow_id, root_id, call_id, mission)):
         raise _invalid("Coding delegation requires a recorded call identity and trusted workflow, parent, execution, and database scope")
     nodes, edges = config.get("nodes") or [], config.get("edges") or []
@@ -163,7 +168,7 @@ async def start_inline_pi_delegation(args: dict, config: dict, *, precreated_tas
         if identifier and identifier not in snapshot:
             snapshot[identifier] = await database.get_node_parameters(identifier) or {}
     child_params = {**(snapshot.get(node_id) or {}), "system_message": mission,
-                    "prompt": args.get("context") or mission}
+                    "prompt": context_text or mission}
     snapshot[node_id] = child_params
     parent = next((node for node in nodes if node.get("id") == parent_id), {})
     teammates = [{"node_id": node.get("id"), "node_type": node.get("type"), "label": (node.get("data") or {}).get("label")}
@@ -187,7 +192,7 @@ async def start_inline_pi_delegation(args: dict, config: dict, *, precreated_tas
         "user_id": str(config.get("user_id") or "owner"), "parameter_snapshot": snapshot,
         "parent_node_id": parent_id, "delegation_depth": depth + 1, "max_delegation_depth": maximum_depth,
         "max_concurrent_subagents": limit, "team_id": team_id, "team_task_id": task_id, "trace_id": call_id,
-        "inputs": {}, "outputs": {}, "invocation": {"task": mission, "context": args.get("context") or ""},
+        "inputs": {}, "outputs": {}, "invocation": {"task": mission, "context": context_text},
         "pi_harness_version": 1}
     from services.coding_agent_runtime import freeze_pi_local_control
     freeze_pi_local_control(child)
@@ -243,6 +248,35 @@ async def list_inline_delegation_ids(database: Any, scope: dict) -> list[str]:
         return [row.payload["lifecycle"]["team_task_id"] for row in rows
                 if row.payload["lifecycle"]["parent_agent_node_id"] == scope["parent_node_id"]
                 and _request_digest(row.payload) == row.digest]
+
+
+async def inline_delegation_receipt_matches(database: Any, scope: dict, task_id: str, receipt: dict) -> bool:
+    """Authorize an explicit polling ID against its immutable admission.
+
+    Explicit IDs are not bounded by the recent-list limit, and a mutable
+    NodeOutput receipt cannot grant another principal access on its own.
+    """
+    from models.pi_checkpoint import PiRuntimeBlob
+
+    runner_id = receipt.get("runner_workflow_id")
+    if not runner_id or scope.get("pi_harness_version") != 1:
+        return False
+    expected_scope = {"workflow_id": scope.get("workflow_id"),
+                      "root_execution_id": scope.get("root_execution_id") or scope.get("execution_id"),
+                      "user_id": scope.get("user_id"), "generation": scope.get("generation")}
+    if not all(expected_scope[key] for key in ("workflow_id", "root_execution_id", "user_id")) or not scope.get("parent_node_id"):
+        return False
+    identity = canonical_digest({"inline_delegation": runner_id})
+    async with database.get_session() as session:
+        row = await session.get(PiRuntimeBlob, identity)
+    if row is None or row.kind != "inline-delegation-v1" or row.scope_digest != canonical_digest(expected_scope):
+        return False
+    payload = row.payload
+    lifecycle = payload.get("lifecycle") or {}
+    return (lifecycle.get("parent_agent_node_id") == scope["parent_node_id"]
+            and lifecycle.get("team_task_id") == task_id
+            and payload.get("runner_workflow_id") == runner_id
+            and _request_digest(payload) == row.digest == receipt.get("request_digest"))
 
 
 @activity.defn(name="coding.inline_delegation_status")

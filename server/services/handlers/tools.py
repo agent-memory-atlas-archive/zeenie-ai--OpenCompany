@@ -47,6 +47,21 @@ _delegated_tasks: Dict[str, asyncio.Task] = {}
 # Follows Celery AsyncResult / Ray ObjectRef pattern
 _delegation_results: Dict[str, Dict[str, Any]] = {}
 
+# Admitted Pi callers may still delegate to native specialists. Authorize
+# their running/cached receipts by the same server-owned parent scope used by
+# durable Pi admissions, without changing legacy unmarked polling.
+_delegation_scopes: Dict[str, Dict[str, Any]] = {}
+
+
+def _delegation_scope(config: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "workflow_id": config.get("workflow_id"),
+        "root_execution_id": config.get("root_execution_id") or config.get("execution_id"),
+        "parent_node_id": config.get("parent_node_id"),
+        "user_id": config.get("user_id"),
+        "generation": config.get("generation"),
+    }
+
 # Track active delegations to prevent duplicate calls: (parent_node_id, child_node_id, task_hash) -> task_id
 _active_delegations: Dict[Tuple[str, str, str], str] = {}
 
@@ -181,9 +196,17 @@ async def _dispatch_tool(tool_name: str, tool_args: Dict[str, Any], config: Dict
     # These scopes come from the server execution config, never tool arguments.
     for key in ("run_scope", "generation", "parameter_snapshot", "employee_job_id",
                 "root_execution_id", "team_id", "team_execution_id", "data_scope_id", "context_execution_id",
-                "context_session_id", "session_id", "graphVersion", "outputs"):
+                "context_session_id", "session_id", "graphVersion", "outputs", "credential_customer_id",
+                "ai_service", "database"):
         if key in config:
             context[key] = config[key]
+    if config.get("pi_harness_version") == 1:
+        from services.temporal.pi_inline_delegation import forward_inline_scope
+
+        # Stateful plugins (Task Manager) can schedule another admitted agent.
+        # Keep its frozen harness/control/principal scope and injected services
+        # across the plugin boundary, independently of the model arguments.
+        context.update(forward_inline_scope(config))
 
     logger.info("[Tool] Executing '%s' (node_type=%s, workspace=%s)", tool_name, node_type, context["workspace_dir"])
 
@@ -392,6 +415,10 @@ async def _execute_delegated_agent(
 
     # Generate hash of task to detect duplicate delegation attempts
     task_hash = precreated_task_id or hashlib.md5(f"{task_description}:{task_context}".encode()).hexdigest()[:16]
+    if config.get("pi_harness_version") == 1:
+        from services.temporal.pi_protocol import canonical_digest
+
+        task_hash += ":" + canonical_digest(_delegation_scope(config))
     delegation_key = (parent_node_id, node_id, task_hash)
 
     # Check for duplicate delegation (prevents LLM from calling same delegation twice)
@@ -417,6 +444,7 @@ async def _execute_delegated_agent(
 
     # Generate unique task ID
     task_id = precreated_task_id or f"delegated_{node_id}_{uuid.uuid4().hex[:8]}"
+    admitted_scope = _delegation_scope(config) if config.get("pi_harness_version") == 1 else None
 
     root_execution_id = str(config.get("root_execution_id") or config.get("execution_id") or workflow_id or parent_node_id)
     delegation_depth = int(config.get("delegation_depth") or 0)
@@ -499,6 +527,8 @@ async def _execute_delegated_agent(
 
     # Register this delegation to prevent duplicates
     _active_delegations[delegation_key] = task_id
+    if admitted_scope is not None:
+        _delegation_scopes[task_id] = admitted_scope
 
     # Mark this child node as having a live delegation so the workflow's
     # post-run cleanup (StatusBroadcaster._clear_stuck_node_statuses) does
@@ -699,6 +729,7 @@ async def _execute_delegated_agent(
                             "agent_name": agent_label,
                             "status": "error",
                             "error": error_msg,
+                            **({"delegation_scope": admitted_scope} if admitted_scope is not None else {}),
                         },
                     )
 
@@ -758,6 +789,7 @@ async def _execute_delegated_agent(
                         "agent_name": agent_label,
                         "status": "completed",
                         "result": response_text,
+                        **({"delegation_scope": admitted_scope} if admitted_scope is not None else {}),
                     },
                 )
 
@@ -808,6 +840,7 @@ async def _execute_delegated_agent(
                         "agent_name": agent_label,
                         "status": "error",
                         "error": str(e),
+                        **({"delegation_scope": admitted_scope} if admitted_scope is not None else {}),
                     },
                 )
 
@@ -952,10 +985,18 @@ async def get_delegated_task_status(task_ids: Optional[List[str]] = None, databa
     Returns:
         Dict with 'tasks' list containing status and results for each task.
     """
+    restricted = bool(scope and scope.get("pi_harness_version") == 1)
+    expected_scope = _delegation_scope(scope) if restricted else None
+    valid_scope = expected_scope is not None and all(expected_scope[key] for key in (
+        "workflow_id", "root_execution_id", "parent_node_id", "user_id"))
     if not task_ids:
-        # Return all known from memory
-        task_ids = list(set(list(_delegated_tasks.keys()) + list(_delegation_results.keys())))
-        if database is not None and scope and scope.get("pi_harness_version") == 1:
+        known = list(set(list(_delegated_tasks.keys()) + list(_delegation_results.keys())))
+        # Never include another parent's process-global cache in a Pi caller's
+        # implicit polling result. Native children admitted by this same Pi
+        # caller retain their trusted scope alongside the existing registry.
+        task_ids = [tid for tid in known if not restricted or (
+            valid_scope and _delegation_scopes.get(tid) == expected_scope)]
+        if database is not None and restricted and valid_scope:
             from services.temporal.pi_inline_delegation import list_inline_delegation_ids
             task_ids = list(dict.fromkeys([*task_ids, *await list_inline_delegation_ids(database, scope)]))
 
@@ -963,8 +1004,9 @@ async def get_delegated_task_status(task_ids: Optional[List[str]] = None, databa
     db_lookup_ids = []
 
     for tid in task_ids:
+        owns_memory = not restricted or (valid_scope and _delegation_scopes.get(tid) == expected_scope)
         # Layer 1: Live asyncio.Task (still running or just finished)
-        live_task = _delegated_tasks.get(tid)
+        live_task = _delegated_tasks.get(tid) if owns_memory else None
         if live_task is not None:
             if not live_task.done():
                 tasks.append({"task_id": tid, "status": "running"})
@@ -979,7 +1021,7 @@ async def get_delegated_task_status(task_ids: Optional[List[str]] = None, databa
             continue
 
         # Layer 2: In-memory result cache
-        cached = _delegation_results.get(tid)
+        cached = _delegation_results.get(tid) if owns_memory else None
         if cached:
             tasks.append(cached)
             continue
@@ -993,6 +1035,13 @@ async def get_delegated_task_status(task_ids: Optional[List[str]] = None, databa
             db_result = await database.get_node_output_by_session(session_id=f"delegation_{tid}", output_name="delegation_result")
             if db_result:
                 data = db_result.get("data", {})
+                if restricted:
+                    owned = valid_scope and data.get("delegation_scope") == expected_scope
+                    if not owned and valid_scope:
+                        from services.temporal.pi_inline_delegation import inline_delegation_receipt_matches
+                        owned = await inline_delegation_receipt_matches(database, scope, tid, data)
+                    if not owned:
+                        continue
                 result_data = data.get("result", {})
                 response_text = result_data.get("response", str(result_data)) if isinstance(result_data, dict) else str(result_data)
                 tasks.append(
