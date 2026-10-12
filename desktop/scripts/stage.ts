@@ -41,6 +41,7 @@ const DROP_PREFIXES = [
   "server/tests/",
   "server/scripts/",
   "server/nodejs/", // built below with the sidecar's own bun build
+  "server/pi/", // frozen SDK distribution built and copied below
   "server/experiments/",
   "server/.venv/",
 ];
@@ -104,6 +105,18 @@ function bundleSidecar(): void {
   log(`sidecar bundled -> ${posix.relative(REPO_ROOT.replace(/\\/g, "/"), outfile.replace(/\\/g, "/"))}`);
 }
 
+function bundlePi(): number {
+  const piDir = join(REPO_ROOT, "server", "pi");
+  run(BUN, ["install", "--frozen-lockfile"], { cwd: piDir });
+  run(BUN, ["run", "build"], { cwd: piDir });
+  run(BUN, ["run", "scripts/stage.ts", "--out", join(APP_ROOT, "server", "pi")], { cwd: piDir });
+  for (const rel of ["dist/index.js", "dist/runtime.tgz", "dist/runtime-manifest.json"]) {
+    if (!existsSync(join(APP_ROOT, "server", "pi", rel))) fail(`Pi runtime did not stage ${rel}`);
+  }
+  log("Pi Coding Agent host and private SDK archive staged");
+  return 3;
+}
+
 function stageAppRoot(): { files: number } {
   rmSync(APP_ROOT, { recursive: true, force: true });
   mkdirSync(APP_ROOT, { recursive: true });
@@ -117,7 +130,8 @@ function stageAppRoot(): { files: number } {
     fail("client/dist/index.html not staged — build the client first (bun run --filter react-flow-client build)");
   }
   bundleSidecar();
-  return { files: all.size + 1 };
+  const piFiles = bundlePi();
+  return { files: all.size + 1 + piFiles };
 }
 
 async function main(): Promise<void> {

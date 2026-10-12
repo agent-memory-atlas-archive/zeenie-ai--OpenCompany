@@ -168,12 +168,16 @@ class ToolBridgeAdapter:
 
         main_loop = loop or asyncio.get_event_loop()
         tools = {}
+        pi_call_positions = {}
+        pi_position_lock = threading.Lock()
 
         for tool_info in tool_data:
             node_type = tool_info.get("node_type", "")
 
-            # Skip agents (delegation) and chat models (handled by ChatModelExtractor)
-            if node_type in AI_AGENT_TYPES or node_type in AI_CHAT_MODEL_TYPES:
+            # Existing RLM surfaces exclude agents. A newly admitted Coding
+            # target uses only the detached durable admission bridge.
+            pi_coding = node_type == "coding_agent" and (context or {}).get("pi_harness_version") == 1
+            if (node_type in AI_AGENT_TYPES and not pi_coding) or node_type in AI_CHAT_MODEL_TYPES:
                 continue
 
             node_id = tool_info.get("node_id", "")
@@ -230,11 +234,42 @@ class ToolBridgeAdapter:
                         "provider": provider,
                     }
                     if context:
+                        if context.get("pi_harness_version") == 1:
+                            from services.temporal.pi_inline_delegation import forward_inline_scope
+                            config.update(forward_inline_scope(context))
                         config["nodes"] = context.get("nodes", [])
                         config["edges"] = context.get("edges", [])
                         config["execution_id"] = context.get("execution_id")
                         config["root_execution_id"] = context.get("root_execution_id")
+                        if context.get("pi_harness_version") == 1:
+                            config["pi_harness_version"] = 1
                         config["user_id"] = context.get("user_id", "owner")
+                    if t_type == "coding_agent" and config.get("pi_harness_version") == 1:
+                        # RLM executes Python rather than emitting function-call
+                        # IDs. Admit a source-position receipt before child work:
+                        # code, instruction and occurrence identify the call;
+                        # changed retry content conflicts in durable admission.
+                        import hashlib
+
+                        caller = inspect.currentframe().f_back
+                        frame = caller
+                        code = None
+                        while frame is not None:
+                            if frame.f_code.co_name == "execute_code" and isinstance(frame.f_locals.get("code"), str):
+                                code = frame.f_locals["code"]
+                                break
+                            frame = frame.f_back
+                        if code is not None and caller is not None:
+                            position = (hashlib.sha256(code.encode()).hexdigest(), caller.f_lineno, caller.f_lasti)
+                            with pi_position_lock:
+                                occurrence = pi_call_positions.get(position, 0)
+                                pi_call_positions[position] = occurrence + 1
+                            config["tool_call_id"] = f"rlm:{position[0]}:{position[1]}:{position[2]}:{occurrence}"
+                        del frame, caller
+                    if config.get("pi_harness_version") == 1:
+                        from services.plugin.deps import get_ai_service, get_database
+                        config["ai_service"] = get_ai_service()
+                        config["database"] = get_database()
 
                     if t_input_model is not None:
                         try:

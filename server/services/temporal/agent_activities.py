@@ -1233,7 +1233,7 @@ async def prepare_agent_payload(context: Dict[str, Any]) -> Dict[str, Any]:
     if not api_key:
         # Try auth_service one more time (covers chatAgent flow where
         # node params don't carry the api_key directly).
-        if node_type == "browser_agent" or context.get("native_workspace_version") == 1 or context.get("browser_routing_version") == 1:
+        if node_type == "browser_agent" or context.get("native_workspace_version") == 1 or context.get("browser_routing_version") == 1 or context.get("pi_harness_version") == 1:
             principal = str(context.get("user_id") or "owner")
             source = await auth.get_credential_source(provider, principal=principal)
             if not source:
@@ -1564,7 +1564,7 @@ async def prepare_agent_payload(context: Dict[str, Any]) -> Dict[str, Any]:
                     "tool_info": tool_info,
                     **({"activity_policy": _tool_activity_policy(cls), "needs_canvas": bool(getattr(cls, "needs_canvas", False))}
                        if context.get("execution_control_version") == 1 or context.get("native_workspace_version") == 1
-                       or context.get("browser_routing_version") == 1 or node_type == "browser_agent" else {}),
+                       or context.get("browser_routing_version") == 1 or node_type == "browser_agent" or context.get("pi_harness_version") == 1 else {}),
                     # Team leads create and dispatch durable work through Task
                     # Manager. Delegate descriptors stay in workflow state for
                     # trusted assignee resolution, but are not callable directly
@@ -1575,6 +1575,17 @@ async def prepare_agent_payload(context: Dict[str, Any]) -> Dict[str, Any]:
                     ),
                 }
             )
+
+    if node_type == "coding_agent" and context.get("pi_harness_version") == 1:
+        from services.coding_workspace_tools import build_workspace_tools, validate_tool_names
+        validate_tool_names(tools_payload)
+        if parameters.get("tool_mode", "connected") == "workspace":
+            tools_payload.extend(await build_workspace_tools(
+                ai_service, node_id, tools_payload, definition=_native_tool_definition, policy=_tool_activity_policy,
+                connected_types=[info.get("node_type") for info in effective_tool_data],
+            ))
+        elif parameters.get("tool_mode", "connected") != "connected":
+            raise ApplicationError("Invalid Coding Agent tool mode", type="CodingToolModeInvalid", non_retryable=True)
 
     if any(tool["name"].startswith("delegate_to_") for tool in tools_payload):
         from services.plugin.edge_walker import format_teammate_roster_line
@@ -1729,6 +1740,8 @@ async def prepare_agent_payload(context: Dict[str, Any]) -> Dict[str, Any]:
         "chat_stream": chat_stream,
         "node_id": node_id,
         "node_type": node_type,
+        **({"pi_harness_version": 1, "tool_mode": parameters.get("tool_mode", "connected")}
+           if context.get("pi_harness_version") == 1 else {}),
         "workflow_id": workflow_id,
         "session_id": session_id,
         "parameter_snapshot": snapshot,
@@ -1777,9 +1790,25 @@ async def prepare_agent_payload(context: Dict[str, Any]) -> Dict[str, Any]:
             or ""
         ),
     }
-    if browser_runtime_version == 1 or context.get("native_workspace_version") == 1:
+    if browser_runtime_version == 1 or context.get("native_workspace_version") == 1 or context.get("pi_harness_version") == 1:
         return _strip_credentials(prepared)
     return prepared
+
+
+@activity.defn(name="coding.workspace_tool")
+async def coding_workspace_tool(payload: Dict[str, Any]) -> Dict[str, Any]:
+    from services.coding_workspace_tools import execute_workspace_tool
+    task = asyncio.create_task(execute_workspace_tool(payload))
+    try:
+        while not task.done():
+            done, _ = await asyncio.wait({task}, timeout=5)
+            if not done:
+                activity.heartbeat("Executing automatic coding workspace tool")
+        return await task
+    finally:
+        if not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
 
 
 @activity.defn(name="agent.refresh_tools")
@@ -1883,7 +1912,7 @@ async def refresh_agent_tools(payload: Dict[str, Any]) -> Dict[str, Any]:
                     "tool_info": tool_info,
                     **({"activity_policy": _tool_activity_policy(cls), "needs_canvas": bool(getattr(cls, "needs_canvas", False))}
                        if payload.get("execution_control_version") == 1 or payload.get("native_workspace_version") == 1
-                       or payload.get("browser_runtime_version") == 1 or payload.get("browser_routing_version") == 1 else {}),
+                       or payload.get("browser_runtime_version") == 1 or payload.get("browser_routing_version") == 1 or payload.get("pi_harness_version") == 1 else {}),
                     "llm_hidden": bool(team_lead_refresh and is_agent_delegate),
                 }
             )
@@ -1905,6 +1934,8 @@ async def refresh_agent_tools(payload: Dict[str, Any]) -> Dict[str, Any]:
     if payload.get("browser_runtime_version") == 1 or payload.get("browser_routing_version") == 1:
         bindings, version = await _freeze_browser_tools(database, new_tools_payload, payload)
         result.update(browser_bindings=bindings, browser_runtime_version=version)
+        return _strip_credentials(result)
+    if payload.get("pi_harness_version") == 1:
         return _strip_credentials(result)
     return result
 
@@ -2440,6 +2471,7 @@ def collect_agent_activities() -> List[Any]:
         execute_llm_step,
         persist_agent_turn,
         prepare_agent_payload,
+        coding_workspace_tool,
         broadcast_agent_progress,
         store_agent_output,
         refresh_agent_tools,

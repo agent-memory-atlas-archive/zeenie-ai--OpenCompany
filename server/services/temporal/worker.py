@@ -50,6 +50,8 @@ def _framework_workflows() -> list:
     """
     from services.temporal.workflow import MachinaWorkflow
     from services.temporal.agent_workflow import AgentWorkflow, DelegatedTaskWorkflow
+    from services.temporal.pi_workflow import PiCodingAgentWorkflow
+    from services.temporal.pi_inline_delegation import PiInlineDelegationWorkflow
     from services.temporal.trigger_listener_workflow import TriggerListenerWorkflow
     from services.temporal.polling_trigger_workflow import PollingTriggerWorkflow
     from services.temporal.workflow_control_workflow import WorkflowControlWorkflow
@@ -67,6 +69,8 @@ def _framework_workflows() -> list:
         WorkspaceTaskControllerWorkflow,
         MachinaWorkflow,
         AgentWorkflow,
+        PiCodingAgentWorkflow,
+        PiInlineDelegationWorkflow,
         DelegatedTaskWorkflow,
         TriggerListenerWorkflow,
         PollingTriggerWorkflow,
@@ -160,6 +164,7 @@ class TemporalWorkerManager:
         self._session: Optional[aiohttp.ClientSession] = None
         self._activities: Optional[NodeExecutionActivities] = None
         self._browser_pool = None
+        self._pi_driver_pool = None
 
     @property
     def is_running(self) -> bool:
@@ -185,7 +190,15 @@ class TemporalWorkerManager:
             # Create activity instance with shared session
             self._activities = NodeExecutionActivities(self._session)
 
-            self._worker = await self._build_worker()
+            try:
+                self._worker = await self._build_worker()
+                # Maintenance drivers wait on framework/model/tool work. They
+                # must have independent slots even in monolithic deployments.
+                self._pi_driver_pool = PiDriverWorkerPool(self.client)
+                await self._pi_driver_pool.start()
+            except BaseException:
+                await self.stop()
+                raise
             span.set_attribute("task_queue", self.task_queue)
             span.set_attribute("pool_size", self.pool_size)
 
@@ -232,6 +245,8 @@ class TemporalWorkerManager:
             collect_polling_activities,
         )
         from services.temporal.agent_activities import collect_agent_activities
+        from services.temporal.pi_activities import collect_pi_activities, PiControlActivities
+        from services.temporal.pi_inline_delegation import collect_pi_inline_activities
         from services.temporal.workspace_task_activities import reset_workspace_task_runtime
         from services.chat.activities import CHAT_RUN_ACTIVITIES
         from services.approvals.activities import APPROVAL_ACTIVITIES
@@ -248,7 +263,7 @@ class TemporalWorkerManager:
         from services.temporal.browser_task_activities import HISTORY_ACTIVITIES, BROWSER_OWNER_ACTIVITIES
         from core.config import Settings
         local_browser_activities = [] if getattr(Settings(), "distributed_mode", False) is True else BROWSER_OWNER_ACTIVITIES
-        agent_activities = collect_agent_activities()
+        agent_activities = [*collect_agent_activities(), *collect_pi_activities(), *collect_pi_inline_activities(), *PiControlActivities(self.client).activities()]
         polling_activities = collect_polling_activities()
         # Plugin-owned workflow classes (e.g. cron's
         # CronTriggerWorkflow) self-register a SimplePlugin via
@@ -381,6 +396,9 @@ class TemporalWorkerManager:
 
     async def stop(self) -> None:
         """Stop the Temporal worker and cleanup resources."""
+        if self._pi_driver_pool is not None:
+            await self._pi_driver_pool.stop()
+            self._pi_driver_pool = None
         if self._browser_pool is not None:
             await self._browser_pool.stop()
             self._browser_pool = None
@@ -569,6 +587,15 @@ class TemporalWorkerPool:
         )
 
         activities = collect_plugin_activities(task_queue=queue)
+        # Automatic Coding Agent capabilities keep their plugins' queues and
+        # policies, but execute through a framework leaf rather than a canvas
+        # node. Register that leaf on the same queues when pool routing is on.
+        from services.coding_workspace_tools import WORKSPACE_TOOL_TYPES
+        from services.node_registry import get_node_class
+        if any((cls := get_node_class(node_type)) is not None and cls.task_queue == queue
+               for node_type in WORKSPACE_TOOL_TYPES):
+            from services.temporal.agent_activities import coding_workspace_tool
+            activities = [*activities, coding_workspace_tool]
         from core.config import Settings
         if getattr(Settings(), "distributed_mode", False) is True and queue == "browser":
             return None
@@ -712,6 +739,56 @@ class BrowserOwnerWorkerPool(TemporalWorkerPool):
         )
 
 
+class PiDriverWorkerPool(TemporalWorkerPool):
+    """Always-on, separately bounded capacity for Pi maintenance drivers.
+
+    Parent drivers park while delegated children run, so a single driver
+    slot supports nested Coding Agent delegation without a capacity cycle.
+    The normal plugin worker-pool flag never controls this queue.
+    """
+
+    QUEUE = "coding-pi-driver"
+
+    def __init__(self, client: Client):
+        super().__init__(client, queues=[self.QUEUE], default_pool_size=2)
+
+    def _concurrency_for(self, queue: str) -> int:
+        import os
+        from core.config import Settings
+
+        key = "TEMPORAL_CODING_PI_DRIVER_CONCURRENCY"
+        raw = os.environ.get(key)
+        if raw is not None:
+            try:
+                slots = int(raw)
+            except ValueError as exc:
+                raise ValueError(f"{key} must be a positive integer") from exc
+            if slots <= 0:
+                raise ValueError(f"{key} must be a positive integer")
+            return slots
+        return 1 if Settings().deployment_mode == "local" else 2
+
+    def _build_queue_worker(self, queue: str) -> Worker:
+        from services.temporal.pi_activities import PiDriverActivities
+
+        return Worker(
+            self.client,
+            task_queue=queue,
+            activities=PiDriverActivities(self.client).activities(),
+            max_concurrent_activities=self._concurrency_for(queue),
+            graceful_shutdown_timeout=_graceful_shutdown_timeout(),
+            identity=_worker_identity(queue),
+            interceptors=[ObservabilityWorkerInterceptor()],
+            activity_task_poller_behavior=PollerBehaviorAutoscaling(initial=1, minimum=1, maximum=2),
+        )
+
+
+async def create_pi_driver_worker(client: Client) -> Worker:
+    """Create the separate driver worker for tests/custom framework setups."""
+    pool = PiDriverWorkerPool(client)
+    return pool._build_queue_worker(pool.QUEUE)
+
+
 async def run_standalone_worker(
     server_address: str | None = None,
     namespace: str = "default",
@@ -782,12 +859,12 @@ async def run_standalone_worker(
         return
 
     from core.config import Settings
+    # Pi checkpoint Activities always use the shared database, including a
+    # standalone local worker. Initialize its tables before either queue polls.
+    from core.container import container
     if getattr(Settings(), "distributed_mode", False) is True:
-        # Native provider/preparation Activities use DI directly. The legacy
-        # backend bridge alone never initialized their shared database here.
-        from core.container import container
         import nodes  # noqa: F401 -- populate the native plugin registry
-        await container.database().startup()
+    await container.database().startup()
 
     # Create shared session and activities
     session = await create_shared_session(pool_size)
@@ -802,6 +879,8 @@ async def run_standalone_worker(
         store_node_output_activity,
     )
     from services.temporal.agent_activities import collect_agent_activities
+    from services.temporal.pi_activities import collect_pi_activities, PiControlActivities
+    from services.temporal.pi_inline_delegation import collect_pi_inline_activities
     from services.temporal.workspace_task_activities import reset_workspace_task_runtime
     from services.chat.activities import CHAT_RUN_ACTIVITIES
     from services.approvals.activities import APPROVAL_ACTIVITIES
@@ -815,6 +894,9 @@ async def run_standalone_worker(
 
     registered_agent_activities = [
         *collect_agent_activities(),
+        *collect_pi_activities(),
+        *collect_pi_inline_activities(),
+        *PiControlActivities(client).activities(),
     ]
     registered_plugin_activities = _generic_plugin_activities()
     from services.temporal.browser_task_activities import HISTORY_ACTIVITIES, BROWSER_OWNER_ACTIVITIES
@@ -826,7 +908,9 @@ async def run_standalone_worker(
 
     start_relay()
 
+    pi_driver_pool = PiDriverWorkerPool(client)
     try:
+        await pi_driver_pool.start()
         worker = Worker(
             client,
             task_queue=task_queue,
@@ -862,6 +946,7 @@ async def run_standalone_worker(
         await worker.run()
 
     finally:
+        await pi_driver_pool.stop()
         await stop_relay()
         # Cleanup session on shutdown
         if not session.closed:
@@ -887,6 +972,9 @@ async def create_worker(
 
     Returns:
         Configured Worker instance (not started)
+
+    Coding Agent setups must also start ``create_pi_driver_worker(client)``;
+    the separate worker is required to keep driver waits out of leaf slots.
     """
     if session is None:
         session = await create_shared_session()
@@ -901,6 +989,8 @@ async def create_worker(
         store_node_output_activity,
     )
     from services.temporal.agent_activities import collect_agent_activities
+    from services.temporal.pi_activities import collect_pi_activities, PiControlActivities
+    from services.temporal.pi_inline_delegation import collect_pi_inline_activities
     from services.temporal.workspace_task_activities import reset_workspace_task_runtime
     from services.chat.activities import CHAT_RUN_ACTIVITIES
     from services.approvals.activities import APPROVAL_ACTIVITIES
@@ -914,6 +1004,9 @@ async def create_worker(
 
     registered_agent_activities = [
         *collect_agent_activities(),
+        *collect_pi_activities(),
+        *collect_pi_inline_activities(),
+        *PiControlActivities(client).activities(),
     ]
     registered_plugin_activities = _generic_plugin_activities()
     from services.temporal.browser_task_activities import HISTORY_ACTIVITIES, BROWSER_OWNER_ACTIVITIES

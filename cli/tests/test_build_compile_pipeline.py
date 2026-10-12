@@ -181,6 +181,22 @@ def test_only_one_sidecar_bundle_invocation(tmp_path: Path):
     assert len(matches) == 1, f"expected exactly 1 sidecar bundle, got {len(matches)}"
 
 
+def test_pi_build_uses_private_frozen_dependencies_and_is_fatal(tmp_path: Path):
+    """A clean release must ship Pi rather than installing it at startup."""
+    captured = _run_build_capture_invocations(tmp_path)
+    private = [call for call in captured if call.get("cwd") == tmp_path / "server" / "pi"]
+    assert [call["argv"] for call in private] == [
+        ["bun", "install", "--frozen-lockfile"],
+        ["bun", "run", "build"],
+    ]
+    assert all(call.get("check", True) for call in private)
+    sidecar = _find_call(captured, lambda c: "opencompany-nodejs-executor" in c)
+    uv_sync = _find_call(captured, lambda c: c[:2] == ["uv", "sync"])
+    assert sidecar is not None and uv_sync is not None
+    private_indices = [captured.index(call) for call in private]
+    assert sidecar[0] < min(private_indices) < max(private_indices) < uv_sync[0]
+
+
 # ---------------------------------------------------------------------------
 # Python bytecode compile step ([5/6])
 # ---------------------------------------------------------------------------

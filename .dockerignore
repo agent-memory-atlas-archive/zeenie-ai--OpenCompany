@@ -41,6 +41,8 @@ import.json
 .cli-venv
 client/dist
 server/nodejs/dist
+server/pi/dist
+server/pi/.runtime-build
 *.tgz
 
 # The Electron shell is not part of the server image.

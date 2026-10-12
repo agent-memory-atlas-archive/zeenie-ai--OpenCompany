@@ -1,4 +1,15 @@
-from .._specialized import SpecializedAgentBase
+from typing import Literal
+
+from pydantic import Field
+
+from .._specialized import SpecializedAgentBase, SpecializedAgentParams
+
+
+class CodingAgentParams(SpecializedAgentParams):
+    tool_mode: Literal["connected", "workspace"] = Field(
+        default="connected",
+        description="Connected tools only, or add the workflow workspace coding toolkit.",
+    )
 
 
 class CodingAgentNode(SpecializedAgentBase):
@@ -7,3 +18,4 @@ class CodingAgentNode(SpecializedAgentBase):
     subtitle = "Code Execution"
     group = ("agent",)
     description = "AI agent for code execution"
+    Params = CodingAgentParams

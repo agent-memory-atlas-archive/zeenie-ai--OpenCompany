@@ -227,8 +227,12 @@ class NodeExecutionActivities:
             # This enables taskTrigger -> chatAgent data flow via input-task handle
             "outputs": context.get("inputs", {}),
         }
+        if context.get("pi_harness_version") == 1:
+            from services.temporal.pi_inline_delegation import forward_inline_scope
+            message.update(forward_inline_scope(context))
         for key in (
             "auto_rebind_tools",
+            "pi_harness_version",
             "parameter_snapshot",
             "invoking_agent_node_id",
             "agent_iteration",

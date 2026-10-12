@@ -150,6 +150,9 @@ class RLMService:
             from services.skill_runtime import skill_tool_info
 
             effective_tool_data = list(tool_data or [])
+            if (context or {}).get("pi_harness_version") == 1 and any(item.get("node_type") == "coding_agent" for item in effective_tool_data):
+                effective_tool_data.append({"node_type": "_builtin_check_delegated_tasks", "node_id": "",
+                                            "parameters": {}, "label": "Check Delegated Tasks"})
             progressive_skill_tool = skill_tool_info(skill_data or [], node_id)
             if progressive_skill_tool:
                 effective_tool_data.append(progressive_skill_tool)

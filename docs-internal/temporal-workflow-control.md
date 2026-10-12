@@ -10,6 +10,12 @@ This is the current control contract. Use it with
 [node authoring](node_creation.md), [event routing](event_framework.md), and
 [chat protocol](chat_protocol.md). Archived RFCs describe earlier designs.
 
+[Pi Coding Agent](pi_coding_agent.md) uses this same admission/drain contract.
+Its maintenance driver is outside business-action counts, but Stop also fences
+and quiesces the driver. Resume replays recorded model/tool receipts. Parent
+drivers park during delegated child waits so a single driver slot can serve
+nested Coding Agents. Native histories retain their recorded execution path.
+
 ## Control lifecycle
 
 - **Start** creates the first generation and deploys its snapshotted graph.

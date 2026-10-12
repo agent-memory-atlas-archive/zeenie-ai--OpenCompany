@@ -237,7 +237,8 @@ class TestConversationIdentity:
             "the boundary directly"
         )
         carried_at = source.index('resume.get("transcript")')
-        loop_at = source.index("agent.execute_llm_step")
+        loop_at = source.index("self._execute_model_step")
+        assert '"agent.execute_llm_step"' in inspect.getsource(AgentWorkflow._execute_model_step)
         assert carried_at < loop_at, (
             "the carried transcript must be adopted before the first LLM "
             "step of the resumed run"
@@ -466,7 +467,7 @@ class TestConversationIdentity:
         runner = inspect.getsource(DelegatedTaskWorkflow.run)
         permit = runner.index('"agent.acquire_subagent_permit"')
         claim = runner.index('"agent.begin_delegation"')
-        child = runner.index('"AgentWorkflow"', claim)
+        child = runner.index('agent_workflow_name(', claim)
         finish = runner.index('"agent.finish_delegation"', child)
         release = runner.index('"agent.release_subagent_permit"', finish)
         assert permit < claim < child < finish < release
@@ -552,6 +553,7 @@ class TestAgentActivities:
             "agent.skill.clear",
             "agent.skill.invoke",
             "agent.store_output",
+            "coding.workspace_tool",
             "controller.queue.read",
             "controller.queue.spill",
             "employee.job.deliver",
@@ -631,7 +633,7 @@ class TestAgentActivities:
         from services.temporal.agent_workflow import AgentWorkflow
 
         source = inspect.getsource(AgentWorkflow._run_impl)
-        failure = source.index("except Exception as e:", source.index('"agent.execute_llm_step"'))
+        failure = source.index("except Exception as e:", source.index('self._execute_model_step'))
         terminal_return = source.index('"error_type": "LLMStepError"', failure)
         cleanup = source.index('activity_id="clear-active-skills-failed"', failure)
         error_phase = source.index('phase="failed"', cleanup)

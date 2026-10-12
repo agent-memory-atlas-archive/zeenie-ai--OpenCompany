@@ -1262,8 +1262,12 @@ class BaseNode:
                 # ``auto_rebind_tools`` for agentBuilder) through the
                 # ``extras`` channel so they land in NodeContext.raw.
                 extras: Dict[str, Any] = {}
+                if context.get("pi_harness_version") == 1:
+                    from services.temporal.pi_inline_delegation import forward_inline_scope
+                    extras.update(forward_inline_scope(context))
                 for key in (
                     "auto_rebind_tools",
+                    "pi_harness_version",
                     "invoking_agent_node_id",
                     "agent_iteration",
                     "tool_call_index",

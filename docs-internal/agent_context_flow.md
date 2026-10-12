@@ -32,6 +32,12 @@ live in Workflow history and serve a separate execution contract.
 Memory (`simpleMemory`) is an ordinary tool — explicit
 remember/recall — and plays no automatic part in continuity.
 
+The [Pi Coding Agent](./pi_coding_agent.md) stores immutable SDK snapshots and
+large operation receipts as execution caches. These are outside the conversation
+store and have no mutable conversation head. A snapshot is usable only when
+its canonical projection/configuration matches the authoritative MessageWire;
+branching, compaction and Reset rebuild the derived session as needed.
+
 ## The store (`services/agent_context/`)
 
 | Function | Contract |

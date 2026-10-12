@@ -468,6 +468,12 @@ async def handle_execute_node(data: Dict[str, Any], websocket: WebSocket) -> Dic
     # A chat run's scope links what a node produces to the owner's chat, so
     # only the worker relaying MachinaWorkflow's context may set it.
     socket_scope = getattr(websocket, "scope", None) or {}
+    if isinstance(socket_scope, dict) and socket_scope.get("path") == "/ws/internal":
+        if data.get("pi_harness_version") == 1:
+            from services.temporal.pi_inline_delegation import forward_inline_scope
+            invocation_extras.update(forward_inline_scope(data))
+        else:
+            invocation_extras["coding_native_version"] = 1
     if "run_scope" in data and isinstance(socket_scope, dict) and socket_scope.get("path") == "/ws/internal":
         invocation_extras["run_scope"] = data["run_scope"]
     user_id = execution_principal(data, websocket)

@@ -11,6 +11,13 @@ Replaces the partial explanations previously scattered across
 > - [agent_delegation.md](./agent_delegation.md) — `delegate_to_*` tools + taskTrigger / input-task patterns
 > - [TEMPORAL_ARCHITECTURE.md](./TEMPORAL_ARCHITECTURE.md) — per-type Temporal activity dispatch (F4.A) that backs tool calls when the flag is on
 > - [node_creation.md](./node_creation.md) — recipe for adding a new tool node
+> - [pi_coding_agent.md](./pi_coding_agent.md) — Pi tool callbacks, automatic workspace bindings and receipt reconciliation
+
+Coding Agent exposes this same canonical tool catalogue to Pi. SDK callbacks
+reference recorded call IDs and frozen bindings; the trusted dispatcher reads
+the original arguments and applies existing validation/policy. Workspace mode
+fills missing filesystem/shell types through virtual bindings and a dedicated
+Activity, without creating canvas nodes or node output records.
 
 ## 1. Five stages
 

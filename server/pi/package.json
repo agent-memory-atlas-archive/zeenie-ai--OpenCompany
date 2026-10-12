@@ -1,0 +1,19 @@
+{
+  "name": "@opencompany/pi-host",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "build": "bun run scripts/build.ts",
+    "test:distribution": "bun test tests/distribution.test.ts"
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "1.1.0"
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.11",
+    "typescript": "5.9.3"
+  }
+}

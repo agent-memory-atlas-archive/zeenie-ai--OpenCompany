@@ -106,6 +106,11 @@ async def execute_node_for_temporal(
             )
             if key in context
         }
+        if context.get("pi_harness_version") == 1:
+            from services.temporal.pi_inline_delegation import forward_inline_scope
+            invocation_extras.update(forward_inline_scope(context))
+        else:
+            invocation_extras["coding_native_version"] = 1
         result = await workflow_service.execute_node(
             node_id=request.node_id,
             node_type=request.node_type,

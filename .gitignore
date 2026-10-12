@@ -218,3 +218,7 @@ desktop/playwright-report/
 
 # Isolated integration-test runtimes and disposable databases.
 /.test-runtime/
+
+# Derived Pi host and its private production dependency archive.
+server/pi/dist/
+server/pi/.runtime-build/

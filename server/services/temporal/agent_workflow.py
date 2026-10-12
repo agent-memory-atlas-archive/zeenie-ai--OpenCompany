@@ -56,6 +56,7 @@ from temporalio.common import RetryPolicy  # kept for type hints
 from temporalio.workflow import ActivityCancellationType, ParentClosePolicy
 
 from services.agent_bindings import unique_node_bindings
+from services.coding_agent_runtime import agent_workflow_name, uses_pi
 from services.node_registry import get_node_class
 from services.tool_output import bound_tool_output, tool_output_is_capped
 
@@ -116,7 +117,8 @@ async def _execute_plugin_tool_activity(
     }
     policy = (tool_info or {}).get("activity_policy")
     if (context.get("execution_control_version") == 1 or context.get("native_workspace_version") == 1
-            or context.get("browser_runtime_version") == 1 or context.get("browser_routing_version") == 1) and policy:
+            or context.get("browser_runtime_version") == 1 or context.get("browser_routing_version") == 1
+            or uses_pi(context.get("node_type"), context)) and policy:
         options = _frozen_tool_activity_options(policy, context)
         tool_payload = {**tool_payload, **_inherited_scope(context), "user_id": str(context.get("user_id") or "owner")}
     else:
@@ -308,6 +310,11 @@ _INHERITED_SCOPE_KEYS = (
     "execution_control_state",
     "execution_control_revision",
     "native_workspace_version",
+    "pi_harness_version",
+    "pi_local_control_version",
+    "pi_local_control_state",
+    "pi_local_control_revision",
+    "workflow_slug",
     "browser_routing_version",
     "browser_runtime_version",
     "browser_bindings",
@@ -372,7 +379,7 @@ def _child_control_scope(control: ExecutionControl) -> Dict[str, Any]:
     """Fresh intent travels to children; each root owns its chain identity."""
     return {
         key: value for key, value in control.carry().items()
-        if key not in {"execution_control_root_run_id", "execution_control_released_revision"}
+        if key not in {"execution_control_root_run_id", "execution_control_released_revision", "pi_control_children"}
     }
 
 
@@ -453,7 +460,15 @@ class DelegatedTaskWorkflow:
     @workflow.init
     def __init__(self, request: Dict[str, Any] = None) -> None:
         self._control_paused = False
-        self._execution_control = ExecutionControl()
+        scope = (request or {}).get("child_context") or request or {}
+        if scope.get("pi_local_control_version") == 1 and scope.get("execution_control_version") != 1:
+            from .pi_control import PiLocalExecutionControl
+            self._execution_control = PiLocalExecutionControl()
+        elif scope.get("pi_harness_version") == 1:
+            from .pi_control import PiDescendantExecutionControl
+            self._execution_control = PiDescendantExecutionControl()
+        else:
+            self._execution_control = ExecutionControl()
         if request is not None:
             self._execution_control.bind(request.get("child_context") or request)
 
@@ -553,9 +568,11 @@ class DelegatedTaskWorkflow:
             request["child_context"]["team_permit_id"] = acquired_permit_id
             async with self._execution_control.child_start():
                 child_handle = await workflow.start_child_workflow(
-                    "AgentWorkflow", args=[request["child_context"]],
+                    agent_workflow_name(request["child_context"].get("node_type"), request["child_context"]), args=[request["child_context"]],
                     id=request["child_workflow_id"],
                 )
+                if hasattr(self._execution_control, "track_child"):
+                    self._execution_control.track_child(child_handle)
             await workflow.execute_activity(
                 "agent.register_task_execution",
                 args=[{**lifecycle, "runner_workflow_id": info.workflow_id,
@@ -566,6 +583,8 @@ class DelegatedTaskWorkflow:
                 retry_policy=AGENT_ACTIVITY_RETRY,
             )
             result = await child_handle
+            if hasattr(self._execution_control, "forget_child"):
+                self._execution_control.forget_child(child_handle.id)
             self._execution_control.begin_bookkeeping()
             completion_action_active = self._execution_control.enabled
             succeeded = bool(result.get("success", True)) if isinstance(result, dict) else True
@@ -697,10 +716,16 @@ class AgentWorkflow:
     as F4.A per-type activities.
     """
 
+    _pi_runtime_enabled = False
+
     @workflow.init
     def __init__(self, context: Dict[str, Any] = None) -> None:
         self._control_paused = False
-        self._execution_control = ExecutionControl()
+        if context and context.get("pi_local_control_version") == 1 and context.get("execution_control_version") != 1:
+            from .pi_control import PiLocalExecutionControl
+            self._execution_control = PiLocalExecutionControl()
+        else:
+            self._execution_control = ExecutionControl()
         self._browser_claims = []
         self._continuing = False
         if context is not None:
@@ -765,6 +790,10 @@ class AgentWorkflow:
 
     @workflow.run
     async def run(self, context: Dict[str, Any] = None) -> Dict[str, Any]:
+        if context and uses_pi(context.get("node_type"), context) and not self._pi_runtime_enabled:
+            from temporalio.exceptions import ApplicationError
+            raise ApplicationError("The admitted Coding Agent runtime requires PiCodingAgentWorkflow",
+                type="AgentHarnessRoutingConflict", non_retryable=True)
         self._execution_control.bind(context)
         runtime_v2 = any((node.get("data") or {}).get("employee_recipe_version") == 2 and node.get("id") == context.get("node_id") for node in context.get("nodes", []))
         runtime_v2 = runtime_v2 and workflow.patched("employee-task-manager-runtime-v2")
@@ -885,7 +914,8 @@ class AgentWorkflow:
         # DB lookups + edge walking + tool schema build happen here, NOT
         # in the workflow body (workflows must be deterministic).
         resume = dict(context.get(_RESUME_MARKER) or {})
-        durable_runtime = self._execution_control.enabled or context.get("native_workspace_version") == 1 or context.get("browser_runtime_version") == 1 or context.get("browser_routing_version") == 1
+        pi_runtime = uses_pi(context.get("node_type"), context)
+        durable_runtime = self._execution_control.enabled or context.get("native_workspace_version") == 1 or context.get("browser_runtime_version") == 1 or context.get("browser_routing_version") == 1 or pi_runtime
         if durable_runtime and resume.get("prepared_payload"):
             payload = dict(resume["prepared_payload"])
         else:
@@ -1170,9 +1200,10 @@ class AgentWorkflow:
                     root_execution_id=root_execution_id,
                 ),
             }
-            if context.get("native_workspace_version") == 1 or context.get("browser_runtime_version") == 1 or context.get("browser_routing_version") == 1:
+            if context.get("native_workspace_version") == 1 or context.get("browser_runtime_version") == 1 or context.get("browser_routing_version") == 1 or pi_runtime:
                 llm_payload["user_id"] = str(context.get("user_id") or "owner")
 
+            await self._before_runtime_model_step(llm_payload, context, payload, iteration, tools)
             async with self._execution_control.action():
                 # Transient provider failures (429 rate limit, 5xx, network)
                 # retry inside the activity under LLM_STEP_RETRY (unlimited,
@@ -1181,14 +1212,7 @@ class AgentWorkflow:
                 # (invalid_request, authentication, ...) reach this except
                 # block, and those are genuinely terminal for the run.
                 try:
-                    step_result = await workflow.execute_activity(
-                        "agent.execute_llm_step",
-                        args=[llm_payload],
-                        activity_id=f"llm-step-{iteration + 1}",
-                        start_to_close_timeout=LLM_STEP_TIMEOUT,
-                        heartbeat_timeout=LLM_STEP_HEARTBEAT_TIMEOUT,
-                        retry_policy=LLM_STEP_RETRY,
-                    )
+                    step_result = await self._execute_model_step(llm_payload, context, payload, iteration)
                 except Exception as e:
                     from temporalio.exceptions import is_cancelled_exception
                     if (getattr(self, "_employee_runtime_v2", False) or context.get("native_workspace_version") == 1
@@ -1313,6 +1337,7 @@ class AgentWorkflow:
                 # Treat it as a no-op turn and let the loop request again.
                 finish_reason = str(step_result.get("finish_reason") or "").strip().lower()
                 if kind != "tool_calls" and finish_reason == "compaction":
+                    await self._complete_runtime_turn(messages)
                     workflow.logger.info(
                         f"Provider paused to compact at iteration {iteration + 1}; "
                         "continuing without treating the stop as a final answer"
@@ -1320,6 +1345,7 @@ class AgentWorkflow:
                     continue
 
                 if kind == "final":
+                    await self._complete_runtime_turn(messages)
                     final_content = step_result.get("content", "")
                     team_id = str(payload.get("team_id") or "")
                     if team_id and payload.get("owns_execution_team"):
@@ -1338,6 +1364,7 @@ class AgentWorkflow:
                     break
 
                 if kind != "tool_calls":
+                    await self._complete_runtime_turn(messages)
                     workflow.logger.error(f"AgentWorkflow: unexpected LLM step kind={kind!r}")
                     break
 
@@ -1347,6 +1374,7 @@ class AgentWorkflow:
             # Admit the resulting tool/delegation command batch afresh.
             await self._wait_until_resumed()
             calls = step_result.get("calls") or []
+            await self._before_runtime_tool_batch(calls, tools)
             workflow.logger.info(f"AgentWorkflow scheduling {len(calls)} tool call(s)")
 
             # Start delegation children before awaiting their results.  The
@@ -1367,6 +1395,7 @@ class AgentWorkflow:
                 if str(candidate.get("name", "")).startswith("delegate_to_")
                 and (tool_index.get(candidate.get("name", "")) or {}).get("node_type")
                 in AGENT_WORKFLOW_TYPES
+                and self._runtime_tool_call_allowed(index, candidate)
                 and (
                     str((candidate.get("args") or {}).get("task", "") or "")
                     or str((candidate.get("args") or {}).get("context", "") or "")
@@ -1646,10 +1675,11 @@ class AgentWorkflow:
                     await self._wait_until_resumed()
                     async with self._execution_control.child_start():
                         delegation_handles[call_index] = await workflow.start_child_workflow(
-                            "AgentWorkflow",
+                            agent_workflow_name(child_context.get("node_type"), child_context),
                             args=[child_context],
                             id=child_id,
                         )
+                        self._runtime_child_started(delegation_handles[call_index])
                     if team_id:
                         child_handle = delegation_handles[call_index]
                         await workflow.execute_activity(
@@ -1798,12 +1828,13 @@ class AgentWorkflow:
                         search_attributes
                     )
                 async with self._execution_control.child_start():
-                    await workflow.start_child_workflow(
+                    runner_handle = await workflow.start_child_workflow(
                         "DelegatedTaskWorkflow",
                         args=[{"lifecycle": lifecycle, "child_context": child_context,
                                "child_workflow_id": child_id, "limit": max_concurrent_subagents}],
                         **delegated_task_options,
                     )
+                    self._runtime_child_started(runner_handle)
                 return {"status": "queued", "result": None, "runner_workflow_id": runner_id}
 
             # Preflight every Task Manager assignment activity in this LLM
@@ -1820,6 +1851,7 @@ class AgentWorkflow:
                 if (
                     preflight_tool
                     and preflight_tool.get("node_type") == "taskManager"
+                    and self._runtime_tool_call_allowed(preflight_index, preflight_call)
                     and preflight_args.get("operation") == "assign_task"
                 ):
                     preflight_metadata = _tool_call_metadata(
@@ -1845,6 +1877,8 @@ class AgentWorkflow:
                         "nodes": context.get("nodes") or [],
                         "edges": context.get("edges") or [],
                         **preflight_metadata,
+                        **({"tool_args": preflight_args, "pi_harness_version": 1,
+                            "user_id": str(context.get("user_id") or "owner")} if pi_runtime else {}),
                     }
                     if workflow.patched("employee-task-manager-tool-scope-v2"):
                         preflight_payload = {**_trusted_tool_scope(context), **preflight_payload}
@@ -1859,7 +1893,7 @@ class AgentWorkflow:
                         "start_to_close_timeout": TOOL_STEP_TIMEOUT,
                         "heartbeat_timeout": TOOL_HEARTBEAT_TIMEOUT,
                     }
-                    if self._execution_control.enabled and preflight_tool.get("activity_policy"):
+                    if (self._execution_control.enabled or pi_runtime) and preflight_tool.get("activity_policy"):
                         preflight_options = _frozen_tool_activity_options(preflight_tool["activity_policy"], context)
                     task_manager_preflight_handles.append(
                         workflow.start_activity(
@@ -1884,7 +1918,7 @@ class AgentWorkflow:
                         task_manager_preflight_indices, preflight_results
                     ):
                         task_manager_preflight_results[preflight_index] = preflight_result
-                        if self._execution_control.enabled:
+                        if self._execution_control.enabled and not pi_runtime:
                             content = (_serialise_tool_result(preflight_result) if not isinstance(preflight_result, BaseException)
                                        else _serialise_tool_result({"error": str(preflight_result)}))
                             _append_tool_result_message(messages, content=content,
@@ -1936,6 +1970,11 @@ class AgentWorkflow:
 
             blocked_error = None
             for call_index, call in enumerate(calls):
+                runtime_rejection = await self._before_runtime_tool_call(call_index, call, messages)
+                if runtime_rejection:
+                    _append_tool_result_message(messages, content=_serialise_tool_result({"error": runtime_rejection}),
+                        tool_call_id=call.get("id", ""), name=call.get("name", ""))
+                    continue
                 if call.get("parse_error"):
                     # Native adapters retain malformed arguments rather than
                     # throwing during normalization. Return a deterministic
@@ -2092,6 +2131,8 @@ class AgentWorkflow:
                     # so canvas-mutating tools (agentBuilder) render their
                     # summary text to match the user's current preference.
                     "auto_rebind_tools": bool(payload.get("auto_rebind_tools", True)),
+                    **({"pi_harness_version": 1, "workflow_slug": payload.get("workflow_slug") or context.get("workflow_slug")}
+                       if pi_runtime else {}),
                     # Provider call ids are normally present. The stable
                     # workflow position keeps CloudEvents occurrence IDs
                     # unique when an adapter omits one.
@@ -2120,7 +2161,7 @@ class AgentWorkflow:
                     tool_payload = {**_trusted_tool_scope(context), **tool_payload}
 
                 tool_activity_name = (
-                    "agent.skill.invoke"
+                    tool_info["activity_name"] if tool_info.get("virtual_workspace") else "agent.skill.invoke"
                     if tool_info["node_type"] == "_builtin_skill"
                     else f"node.{tool_info['node_type']}.v{tool_info['version']}"
                 )
@@ -2171,6 +2212,7 @@ class AgentWorkflow:
                             # could never continue_as_new and grew until
                             # Temporal's hard history terminate.)
                             delegation_handles.pop(call_index, None)
+                            self._runtime_child_finished(handle.id)
                             child_succeeded = (
                                 bool(tool_result.get("success", True))
                                 if isinstance(tool_result, dict) else True
@@ -2362,7 +2404,10 @@ class AgentWorkflow:
                                     "agent_node_type": payload.get("node_type") or context.get("node_type"),
                                     **call_metadata,
                                     **({"execution_control_version": 1} if self._execution_control.enabled else {}),
+                                    **({"pi_harness_version": 1} if pi_runtime else {}),
                                 }
+                                if pi_runtime:
+                                    refresh_payload["user_id"] = str(context.get("user_id") or "owner")
                                 if context.get("browser_runtime_version") == 1 or context.get("browser_routing_version") == 1:
                                     refresh_payload.update({key: context[key] for key in ("browser_runtime_version", "browser_routing_version", "browser_bindings", "user_id") if key in context})
                                     refresh_payload["workflow_id"] = payload.get("workflow_id")
@@ -2390,11 +2435,14 @@ class AgentWorkflow:
                                             added_tools, id_key=tool_key,
                                             bound=[tool.get(tool_key) for tool in tools if tool.get(tool_key)],
                                         )
+                                    replaced_types = {tool.get("node_type") for tool in added_tools if not tool.get("virtual_workspace")}
+                                    retained_tools = ([tool for tool in tools if not (tool.get("virtual_workspace") and tool.get("node_type") in replaced_types)]
+                                        if pi_runtime else tools)
                                     refresh_duplicate_error = _duplicate_visible_tool_name_error(
-                                        [*tools, *added_tools]
+                                        [*retained_tools, *added_tools]
                                     )
                                     refresh_duplicate_conflicts = (
-                                        _duplicate_visible_tool_name_conflicts([*tools, *added_tools])
+                                        _duplicate_visible_tool_name_conflicts([*retained_tools, *added_tools])
                                         if refresh_duplicate_error
                                         else {}
                                     )
@@ -2424,6 +2472,9 @@ class AgentWorkflow:
                                             },
                                         )
                                         added_tools = []
+                                    elif pi_runtime:
+                                        tools[:] = retained_tools
+                                        tool_index = {tool["name"]: tool for tool in tools}
                                     if added_tools and refresh_result.get("browser_bindings"):
                                         context["browser_bindings"] = {**(context.get("browser_bindings") or {}), **refresh_result["browser_bindings"]}
                                         if refresh_result.get("browser_runtime_version") == 1:
@@ -2547,6 +2598,8 @@ class AgentWorkflow:
                 if self._execution_control.enabled and is_delegation and next_delegation_to_start < len(delegation_call_indices):
                     await _start_delegation(delegation_call_indices[next_delegation_to_start])
                     next_delegation_to_start += 1
+
+            await self._complete_runtime_turn(messages)
 
             if yielded_own_permit:
                 await self._wait_until_resumed()
@@ -2700,7 +2753,7 @@ class AgentWorkflow:
                         root_execution_id=root_execution_id,
                     ),
                 }
-                if context.get("native_workspace_version") == 1 or context.get("browser_runtime_version") == 1 or context.get("browser_routing_version") == 1:
+                if context.get("native_workspace_version") == 1 or context.get("browser_runtime_version") == 1 or context.get("browser_routing_version") == 1 or pi_runtime:
                     compact_payload["user_id"] = str(context.get("user_id") or "owner")
                 await self._wait_until_resumed()
                 async with self._execution_control.action():
@@ -2878,6 +2931,8 @@ class AgentWorkflow:
                         # handle or unfinished Update crosses the boundary.
                         await self._wait_until_resumed()
                         await workflow.wait_condition(workflow.all_handlers_finished)
+                        if await self._before_runtime_rollover() is False:
+                            continue
                         next_context = {
                             **context,
                             **self._execution_control.carry(),
@@ -2949,6 +3004,11 @@ class AgentWorkflow:
             final_content = final_content or (
                 "[AgentWorkflow truncated after max_iterations; " "the model did not produce a final response]"
             )
+            if context.get("pi_harness_version") == 1 and context.get("node_type") == "coding_agent":
+                await self._emit_phase(agent_node_id, agent_workflow_id, max_iterations,
+                    max_iterations, phase="failed", status="error")
+                return {"success": False, "error": "Coding Agent exhausted its maximum iterations without a final response",
+                    "error_type": "PiIterationExhausted", "result": {"iterations": max_iterations, "usage": usage_total}}
 
         result_payload = {
             "response": final_content,
@@ -3011,6 +3071,39 @@ class AgentWorkflow:
         return {"success": True, "result": result_payload}
 
     # ---- Private helpers ------------------------------------------------
+
+    async def _execute_model_step(self, llm_payload, context, payload, iteration):
+        """Native command sequence; the Pi subclass bridges this durable leaf."""
+        return await workflow.execute_activity(
+            "agent.execute_llm_step", args=[llm_payload],
+            activity_id=f"llm-step-{iteration + 1}", start_to_close_timeout=LLM_STEP_TIMEOUT,
+            heartbeat_timeout=LLM_STEP_HEARTBEAT_TIMEOUT, retry_policy=LLM_STEP_RETRY)
+
+    async def _before_runtime_model_step(self, llm_payload, context, payload, iteration, tools=None):
+        pass
+
+    def _runtime_tool_call_allowed(self, call_index, call):
+        return True
+
+    async def _before_runtime_rollover(self):
+        pass
+
+    def _runtime_child_started(self, handle):
+        if hasattr(self._execution_control, "track_child"):
+            self._execution_control.track_child(handle)
+
+    def _runtime_child_finished(self, identity):
+        if hasattr(self._execution_control, "forget_child"):
+            self._execution_control.forget_child(identity)
+
+    async def _before_runtime_tool_batch(self, calls, tools):
+        pass
+
+    async def _before_runtime_tool_call(self, call_index, call, messages):
+        pass
+
+    async def _complete_runtime_turn(self, messages):
+        pass
 
     async def _emit_phase(
         self,

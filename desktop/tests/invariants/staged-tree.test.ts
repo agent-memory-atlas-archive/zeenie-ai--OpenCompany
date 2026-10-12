@@ -6,6 +6,7 @@
  */
 
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 
@@ -39,6 +40,9 @@ describe.skipIf(!staged)("staged app-root", () => {
       "server/uv.lock",
       "server/nodejs/dist/index.js",
       "server/nodejs/package.json",
+      "server/pi/dist/index.js",
+      "server/pi/dist/runtime.tgz",
+      "server/pi/dist/runtime-manifest.json",
       "client/dist/index.html",
       ".env.template",
       "package.json",
@@ -73,6 +77,19 @@ describe.skipIf(!staged)("staged app-root", () => {
     expect(js.length).toBeGreaterThan(50_000);
     expect(/from\s+["']express["']/.test(js)).toBe(false);
     expect(/require\(["']express["']\)/.test(js)).toBe(false);
+  });
+
+  it("ships the verified Pi distribution without build or install dependencies", () => {
+    const pi = join(APP_ROOT, "server", "pi");
+    const manifest = JSON.parse(readFileSync(join(pi, "dist", "runtime-manifest.json"), "utf-8"));
+    const archive = readFileSync(join(pi, "dist", "runtime.tgz"));
+    expect(manifest.protocol).toBe(1);
+    expect(manifest.sdk_version).toBe("1.1.0");
+    expect(manifest.bytes).toBe(archive.length);
+    expect(manifest.sha256).toBe(createHash("sha256").update(archive).digest("hex"));
+    for (const relative of ["node_modules", "src", "tests", ".runtime-build"]) {
+      expect(existsSync(join(pi, relative)), relative).toBe(false);
+    }
   });
 
   it("carries the version the root package.json declares", () => {

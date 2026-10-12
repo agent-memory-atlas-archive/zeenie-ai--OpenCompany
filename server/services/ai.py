@@ -1215,11 +1215,14 @@ class AIService:
                 # text reflects the user's current preference.
                 config["auto_rebind_tools"] = auto_rebind_enabled
                 if context:
+                    if context.get("pi_harness_version") == 1:
+                        from services.temporal.pi_inline_delegation import forward_inline_scope
+                        config.update(forward_inline_scope(context))
                     config["run_scope"] = context.get("run_scope")
                     config["generation"] = context.get("generation")
                     config["parameter_snapshot"] = context.get("parameter_snapshot", {})
                     config["employee_job_id"] = context.get("employee_job_id")
-                    for scope_key in ("data_scope_id", "context_execution_id", "context_session_id", "session_id", "graphVersion", "outputs"):
+                    for scope_key in ("data_scope_id", "context_execution_id", "context_session_id", "session_id", "graphVersion", "outputs", "pi_harness_version"):
                         if scope_key in context:
                             config[scope_key] = context[scope_key]
                     config["nodes"] = context.get("nodes", [])
@@ -1987,11 +1990,14 @@ class AIService:
                     config["provider"] = provider
                     config["auto_rebind_tools"] = auto_rebind_enabled
                     if context:
+                        if context.get("pi_harness_version") == 1:
+                            from services.temporal.pi_inline_delegation import forward_inline_scope
+                            config.update(forward_inline_scope(context))
                         config["run_scope"] = context.get("run_scope")
                         config["generation"] = context.get("generation")
                         config["parameter_snapshot"] = context.get("parameter_snapshot", {})
                         config["employee_job_id"] = context.get("employee_job_id")
-                        for scope_key in ("data_scope_id", "context_execution_id", "context_session_id", "session_id", "graphVersion", "outputs"):
+                        for scope_key in ("data_scope_id", "context_execution_id", "context_session_id", "session_id", "graphVersion", "outputs", "pi_harness_version"):
                             if scope_key in context:
                                 config[scope_key] = context[scope_key]
                         config["nodes"] = context.get("nodes", [])

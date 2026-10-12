@@ -7,6 +7,12 @@ Detailed architecture reference for how AI Agent (`aiAgent`) and Chat Agent (`ch
 > - [Tool Building Pipeline](./tool_building_pipeline.md) - Canonical home for `_build_tool_from_node`, tool discovery, per-type Temporal dispatch
 > - [Agent Context Flow](./agent_context_flow.md) - Canonical home for conversation continuity (RFC-0002 Context store). The retired markdown memory model is archived at [ARCHIVE/memory_lifecycle.md](./ARCHIVE/memory_lifecycle.md) and is not an SSOT for anything current.
 > - [CLAUDE.md](../CLAUDE.md) - Project overview and full node inventory
+> - [Pi Coding Agent](./pi_coding_agent.md) - SDK rounds coordinated through durable Temporal model/tool leaves
+
+New `coding_agent` executions use `PiCodingAgentWorkflow`, including manual
+invocation and delegated work. The SDK driver has isolated worker capacity and
+parks during child waits. Existing native generations and other agent types
+retain the execution paths described below.
 
 ## Table of Contents
 

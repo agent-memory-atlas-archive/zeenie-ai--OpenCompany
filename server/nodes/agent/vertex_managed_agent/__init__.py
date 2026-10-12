@@ -780,13 +780,19 @@ class VertexManagedAgentNode(ActionNode):
         config["parent_node_id"] = ctx.node_id
         config["ai_service"] = get_ai_service()
         config["database"] = get_database()
-        for key in ("nodes", "edges", "workspace_dir", "execution_id"):
+        config["tool_call_id"] = call.get("call_id")
+        if ctx.raw.get("pi_harness_version") == 1:
+            from services.temporal.pi_inline_delegation import forward_inline_scope
+            config.update(forward_inline_scope(ctx.raw))
+            config["user_id"] = ctx.user_id
+        for key in ("nodes", "edges", "workspace_dir", "execution_id", "pi_harness_version"):
             if ctx.raw.get(key) is not None:
                 config[key] = ctx.raw[key]
         # Blocking delegation (agent tools only): the cloud agent cannot
         # poll cheaply, so the bridged call awaits the child inline and
         # falls back to task_id + check_delegated_tasks on timeout.
-        if delegation_wait_seconds and config.get("node_type") in AI_AGENT_TYPES:
+        if (delegation_wait_seconds and config.get("node_type") in AI_AGENT_TYPES
+                and not (config.get("node_type") == "coding_agent" and config.get("pi_harness_version") == 1)):
             config["delegation_wait_seconds"] = delegation_wait_seconds
 
         from ._ops import record_tool_output

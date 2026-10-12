@@ -183,6 +183,8 @@ def _frozen_routing_from_input(
         or raw.get("version") != TEMPORAL_ROUTING_INPUT_VERSION
     ):
         raw = _SAFE_FROZEN_ROUTING
+    if raw.get("pi_harness_version") not in {None, 1}:
+        raise ValueError("Unsupported recorded Coding Agent harness version")
     return {
         "version": TEMPORAL_ROUTING_INPUT_VERSION,
         "agent_workflow_enabled": raw.get("agent_workflow_enabled") is True,
@@ -190,6 +192,7 @@ def _frozen_routing_from_input(
             raw.get("per_type_dispatch_enabled") is True
         ),
         "worker_pool_enabled": raw.get("worker_pool_enabled") is True,
+        **({"pi_harness_version": 1} if raw.get("pi_harness_version") == 1 else {}),
     }
 
 
@@ -552,6 +555,8 @@ class MachinaWorkflow:
         # Settings, so an environment change cannot alter how a run that
         # is already in flight dispatches.
         frozen_routing = _frozen_routing_from_input(workflow_data)
+        from services.coding_agent_runtime import coding_agent_ancestors
+        pi_delegators = coding_agent_ancestors(nodes, edges) if frozen_routing.get("pi_harness_version") == 1 else set()
 
         workflow.logger.info(f"Starting workflow orchestration: {len(nodes)} nodes, {len(edges)} edges")
 
@@ -755,6 +760,11 @@ class MachinaWorkflow:
                 context["temporal_worker_pool_enabled"] = bool(
                     frozen_routing.get("worker_pool_enabled")
                 )
+                if frozen_routing.get("pi_harness_version") == 1:
+                    context["pi_harness_version"] = 1
+                    for key in ("pi_local_control_version", "pi_local_control_state", "pi_local_control_revision"):
+                        if key in workflow_data:
+                            context[key] = workflow_data[key]
                 if workflow_data.get("browser_routing_version") == 1:
                     context.update(browser_routing_version=1, browser_bindings=workflow_data.get("browser_bindings") or {})
                     binding = context["browser_bindings"].get(node_id)
@@ -774,6 +784,7 @@ class MachinaWorkflow:
                         and generation > 0
                     ),
                     routing_snapshot=frozen_routing,
+                    pi_delegator=node_id in pi_delegators,
                 )
                 if node_type == "browser" and context.get("_browser_owner"):
                     from services.node_registry import get_node_class
@@ -940,6 +951,7 @@ class MachinaWorkflow:
         generation: int = 0,
         context_enabled: bool = False,
         routing_snapshot: Optional[Dict[str, Any]] = None,
+        pi_delegator: bool = False,
     ) -> Dict[str, Any]:
         """Resolve dispatch kind for a node type.
 
@@ -986,6 +998,12 @@ class MachinaWorkflow:
             worker_pool_enabled = (
                 routing_snapshot.get("worker_pool_enabled") is True
             )
+        # Runtime selection is recorded before admission. Old snapshots lacking
+        # this marker keep their native commands even after worker upgrades.
+        if node_type == "coding_agent" and (routing_snapshot or {}).get("pi_harness_version") == 1:
+            return {"kind": "child_workflow", "name": "PiCodingAgentWorkflow"}
+        if pi_delegator and node_type in AGENT_WORKFLOW_TYPES and (routing_snapshot or {}).get("pi_harness_version") == 1:
+            return {"kind": "child_workflow", "name": "AgentWorkflow"}
         # This new capability has no historical single-Activity implementation
         # to replay. Its task-lifetime Browser ownership requires native dispatch.
         if node_type == "browser_agent" or (agent_workflow_enabled and node_type in AGENT_WORKFLOW_TYPES):

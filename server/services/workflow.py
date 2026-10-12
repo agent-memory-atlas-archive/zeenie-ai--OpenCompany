@@ -236,6 +236,56 @@ class WorkflowService:
         }
         if extras:
             context.update(extras)
+        recorded_pi_admission = context.get("pi_harness_version") == 1
+        from temporalio import activity
+        if not activity.in_activity() and context.get("coding_native_version") != 1:
+            # Inline agents keep their runtime, but cannot silently invoke the
+            # old Coding Agent implementation from a new admission.
+            admitted_generation = int(context.get("generation") or 0)
+            previous_control = None
+            recorded_harness = context.get("pi_harness_version") == 1
+            if admitted_generation > 0 and workflow_id:
+                previous_control = await self.database.get_latest_workflow_control(workflow_id)
+            if (previous_control is not None and previous_control.generation == admitted_generation
+                    and (previous_control.resource_manifest or {}).get("pi_harness_version") != 1):
+                context.pop("pi_harness_version", None)
+                context["coding_native_version"] = 1
+            else:
+                generation_admitted_pi = bool(previous_control is not None
+                    and previous_control.generation == admitted_generation
+                    and (previous_control.resource_manifest or {}).get("pi_harness_version") == 1)
+                recorded_pi_admission = recorded_pi_admission or generation_admitted_pi
+                if not recorded_harness and not generation_admitted_pi:
+                    from services.coding_agent_runtime import assert_pi_admissions_enabled, coding_agent_ancestors
+                    if node_type != "coding_agent" and node_id in coding_agent_ancestors(nodes or [], edges or []):
+                        try:
+                            assert_pi_admissions_enabled(self.settings)
+                        except Exception as exc:
+                            from services.plugin import NodeUserError
+                            if not isinstance(exc, NodeUserError):
+                                raise
+                            return {"success": False, "error": str(exc), **exc.as_dict()}
+                context.setdefault("pi_harness_version", 1)
+                if not recorded_harness and not generation_admitted_pi:
+                    from services.coding_agent_runtime import coding_agent_ancestors, freeze_pi_local_control
+                    if node_id in coding_agent_ancestors(nodes or [], edges or []):
+                        freeze_pi_local_control(context)
+        if node_type == "coding_agent":
+            # A native v1 Activity may be retried months after admission. Its
+            # callable remains native; new manual/sequential starts enter the
+            # Pi workflow directly rather than waiting inside a node Activity.
+            legacy_activity = activity.in_activity() and context.get("pi_harness_version") != 1
+            legacy_admission = context.get("coding_native_version") == 1
+            generation = int(context.get("generation") or 0)
+            if generation > 0 and workflow_id and not legacy_activity and not legacy_admission:
+                control = await self.database.get_latest_workflow_control(workflow_id)
+                legacy_admission = bool(control and control.generation == generation
+                                        and (control.resource_manifest or {}).get("pi_harness_version") != 1)
+            if not legacy_activity and not legacy_admission:
+                if activity.in_activity():
+                    return {"success": False, "error": "Pi Coding Agent must be dispatched as a workflow, not a node Activity",
+                            "error_type": "CodingAgentWorkflowRequired"}
+                return await self._execute_pi_coding_node(node_id, parameters, context, check_admission=not recorded_pi_admission)
         return await self._node_executor.execute(
             node_id=node_id,
             node_type=node_type,
@@ -243,6 +293,83 @@ class WorkflowService:
             context=context,
             resolve_params_fn=self._param_resolver.resolve,
         )
+
+    async def _execute_pi_coding_node(self, node_id: str, parameters: dict, context: dict, *, check_admission: bool = True) -> dict:
+        """Admit an isolated manual Coding Agent invocation into Temporal."""
+        from services.coding_agent_runtime import assert_pi_admissions_enabled
+        admission_error = None
+        try:
+            if check_admission:
+                assert_pi_admissions_enabled(self.settings)
+        except Exception as exc:
+            from services.plugin import NodeUserError
+            if not isinstance(exc, NodeUserError):
+                raise
+            admission_error = {"success": False, "error": str(exc), **exc.as_dict()}
+        if not self.settings.temporal_enabled or self._temporal_executor is None:
+            if admission_error is not None:
+                return admission_error
+            return {"success": False, "error": "Coding Agent requires a connected Temporal runtime. Start Temporal and its workers, then run again.",
+                    "error_type": "CodingAgentTemporalRequired", "requires_user_action": True, "retryable": False}
+        from services.workflow_sanitizer import sanitize_runtime_payload
+        from services.temporal.trigger_listener_workflow import event_workflow_search_attributes
+        snapshot = dict(context.get("parameter_snapshot") or {})
+        for node in context.get("nodes") or []:
+            identifier = str(node.get("id") or "")
+            if identifier and identifier not in snapshot:
+                snapshot[identifier] = await self.database.get_node_parameters(identifier) or {}
+        snapshot[node_id] = {**(snapshot.get(node_id) or await self.database.get_node_parameters(node_id) or {}), **parameters}
+        safe_context = {key: value for key, value in context.items() if key != "get_output_fn"}
+        admitted = sanitize_runtime_payload({**safe_context, "node_id": node_id, "node_type": "coding_agent",
+                    "node_data": snapshot[node_id], "parameter_snapshot": snapshot,
+                    "inputs": context.get("outputs") or {},
+                    "pi_harness_version": 1, "temporal_worker_pool_enabled": self.settings.temporal_worker_pool_enabled})
+        if check_admission:
+            from services.coding_agent_runtime import freeze_pi_local_control
+            freeze_pi_local_control(admitted)
+        execution_id = str(context.get("execution_id") or uuid4().hex)
+        admitted["execution_id"] = execution_id
+        if not admitted.get("root_execution_id"):
+            admitted["root_execution_id"] = execution_id
+        import hashlib
+        identifier = "coding-pi-" + hashlib.sha256(
+            f"{context.get('workflow_id') or ''}:{node_id}:{execution_id}".encode()
+        ).hexdigest()
+        from temporalio.common import WorkflowIDReusePolicy
+        from temporalio.exceptions import WorkflowAlreadyStartedError
+        from services.temporal.pi_protocol import canonical_digest
+        digest = canonical_digest(admitted)
+        options = {"id": identifier, "task_queue": self.settings.temporal_task_queue,
+                   "id_reuse_policy": WorkflowIDReusePolicy.REJECT_DUPLICATE, "memo": {"pi_manual_digest": digest}}
+        attributes = event_workflow_search_attributes(context.get("workflow_id"))
+        if attributes is not None:
+            options["search_attributes"] = attributes
+        client = self._temporal_executor.client
+        async def recorded_handle(*, run_id=None):
+            handle = client.get_workflow_handle(identifier, run_id=run_id)
+            description = await handle.describe()
+            if (await description.memo()).get("pi_manual_digest") != digest:
+                return None
+            return handle
+        if admission_error is not None:
+            from temporalio.service import RPCError, RPCStatusCode
+            try:
+                handle = await recorded_handle()
+            except RPCError as exc:
+                if exc.status != RPCStatusCode.NOT_FOUND:
+                    raise
+                return admission_error
+        else:
+            try:
+                handle = await client.start_workflow("PiCodingAgentWorkflow", admitted, **options)
+            except WorkflowAlreadyStartedError as exc:
+                handle = await recorded_handle(run_id=exc.run_id)
+        if handle is None:
+            return {"success": False, "error": "The recorded Coding invocation was retried with different content.",
+                    "error_type": "PiAdmissionConflict", "requires_user_action": True, "retryable": False}
+        # This path is outside counted node Activities. A response retry waits
+        # for the admitted execution chain, including an already completed one.
+        return await handle.result()
 
     async def _execute_node_adapter(
         self,
@@ -263,6 +390,10 @@ class WorkflowService:
                 "context_execution_id",
                 "context_session_id",
                 "data_scope_id",
+                "pi_harness_version",
+                "pi_local_control_version",
+                "pi_local_control_state",
+                "pi_local_control_revision",
             )
             if key in context
         }
@@ -319,6 +450,27 @@ class WorkflowService:
         """
         start_time = time.time()
         user_id = str(user_id or "owner")
+
+        from services.coding_agent_runtime import assert_pi_admissions_enabled, enabled_coding_agents
+        pi_required = enabled_coding_agents(nodes)
+        admitted_control = None
+        if pi_required and int(generation or 0) > 0 and workflow_id:
+            admitted_control = await self.database.get_latest_workflow_control(workflow_id)
+            if admitted_control is not None and admitted_control.generation == int(generation):
+                pi_required = (admitted_control.resource_manifest or {}).get("pi_harness_version") == 1
+        if pi_required:
+            if admitted_control is None:
+                try:
+                    assert_pi_admissions_enabled(self.settings)
+                except Exception as exc:
+                    from services.plugin import NodeUserError
+                    if not isinstance(exc, NodeUserError):
+                        raise
+                    return {**self._error_result(str(exc), start_time), **exc.as_dict()}
+            if not (self.settings.temporal_enabled if use_temporal is None else use_temporal) or self._temporal_executor is None:
+                return {**self._error_result(
+                    "Coding Agent requires a connected Temporal runtime. Start Temporal and its workers, then run again.", start_time,
+                ), "error_type": "CodingAgentTemporalRequired", "requires_user_action": True, "retryable": False}
 
         # Clear outputs unless skipped
         if not skip_clear_outputs:

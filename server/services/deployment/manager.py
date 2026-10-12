@@ -198,6 +198,26 @@ class DeploymentManager:
                 "deployment_id": self._deployments[workflow_id].deployment_id,
             }
 
+        from services.coding_agent_runtime import assert_pi_admissions_enabled, enabled_coding_agents
+        if enabled_coding_agents(nodes):
+            lookup = self.database.get_latest_workflow_control(workflow_id)
+            control = await lookup if inspect.isawaitable(lookup) else None
+            admitted = control is not None and control.generation == int(generation or 0)
+            if not admitted:
+                try:
+                    assert_pi_admissions_enabled()
+                except Exception as exc:
+                    from services.plugin import NodeUserError
+                    if not isinstance(exc, NodeUserError):
+                        raise
+                    return {"success": False, "workflow_id": workflow_id, **exc.as_dict()}
+            if not admitted or (control.resource_manifest or {}).get("pi_harness_version") == 1:
+                from core.container import container
+                runtime = container.temporal_client()
+                if not container.settings().temporal_enabled or runtime is None or runtime.client is None:
+                    return {"success": False, "workflow_id": workflow_id, "error_type": "CodingAgentTemporalRequired",
+                            "error": "Coding Agent requires a connected Temporal runtime. Start Temporal and its workers, then run again."}
+
         # Human-readable slug for Temporal Web UI prefixing. A generation
         # keeps the slug it started with; otherwise the saved one, falling
         # back to workflow_id when the DB row is missing OR slug is empty
@@ -902,6 +922,9 @@ class DeploymentManager:
         # listener under a controller from a different application database.
         control_lookup = self.database.get_latest_workflow_control(workflow_id)
         control = await control_lookup if inspect.isawaitable(control_lookup) else None
+        if control is not None and control.generation == state.generation:
+            from services.coding_agent_runtime import freeze_generation_harness
+            freeze_generation_harness(listener_args, control.resource_manifest)
         if control is not None and control.controller_workflow_id and control.status in {
             "starting", "running", "pausing", "paused", "resuming",
         }:
@@ -1068,6 +1091,8 @@ class DeploymentManager:
         control_lookup = self.database.get_latest_workflow_control(workflow_id)
         control = await control_lookup if inspect.isawaitable(control_lookup) else None
         if control is not None and control.generation == state.generation:
+            from services.coding_agent_runtime import freeze_generation_harness
+            freeze_generation_harness(listener_data, control.resource_manifest)
             listener_data.update({
                 "graphVersion": state.graph_version, "generation": control.generation,
                 "execution_id": control.execution_id, "root_execution_id": control.root_execution_id,

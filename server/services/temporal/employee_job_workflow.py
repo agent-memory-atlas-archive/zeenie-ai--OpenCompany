@@ -86,13 +86,15 @@ class EmployeeJobWorkflow:
             await workflow.wait_condition(workflow.all_handlers_finished)
 
     async def _run_job(self, context: dict[str, Any]) -> dict:
+        from services.coding_agent_runtime import agent_workflow_name
+        child_name = agent_workflow_name(context.get("node_type", ""), context)
         try:
             if self._execution_control.enabled:
                 async with self._execution_control.child_start():
-                    handle = await workflow.start_child_workflow("AgentWorkflow", context, id=workflow.info().workflow_id + ":lead")
+                    handle = await workflow.start_child_workflow(child_name, context, id=workflow.info().workflow_id + ":lead")
                 result = await handle
             else:
-                result = await workflow.execute_child_workflow("AgentWorkflow", context, id=workflow.info().workflow_id + ":lead")
+                result = await workflow.execute_child_workflow(child_name, context, id=workflow.info().workflow_id + ":lead")
         except BaseException as exc:
             # Cancellation must leave a durable terminal job record too.
             # Shield this short cleanup from the parent's cancellation.

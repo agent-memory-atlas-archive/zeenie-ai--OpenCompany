@@ -45,6 +45,7 @@ def test_routing_snapshot_captures_all_command_shaping_flags():
             "agent_workflow_enabled": False,
             "per_type_dispatch_enabled": True,
             "worker_pool_enabled": True,
+            "pi_harness_version": 1,
         }
     }
 
@@ -111,6 +112,7 @@ async def test_executor_places_frozen_routing_in_new_root_input():
         "agent_workflow_enabled": True,
         "per_type_dispatch_enabled": False,
         "worker_pool_enabled": False,
+        "pi_harness_version": 1,
     }
 
 
@@ -264,6 +266,9 @@ async def test_standalone_worker_registers_plugin_and_pause_activities(
     )
     unifier = MagicMock()
     unifier.aclose = AsyncMock()
+    database = MagicMock()
+    database.startup = AsyncMock()
+    monkeypatch.setattr(container_module.container, "database", lambda: database)
     monkeypatch.setattr(
         container_module.container,
         "chat_unifier",
@@ -289,3 +294,4 @@ async def test_standalone_worker_registers_plugin_and_pause_activities(
     assert pause_workflow_on_failure_activity in captured["activities"]
     session.close.assert_awaited_once()
     unifier.aclose.assert_awaited_once()
+    database.startup.assert_awaited_once()

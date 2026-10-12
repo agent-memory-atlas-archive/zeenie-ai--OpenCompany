@@ -295,6 +295,13 @@ class ClaudeCodeAgentNode(ActionNode):
             log_prefix="[Claude Code]",
         )
         connected_skills = [s.get("skill_name") or s.get("label") for s in skill_data if s.get("skill_name") or s.get("label")]
+        if ctx.raw.get("pi_harness_version") == 1:
+            from services.temporal.pi_inline_delegation import forward_inline_scope
+            trusted_scope = {**forward_inline_scope(ctx.raw), "user_id": ctx.user_id}
+            if any(entry.get("node_type") == "coding_agent" for entry in tool_data):
+                tool_data.append({"node_id": "", "node_type": "_builtin_check_delegated_tasks", "parameters": {},
+                                  "label": "Check Delegated Tasks"})
+            tool_data = [{**entry, "pi_harness_version": 1, "_pi_inline_scope": trusted_scope} for entry in tool_data]
 
         # Legacy input-memory bridge: claude maintains its own session JSONL
         # under `<CLAUDE_CONFIG_DIR>/projects/<cwd-encoded>/<UUID>.jsonl`.

@@ -166,6 +166,9 @@ async def submit(principal: str, workflow_id: str, node_id: str, prompt: str, su
         raise NodeUserError("This node does not accept direct Workspace tasks")
     if (node.get("data") or {}).get("disabled"):
         raise NodeUserError("Enable the node before submitting a task")
+    if node["type"] == "coding_agent":
+        from services.coding_agent_runtime import assert_pi_admissions_enabled
+        assert_pi_admissions_enabled()
     if not prompt.strip() or len(prompt) > 20000:
         raise NodeUserError("Task must contain between 1 and 20000 characters")
     database = get_database()
@@ -202,6 +205,17 @@ async def submit(principal: str, workflow_id: str, node_id: str, prompt: str, su
         "context": context,
         "admission_epoch": (admission or {}).get("epoch", 0),
     }
+    if node["type"] == "coding_agent":
+        from services.workflow_sanitizer import sanitize_runtime_payload
+        snapshot = {saved_node["id"]: await database.get_node_parameters(saved_node["id"]) or {}
+                    for saved_node in graph.get("nodes", []) if saved_node.get("id")}
+        context.update(pi_harness_version=1, workspace_task_prompt=prompt,
+                       native_workspace_version=1, parameter_snapshot=snapshot,
+                       temporal_worker_pool_enabled=settings.temporal_worker_pool_enabled)
+        from services.coding_agent_runtime import freeze_pi_local_control
+        freeze_pi_local_control(context)
+        context.update(sanitize_runtime_payload(context))
+        payload.update(dispatch_version=1, dispatch_kind="pi_agent")
     if node["type"] == "browser_agent":
         if getattr(settings, "distributed_mode", False) is True:
             from services.credentials.preflight import assert_cluster_credentials

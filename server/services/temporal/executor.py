@@ -43,6 +43,7 @@ def capture_temporal_routing_input() -> Dict[str, Any]:
             "worker_pool_enabled": bool(
                 getattr(settings, "temporal_worker_pool_enabled", False)
             ),
+            "pi_harness_version": 1,
         }
     }
 
@@ -149,6 +150,7 @@ class TemporalExecutor:
             }
             if parameter_snapshot:
                 workflow_payload["parameter_snapshot"] = parameter_snapshot
+            admitted_generation = False
             if int(graph_version or 0) >= 2 and int(generation or 0) > 0:
                 workflow_payload.update(
                     {
@@ -160,12 +162,21 @@ class TemporalExecutor:
                 from core.container import container
                 control = await container.database().get_latest_workflow_control(workflow_id)
                 if control is not None and control.generation == int(generation):
+                    admitted_generation = True
+                    from services.coding_agent_runtime import freeze_generation_harness
+                    freeze_generation_harness(workflow_payload, control.resource_manifest)
                     workflow_payload.update({
                         "root_execution_id": control.root_execution_id,
                         "data_scope_id": control.data_scope_id or control.execution_id,
                         "controller_workflow_id": control.controller_workflow_id,
                         "execution_control_version": int((control.resource_manifest or {}).get("execution_control_version", 0)),
                     })
+
+            from services.coding_agent_runtime import assert_pi_admissions_enabled, enabled_coding_agents
+            if enabled_coding_agents(nodes) and not admitted_generation:
+                assert_pi_admissions_enabled()
+                from services.coding_agent_runtime import freeze_pi_local_control
+                freeze_pi_local_control(workflow_payload)
 
             result = await self.client.execute_workflow(
                 MachinaWorkflow.run,

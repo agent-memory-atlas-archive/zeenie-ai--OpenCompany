@@ -27,6 +27,10 @@ jobs:
         run: bun run --filter react-flow-client typecheck
       - name: JS executor TypeScript check
         run: bun run --filter opencompany-nodejs-executor typecheck
+      - name: Pi SDK contracts and TypeScript check
+        run: |
+          bun --cwd=server/pi run typecheck
+          bun run test:pi
       - name: Frontend tests (vitest)
         run: bun run --filter react-flow-client test
       # GitHub's dependency graph cannot read bun.lock, so no Dependabot alert
@@ -65,6 +69,8 @@ jobs:
       - name: pytest
         working-directory: server
         run: |
+          bun --cwd=pi install --frozen-lockfile
+          bun --cwd=pi run build
           uv sync
           uv run pytest tests/ -v
 
@@ -104,6 +110,9 @@ jobs:
       # which falls back to the npm registry.
       - name: TypeScript binary resolves on this platform
         run: bun run tsc --version
+
+      - name: Pi packaged startup without workspace dependencies
+        run: bun --cwd=server/pi run test:distribution
 
       - name: Test start (Unix)
         if: runner.os != 'Windows'

@@ -260,6 +260,14 @@ def build_command() -> None:
     console.log("[3/6] Building JS executor sidecar...")
     run(["bun", "run", "--filter", "opencompany-nodejs-executor", "build"], cwd=root)
 
+    # Pi's SDK has lazy modules, package assets and WASM workers. Its private
+    # frozen production tree is archived with the host, rather than relying
+    # on the root workspace or installing packages when an agent starts.
+    console.log("[3/6] Building Pi Coding Agent runtime...")
+    pi_cwd = server_cwd / "pi"
+    run(["bun", "install", "--frozen-lockfile"], cwd=pi_cwd)
+    run(["bun", "run", "build"], cwd=pi_cwd)
+
     console.log("[4/6] Installing Python dependencies...")
     # ``server/`` is its own standalone uv project; ``uv sync`` at that
     # directory resolves ``server/pyproject.toml`` and materialises

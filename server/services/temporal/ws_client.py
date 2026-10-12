@@ -126,8 +126,12 @@ class WSConnectionPool:
             "workflow_id": context.get("workflow_id"),
             "execution_id": context.get("execution_id"),
         }
+        if context.get("pi_harness_version") == 1:
+            from services.temporal.pi_inline_delegation import forward_inline_scope
+            message.update(forward_inline_scope(context))
         for key in (
             "auto_rebind_tools",
+            "pi_harness_version",
             "invoking_agent_node_id",
             "agent_iteration",
             "tool_call_index",

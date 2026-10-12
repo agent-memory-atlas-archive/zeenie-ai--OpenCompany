@@ -29,9 +29,10 @@ class NodeInvocationWorkflow:
         try:
             if payload.get("history_version") == 1:
                 await self._record_status(payload)
-            if payload.get("dispatch_version") == 1 and payload.get("dispatch_kind") == "native_agent":
+            if payload.get("dispatch_version") == 1 and payload.get("dispatch_kind") in {"native_agent", "pi_agent"}:
+                from services.coding_agent_runtime import agent_workflow_name
                 result = await workflow.execute_child_workflow(
-                    "AgentWorkflow", payload["context"],
+                    agent_workflow_name(payload["context"].get("node_type", ""), payload["context"]), payload["context"],
                     id=f"{workflow.info().workflow_id}:agent",
                     cancellation_type=workflow.ChildWorkflowCancellationType.WAIT_CANCELLATION_COMPLETED,
                     parent_close_policy=workflow.ParentClosePolicy.REQUEST_CANCEL,
@@ -62,9 +63,14 @@ class NodeInvocationWorkflow:
                     if getattr(cause, "cause", None) is None:
                         break
                     cause = cause.cause
-                error_type = "BrowserBusy" if str(getattr(cause, "message", "")).startswith("BrowserBusy") else "BrowserTaskFailed"
+                if payload.get("dispatch_kind") == "pi_agent":
+                    error_type = str(getattr(cause, "type", None) or "PiCodingTaskFailed")
+                else:
+                    error_type = "BrowserBusy" if str(getattr(cause, "message", "")).startswith("BrowserBusy") else "BrowserTaskFailed"
                 self.metadata["error_type"] = error_type
-                self.metadata["detail"] = ("This browser is assigned to another task. Wait for that task to finish."
+                self.metadata["detail"] = ("The Coding Agent task failed. Check runtime status and task logs."
+                                           if payload.get("dispatch_kind") == "pi_agent" else
+                                           "This browser is assigned to another task. Wait for that task to finish."
                                            if error_type == "BrowserBusy" else "The browser task failed. Check browser status and credentials.")
                 result = {"error_type": error_type}
             self.status = "failed"

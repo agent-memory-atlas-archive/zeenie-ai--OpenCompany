@@ -350,6 +350,15 @@ async def _execute_delegated_agent(
     Returns:
         Immediate acknowledgment with task_id (child runs in background)
     """
+    if config.get("node_type") == "coding_agent" and config.get("pi_harness_version") == 1:
+        from services.temporal.pi_inline_delegation import start_inline_pi_delegation
+        from temporalio.exceptions import ApplicationError
+
+        try:
+            return await start_inline_pi_delegation(args, config, precreated_task_id=precreated_task_id)
+        except ApplicationError as exc:
+            return {"success": False, "error": str(exc), "error_type": exc.type,
+                    "requires_user_action": True, "retryable": False}
     from services.status_broadcaster import get_status_broadcaster
 
     node_id = config.get("node_id")
@@ -552,6 +561,9 @@ async def _execute_delegated_agent(
         )
         if key in config
     }
+    if config.get("pi_harness_version") == 1:
+        from services.temporal.pi_inline_delegation import forward_inline_scope
+        _inherited_scope.update(forward_inline_scope(config))
     child_context = {
         **_inherited_scope,
         "nodes": nodes,
@@ -570,6 +582,7 @@ async def _execute_delegated_agent(
         "team_id": team_id,
         "team_task_id": task_id if team_id else None,
         "trace_id": task_id,
+        **({"pi_harness_version": 1} if config.get("pi_harness_version") == 1 else {}),
     }
 
     broadcaster = get_status_broadcaster()
@@ -926,7 +939,7 @@ async def wait_for_delegation(
     return None if entry.get("status") == "running" else entry
 
 
-async def get_delegated_task_status(task_ids: Optional[List[str]] = None, database=None) -> Dict[str, Any]:
+async def get_delegated_task_status(task_ids: Optional[List[str]] = None, database=None, *, scope: Optional[dict] = None) -> Dict[str, Any]:
     """Check status and retrieve results of delegated tasks.
 
     3-layer lookup: live tasks -> memory cache -> DB (NodeOutput).
@@ -942,6 +955,9 @@ async def get_delegated_task_status(task_ids: Optional[List[str]] = None, databa
     if not task_ids:
         # Return all known from memory
         task_ids = list(set(list(_delegated_tasks.keys()) + list(_delegation_results.keys())))
+        if database is not None and scope and scope.get("pi_harness_version") == 1:
+            from services.temporal.pi_inline_delegation import list_inline_delegation_ids
+            task_ids = list(dict.fromkeys([*task_ids, *await list_inline_delegation_ids(database, scope)]))
 
     tasks = []
     db_lookup_ids = []
@@ -1005,7 +1021,7 @@ async def _execute_check_delegated_tasks(args: Dict[str, Any], config: Dict[str,
     """
     task_ids = args.get("task_ids")
     database = config.get("database")
-    result = await get_delegated_task_status(task_ids=task_ids, database=database)
+    result = await get_delegated_task_status(task_ids=task_ids, database=database, scope=config)
 
     formatted = []
     for task in result.get("tasks", []):

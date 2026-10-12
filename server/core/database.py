@@ -51,6 +51,7 @@ from models.database import (
 from models.agent_context import (  # noqa: F401 - registers SQLModel tables
     AgentConversation,
 )
+from models.pi_checkpoint import PiRuntimeBlob  # noqa: F401 - immutable Pi runtime caches
 from models.employees import (  # noqa: F401 - registers SQLModel tables
     Employee,
     WorkflowRunRecord,

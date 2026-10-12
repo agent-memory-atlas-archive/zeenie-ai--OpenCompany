@@ -140,6 +140,7 @@ class Settings(BaseSettings):
     # Temporal Configuration. All sourced from ``.env.template``
     # (canonical defaults live there); no Python-side fallbacks.
     temporal_enabled: bool = Field(env="TEMPORAL_ENABLED")
+    coding_pi_admissions_enabled: bool = Field(default=True, validation_alias="CODING_PI_ADMISSIONS_ENABLED")
     temporal_server_address: str = Field(env="TEMPORAL_SERVER_ADDRESS")
     temporal_namespace: str = Field(env="TEMPORAL_NAMESPACE")
     temporal_task_queue: str = Field(env="TEMPORAL_TASK_QUEUE")

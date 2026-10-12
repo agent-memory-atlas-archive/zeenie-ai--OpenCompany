@@ -116,7 +116,7 @@ flowchart TD
   B3 --> C
   B4 --> C
   B5 --> C
-  C -- yes + completed/error --> D[format_task_context<br/>prepend to prompt<br/>STRIP ALL tools]
+  C -- yes + completed/error --> D[format_task_context<br/>prepend to prompt<br/>retain tools for review]
   C -- no --> E{prompt empty<br/>and input_data?}
   D --> E
   E -- yes --> F[prompt = input_data.message/text/content/str]
@@ -130,10 +130,9 @@ flowchart TD
 
 ## Decision Logic
 
-- **Task completion short-circuit**: if `task_data.status in {completed,
-  error}`, the handler strips **all** tools from `tool_data`. This prevents
-  Gemini from hallucinating a delegate call when the original prompt says
-  "just report the result".
+- **Task completion review**: if `task_data.status in {completed, error}`,
+  preparation formats the task context and retains tools. A lead can accept
+  work, ask for corrections or reassign it during the completion review.
 - **Auto-prompt fallback**: when `parameters.prompt` is empty and an
   upstream node is connected to `input-main`, the handler pulls
   `input_data.message` -> `text` -> `content` -> `str(input_data)` in that

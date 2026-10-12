@@ -15,6 +15,15 @@ User scope (confirmed before this work): stay on the registry-tarball distributi
 
 ## Package manager (bun)
 
+Coding Agent adds a private `server/pi` package, pinned to the full Pi SDK
+1.1.0 with its own frozen lockfile. `company build` installs and builds it
+after the JavaScript sidecar. Its host keeps SDK imports external and ships
+`server/pi/dist/runtime.tgz` plus an integrity manifest, preserving the full
+production dependency tree and package assets. Desktop staging rebuilds and
+copies the same three distribution files; Docker builds them before removing
+Pi source and build dependencies. Runtime extraction is offline and uses a
+content-addressed data cache. See [Pi Coding Agent](pi_coding_agent.md).
+
 The dev workspace runs on **bun** (migrated from pnpm@9.15.0, 2026-08; pinned
 via `"packageManager": "bun@1.4.0"` — CI's `oven-sh/setup-bun` reads that pin).
 Facts that are load-bearing, each verified during the migration:

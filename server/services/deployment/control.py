@@ -130,6 +130,9 @@ class WorkflowControlService:
         existing = await self.database.get_workflow_control_by_idempotency_key(workflow_id, idempotency_key)
         if existing:
             return existing, False
+        from services.coding_agent_runtime import assert_pi_admissions_enabled, enabled_coding_agents
+        if enabled_coding_agents(nodes):
+            assert_pi_admissions_enabled()
         latest = await self.database.get_latest_workflow_control(workflow_id)
         if latest and latest.status != "reset" and not reset:
             raise ValueError("workflow_already_started")
@@ -154,7 +157,7 @@ class WorkflowControlService:
                 "workflow_slug": slug if isinstance(slug, str) and slug else None,
             },
             idempotency_key=idempotency_key,
-            resource_manifest={"execution_control_version": 1},
+            resource_manifest={"execution_control_version": 1, "pi_harness_version": 1},
             # Revisions are monotonic across generations so a delayed request
             # from an archived generation cannot pass CAS against a newer one
             # that happens to be at the same lifecycle step.

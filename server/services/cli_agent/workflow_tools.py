@@ -110,7 +110,7 @@ def expose_workflow_tools(connected_tools: List[Dict[str, Any]]) -> None:
         tool_name = _connected_tool_name(entry)
         cls = get_node_class(node_type)
         input_model = _entry_input_model(entry)
-        if cls is None or input_model is None:
+        if (cls is None and node_type != "_builtin_check_delegated_tasks") or input_model is None:
             logger.warning(
                 "[CC-Agent MCP] cannot expose %s: class or ToolInput missing",
                 tool_name,
@@ -322,16 +322,30 @@ def _build_handler(
 
         config: Dict[str, Any] = {
             **dict(entry.get("_agent_tool_execution") or {}),
+            **dict(entry.get("_pi_inline_scope") or {}),
             "node_type": entry.get("node_type") or node_type,
             "node_id": entry.get("node_id"),
             "workflow_id": ctx.workflow_id,
             "execution_id": ctx.execution_id,
-            "user_id": ctx.user_id,
+            "user_id": (entry.get("_pi_inline_scope") or {}).get("user_id", ctx.user_id),
             "workspace_dir": str(ctx.workspace_dir),
             "parent_node_id": ctx.node_id,
             "label": entry.get("label") or tool_name,
             "parameters": dict(entry.get("parameters") or {}),
+            **({"pi_harness_version": 1} if entry.get("pi_harness_version") == 1 else {}),
         }
+        if config.get("node_type") in {"coding_agent", "_builtin_check_delegated_tasks"} and config.get("pi_harness_version") == 1:
+            # FastMCP supplies the authenticated JSON-RPC request identity;
+            # arguments never supply a delegation operation id.
+            mcp = _get_mcp()
+            if mcp is not None:
+                try:
+                    config["tool_call_id"] = f"mcp:{mcp.get_context().request_id}"
+                except ValueError:
+                    pass  # The admission guard reports the missing identity.
+            from services.plugin.deps import get_ai_service, get_database
+            config["ai_service"] = get_ai_service()
+            config["database"] = get_database()
         broadcaster = ctx.broadcaster
         if broadcaster is None:
             from services.status_broadcaster import get_status_broadcaster
