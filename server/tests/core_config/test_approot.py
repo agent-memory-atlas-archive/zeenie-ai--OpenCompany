@@ -84,6 +84,29 @@ class TestOverrides:
         assert approot.app_root() == (Path.home() / "some-bundle").resolve()
 
 
+class TestSpaRoute:
+    """What a path that matched no built file gets: the SPA shell, or a 404."""
+
+    @pytest.mark.parametrize("path", ["", "employees/w1", "login"])
+    def test_app_paths_get_the_shell(self, approot, path):
+        assert approot.is_spa_route(path)
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            # A dev-server module path: answered with the shell, the orb
+            # engine was refused as a module ("MIME type of text/html").
+            "src/features/home/orb/orbEngine.ts",
+            "assets/orbEngine-DnFDXWr7.js",
+            "assets/index.css",
+            "favicon.ico",
+            "../.env",
+        ],
+    )
+    def test_missing_files_get_a_404(self, approot, path):
+        assert not approot.is_spa_route(path)
+
+
 class TestConsumers:
     def test_paths_project_root_follows_approot(self, approot, monkeypatch, tmp_path):
         monkeypatch.setenv("OPENCOMPANY_APP_ROOT", str(tmp_path))

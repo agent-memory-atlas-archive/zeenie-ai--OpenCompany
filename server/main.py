@@ -58,6 +58,7 @@ apply_file_defaults_to_environ()
 from core.approot import (
     app_version as _app_version,
     client_dist as _client_dist,
+    is_spa_route as _is_spa_route,
     resolve_static_asset as _resolve_static_asset,
 )
 from core.config import Settings, cookie_posture_warnings, dev_secret_offenders
@@ -799,8 +800,10 @@ async def health_ready():
 # on) so a dist-less dev checkout is unaffected.
 #
 # Registered LAST so every real API / WS / mounted route above wins; this
-# only catches otherwise-unmatched GET paths and returns the SPA shell for
-# client-side routing. Non-SPA prefixes return 404 so API misses stay JSON.
+# only catches otherwise-unmatched GET paths. A built file is served as is;
+# a missing file (a path whose last segment has a dot) is a 404, never the
+# shell; anything else gets the SPA shell, which is always revalidated.
+# Non-SPA prefixes return 404 so API misses stay JSON.
 import os as _spa_os
 from pathlib import Path as _SpaPath
 from fastapi.staticfiles import StaticFiles
@@ -831,7 +834,9 @@ if _SERVE_STATIC and (_CLIENT_DIST / "index.html").is_file():
         asset = _resolve_static_asset(_CLIENT_DIST, full_path)
         if asset is not None:
             return FileResponse(asset)
-        return FileResponse(str(_CLIENT_DIST / "index.html"))
+        if not _is_spa_route(full_path):
+            return JSONResponse(status_code=404, content={"detail": "Not Found"})
+        return FileResponse(str(_CLIENT_DIST / "index.html"), headers={"Cache-Control": "no-cache"})
 
     logger.info("Serving built client from %s", _CLIENT_DIST)
 

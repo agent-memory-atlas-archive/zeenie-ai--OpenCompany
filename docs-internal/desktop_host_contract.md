@@ -53,9 +53,16 @@ the rule: no other module under `server/` may climb above `server/` with
 that maps an attacker-controlled path onto the tree: the SPA fallback in
 `main.py`. It joins, `os.path.normpath`s, and returns `None` unless the
 result sits under the real base directory — so `..` traversal, an absolute
-path, and a prefix sibling such as `client/dist2` all fall through to the
-SPA shell instead of serving a file. Keeping it beside `client_dist()` is
-what lets the route itself build no paths at all.
+path, and a prefix sibling such as `client/dist2` all serve no file. Keeping
+it beside `client_dist()` is what lets the route itself build no paths at
+all. `is_spa_route(relative)` beside it decides what a miss gets: a path
+whose last segment has a dot names a file and gets a 404 (the "dot rule" of
+connect-history-api-fallback), anything else gets the SPA shell, sent with
+`Cache-Control: no-cache`. Answering a missing script with the shell is how
+the Home orb went flat on 2026-10-12: an old self-host container on the dev
+port answered the orb engine's URL with HTML, which the browser refused as a
+module, and with no `Cache-Control` a browser may keep reusing such a
+response after the real file is back.
 
 ## 2. Env layering without the CLI
 

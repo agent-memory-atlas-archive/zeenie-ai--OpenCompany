@@ -99,6 +99,20 @@ def resolve_static_asset(base_dir: Path, relative: str) -> str | None:
     return candidate
 
 
+def is_spa_route(relative: str) -> bool:
+    """True when a request path that matched no file should get the SPA shell.
+
+    The "dot rule" of connect-history-api-fallback (webpack-dev-server's SPA
+    fallback): a last segment with a dot names a file (a script, a
+    stylesheet, a stale chunk), and a missing file is a 404. Answering it with
+    the HTML shell gives a browser HTML under a script URL: the module is
+    refused ("Expected a JavaScript module script but the server responded
+    with a MIME type of text/html"), and a cached copy keeps failing after the
+    real file is back. The client has no URL routes with dots.
+    """
+    return "." not in relative.rsplit("/", 1)[-1]
+
+
 def env_template_path() -> Path:
     """The canonical ``.env.template`` (baseline for every env var)."""
     return _env_path("OPENCOMPANY_ENV_TEMPLATE") or (app_root() / ".env.template")
