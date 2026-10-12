@@ -1,8 +1,8 @@
 /**
  * The app shell: everything that belongs to the app rather than to one
- * screen. It owns the decorative `.app-frame` (per-theme outer ornaments),
- * the boot-time effects both screens rely on, the app-level dialogs, and the
- * switch between Normal mode (Home) and Dev mode (the workflow editor).
+ * screen. It owns the frame both screens fill, the boot-time effects both
+ * screens rely on, the app-level dialogs, and the switch between Normal
+ * mode (Home) and Dev mode (the workflow editor).
  *
  * The effects live in <ShellEffects/> and the dialogs in <ShellDialogs/> so
  * their re-renders (a theme change, a dialog opening) never re-render the
@@ -74,12 +74,7 @@ export default function AppShell() {
   return (
     <TooltipProvider>
       <ShellEffects />
-      {/* `app-frame` is the decorative-layer hook from the design handoff:
-          per-theme CSS targets it for outer ornaments (gilded corners under
-          Renaissance, scanlines and corner brackets under Cyber, the riveted
-          frame under Steampunk, the REC dot under Surveillance). The
-          decorations are pointer-events: none. */}
-      <div className="app-frame flex h-screen w-screen flex-col bg-bg-app font-body">
+      <div className="flex h-screen w-screen flex-col bg-bg-app font-body">
         <ShellModeSwitch />
       </div>
       <ShellDialogs />

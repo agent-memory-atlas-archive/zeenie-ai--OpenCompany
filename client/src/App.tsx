@@ -2,7 +2,6 @@ import React, { useEffect } from 'react';
 import AppShell from './app/AppShell';
 import { usePageActivitySync } from './app/usePageActivitySync';
 import ProtectedRoute from './components/auth/ProtectedRoute';
-import SvgFilterDefs from './components/SvgFilterDefs';
 import { Toaster } from '@/components/ui/sonner';
 import { disposeOrb } from './features/home/orb/orb';
 import { PillToaster } from './features/home/ui/pillToast';
@@ -19,7 +18,6 @@ const App: React.FC = () => {
   useEffect(() => disposeOrb, []);
   return (
     <>
-      <SvgFilterDefs />
       <ProtectedRoute>
         <AppShell />
       </ProtectedRoute>

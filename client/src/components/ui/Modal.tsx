@@ -137,15 +137,13 @@ const Modal: React.FC<ModalProps> = ({
             // defined by the active theme (parchment under Renaissance,
             // void under Cyber).
             //
-            // `modal` + `modal-frame` are the design-handoff structural
-            // hooks — per-theme CSS targets these classes for nailed-up
-            // borders (Plague), gilded corners (Renaissance), neon
-            // scanlines (Cyber), double-rule frames (Greek), parchment
-            // textures (Renaissance) on the modal content.
+            // `modal` is the design-handoff structural hook; Atomic's CSS
+            // styles it (with `.modal-head` / `.modal-title`).
             //
-            // `font-body`: the dialog is portalled to <body>, outside
-            // `.app-frame`, so it would otherwise miss the theme's body face.
-            'modal modal-frame',
+            // `font-body`: the dialog is portalled to <body>, outside the
+            // app shell's `font-body`, so it would otherwise miss the
+            // theme's body face.
+            'modal',
             'fixed top-1/2 left-1/2 z-50 flex -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-lg border border-border-default bg-bg-app font-body shadow-2xl outline-none',
             CONTENT_MOTION[motion],
             className

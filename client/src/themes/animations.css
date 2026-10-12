@@ -24,34 +24,12 @@
   --pulse-timing: ease-in-out;
 }
 
-:root[data-theme="renaissance"] {
-  --pulse-keyframe: ren-pulse-exec;
-  --pulse-duration: 2s;
-  --pulse-timing: ease-in-out;
-}
-:root[data-theme="cyber"] {
-  --pulse-keyframe: cyber-pulse-exec;
-  --pulse-duration: 1.6s;
-  --pulse-timing: steps(2);
-}
-:root[data-theme="surveillance"] {
-  --pulse-keyframe: surv-pulse-exec;
-  --pulse-duration: 1s;
-  --pulse-timing: steps(2);
-}
-:root[data-theme="rot"] {
-  --pulse-duration: 2.2s;
-}
-
 /* ============================================================================
  * Executing-pulse keyframes (relocated here as the single source of truth).
- * node-pulse references the shared --tint-pulse-* scale (base.css); the
- * material-specific *-pulse-exec keyframes keep their bespoke decorative
- * alphas inline (per the design-system tokenization rule).
+ * node-pulse references the shared --tint-pulse-* scale (base.css).
  * ========================================================================== */
 
-/* Default 3-layer glow — light/dark/greek/edo/steampunk/atomic/wasteland/
- * rot/plague all draw from this. */
+/* Default 3-layer glow — light, dark and atomic all draw from this. */
 @keyframes node-pulse {
   0%, 100% {
     box-shadow:
@@ -64,56 +42,6 @@
       0 0 0 12px color-mix(in srgb, var(--node-pulse-color) var(--tint-pulse-ring-peak), transparent),
       0 0 32px 8px color-mix(in srgb, var(--node-pulse-color) var(--tint-pulse-halo-peak), transparent),
       0 0 56px 16px color-mix(in srgb, var(--node-pulse-color) var(--tint-pulse-atmos-peak), transparent);
-  }
-}
-
-/* Renaissance — ultramarine (lapis) candleflame glow against vellum. */
-@keyframes ren-pulse-exec {
-  0%, 100% {
-    box-shadow:
-      0 0 0 3px rgba(74, 114, 232, 0.85),
-      0 0 36px 8px rgba(74, 114, 232, 0.65),
-      0 0 72px 18px rgba(37, 72, 200, 0.40);
-  }
-  50% {
-    box-shadow:
-      0 0 0 4px rgba(74, 114, 232, 1),
-      0 0 52px 12px rgba(74, 114, 232, 0.85),
-      0 0 96px 28px rgba(37, 72, 200, 0.55);
-  }
-}
-
-/* Cyber — hard digital strobe (steps), neon-cyan glow. */
-@keyframes cyber-pulse-exec {
-  0%, 49% {
-    box-shadow:
-      0 0 0 2px var(--neon-cyan),
-      0 0 32px 4px var(--neon-cyan),
-      0 0 64px 16px color-mix(in srgb, var(--neon-cyan) 35%, transparent),
-      inset 0 0 18px rgba(29, 217, 229, 0.3);
-  }
-  50%, 100% {
-    box-shadow:
-      0 0 0 2px var(--neon-cyan),
-      0 0 14px 2px color-mix(in srgb, var(--neon-cyan) 55%, transparent),
-      0 0 28px 6px color-mix(in srgb, var(--neon-cyan) 15%, transparent),
-      inset 0 0 8px rgba(29, 217, 229, 0.12);
-  }
-}
-
-/* Surveillance — REC-red glow strobe matching the corner-LED rhythm. */
-@keyframes surv-pulse-exec {
-  0%, 49% {
-    box-shadow:
-      0 0 0 2px var(--destructive),
-      0 0 28px 4px rgba(232, 38, 38, 0.7),
-      0 0 56px 14px rgba(232, 38, 38, 0.3);
-  }
-  50%, 100% {
-    box-shadow:
-      0 0 0 2px var(--destructive),
-      0 0 12px 2px rgba(232, 38, 38, 0.45),
-      0 0 24px 6px rgba(232, 38, 38, 0.12);
   }
 }
 
@@ -194,16 +122,6 @@
 .opencompany-bolt { animation: trigger-bolt 1.8s ease-in-out infinite; }
 .opencompany-pip-pulse { animation: opencompany-pip-blink 1.4s ease-in-out infinite; }
 
-/* Ambient overlays for Cyber / Surveillance frames (cyber-flicker / cyber-roll
- * keyframes live in their theme files and are globally available). */
-.opencompany-crt { animation: cyber-flicker 5s linear infinite; }
-.opencompany-scanline::after {
-  content: ''; position: absolute; inset: 0; pointer-events: none; z-index: 50;
-  height: 12%;
-  background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--node-pulse-color, var(--info)) 18%, transparent), transparent);
-  animation: cyber-roll 8s linear infinite;
-}
-
 /* ============================================================================
  * Chat (design handoff chat/, 2026-10-03). Durations are --dur-* tokens in
  * base.css. Spinners and the live ring reuse the global `spin` keyframes;
@@ -272,7 +190,7 @@
 .opencompany-spinner-slow { animation: spin var(--dur-live-ring, 1200ms) linear infinite; }
 
 @media (prefers-reduced-motion: reduce) {
-  .opencompany-pulse, .opencompany-crt, .opencompany-scanline::after,
+  .opencompany-pulse,
   .opencompany-trigger-armed, .opencompany-trigger-fire, .opencompany-bolt, .opencompany-pip-pulse,
   .opencompany-spinner, .opencompany-live-ring, .opencompany-shimmer, .opencompany-shimmer-slot,
   .opencompany-shimmer-text, .opencompany-caret, .opencompany-dots > *, .opencompany-grow,

@@ -1136,8 +1136,8 @@ const DashboardContent: React.FC = () => {
   return (
     <>
       <style>{canvasCss}</style>
-      {/* The shell (app/AppShell) owns the `.app-frame` decorative layer
-          around both screens; the editor fills it. */}
+      {/* The shell (app/AppShell) owns the frame around both screens;
+          the editor fills it. */}
       <div className="flex min-h-0 w-full flex-1 flex-col">
         {/* Top Toolbar */}
         <TopToolbar
