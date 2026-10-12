@@ -99,7 +99,7 @@ describe('CredentialsBrowser', () => {
     fireEvent.change(form.getByLabelText('Server URL'), { target: { value: 'https://orders.example.com/mcp' } });
     fireEvent.click(form.getByRole('radio', { name: 'OAuth' }));
     fireEvent.click(form.getByRole('button', { name: 'Add' }));
-    await waitFor(() => expect(open).toHaveBeenCalledWith('https://auth.example.com/authorize?state=s', '_blank'));
+    await waitFor(() => expect(open).toHaveBeenCalledWith('https://auth.example.com/authorize?state=s', '_blank', 'noopener,noreferrer'));
     expect(sendRequest).toHaveBeenCalledWith('mcp_connector_add', { name: '', url: 'https://orders.example.com/mcp', sign_in: { kind: 'oauth' } }, 60_000);
     expect(toast.info).toHaveBeenCalledWith('Sign in on the page that opened. The connector shows here once you have.');
     // Nothing is kept yet, so there is no page to open.

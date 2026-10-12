@@ -63,7 +63,7 @@ export function AddConnectorForm({ close, onAdded }: AddConnectorFormProps) {
       if (result.success === false || !result.ref) throw new Error(result.error || FAILED);
       close();
       if (result.sign_in_url) {
-        window.open(result.sign_in_url, '_blank');
+        window.open(result.sign_in_url, '_blank', 'noopener,noreferrer');
         toast.info('Sign in on the page that opened. The connector shows here once you have.');
         return;
       }

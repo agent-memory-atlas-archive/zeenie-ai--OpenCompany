@@ -37,7 +37,7 @@ from services.plugin.base import NodeUserError
 from services.plugin.ws import ws_response
 
 from ._client import ConnectorError, SignIn, changes, discover, read_again, snapshots
-from ._oauth import SignedIn, connection_auth, save_tokens, start_sign_in
+from ._oauth import SignedIn, connect, save_tokens, start_sign_in
 from ._store import (
     Connector,
     default_settings,
@@ -84,8 +84,8 @@ def _redirect_uri(websocket: WebSocket) -> str:
 async def _read(connector: Connector):
     """A saved connector's server, read again with its sign-in."""
     url, sign_in = await read_access(connector)
-    auth = await connection_auth(connector.ref, connector.name, url, sign_in)
-    return await read_again(url, sign_in, connector.meta.get("transport") or "streamable_http", auth=auth)
+    transport = connector.meta.get("transport") or "streamable_http"
+    return await connect(connector.ref, connector.name, url, sign_in, lambda auth: read_again(url, sign_in, transport, auth=auth))
 
 
 async def _add_signed_in(ref: str, slug: str, name: str, url: str, signed_in: SignedIn) -> str:

@@ -571,13 +571,21 @@ class SignsIn(httpx.AsyncBaseTransport):
         self.access: set = set()
         self.refresh: set = set()
         self.issued = self.refreshed = 0
+        #: What its tokens come with: an expiry, and a refresh token.
+        self.expires_in: int | None = 3600
+        self.gives_refresh = True
 
     def _tokens(self, request: httpx.Request) -> httpx.Response:
         self.issued += 1
         access, refresh = f"access-{self.issued}", f"refresh-{self.issued}"
         self.access.add(access)
-        self.refresh.add(refresh)
-        return httpx.Response(200, json={"access_token": access, "token_type": "bearer", "expires_in": 3600, "refresh_token": refresh}, request=request)
+        body: Dict[str, Any] = {"access_token": access, "token_type": "bearer"}
+        if self.expires_in is not None:
+            body["expires_in"] = self.expires_in
+        if self.gives_refresh:
+            self.refresh.add(refresh)
+            body["refresh_token"] = refresh
+        return httpx.Response(200, json=body, request=request)
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         await request.aread()
@@ -668,6 +676,39 @@ class TestOAuth:
             assert (await _handlers.handle_mcp_connector_test({"ref": "mcp:orders"}, SOCKET))["ok"] is True
         await _handlers.handle_mcp_connector_remove({"ref": "mcp:orders"}, SOCKET)
         assert auth.oauth == {}
+
+    async def test_a_token_without_an_expiry_is_renewed_once_the_server_refuses_it(self, auth, monkeypatch):
+        context = NodeContext(node_id="n1", node_type="mcpConnector", raw={})
+        async with behind_sign_in(monkeypatch, orders_server()) as gate:
+            gate.expires_in = None
+            await comes_back((await add(sign_in={"kind": "oauth"}))["sign_in_url"])
+            assert auth.oauth["mcp:orders"]["token_expiry"] is None
+
+            async def call() -> Dict[str, Any]:
+                return await McpConnectorNode().execute_as_tool({"order": "A1"}, LOOKUP, context)
+
+            assert (await call())["text"] == "Order A1: 2 books" and gate.refreshed == 0
+            # The server stops taking the token; renewing it works.
+            gate.access.clear()
+            assert (await call())["text"] == "Order A1: 2 books"
+            assert gate.refreshed == 1 and auth.oauth["mcp:orders"]["access_token"] == "access-2"
+            gate.access.clear()
+            assert (await _handlers.handle_mcp_connector_test({"ref": "mcp:orders"}, SOCKET))["ok"] is True
+            assert gate.refreshed == 2
+            # When renewing is refused too, only signing in again is left.
+            gate.access.clear()
+            gate.refresh.clear()
+            assert await call() == {"error": "Orders needs you to sign in again: open it on the Connectors page and press Sign in again."}
+
+    async def test_signing_in_again_keeps_no_refresh_token_from_before(self, auth, monkeypatch):
+        async with behind_sign_in(monkeypatch, orders_server()) as gate:
+            await comes_back((await add(sign_in={"kind": "oauth"}))["sign_in_url"])
+            assert auth.oauth["mcp:orders"]["refresh_token"] == "refresh-1"
+            # The new sign-in registers a new client; the old refresh token was not issued to it.
+            gate.gives_refresh = False
+            again = await _handlers.handle_mcp_connector_sign_in({"ref": "mcp:orders"}, SOCKET)
+            assert "Orders is signed in again." in (await comes_back(again["sign_in_url"])).text
+            assert (auth.oauth["mcp:orders"]["access_token"], auth.oauth["mcp:orders"]["refresh_token"]) == ("access-2", "")
 
     async def test_a_refused_sign_in_keeps_nothing(self, auth, monkeypatch):
         async with behind_sign_in(monkeypatch, orders_server()):

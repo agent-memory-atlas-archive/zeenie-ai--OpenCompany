@@ -105,7 +105,7 @@ export default function McpConnectorPanel({ config, showTechnicalSections = fals
   const signIn = async () => {
     const result = await run<Result & { sign_in_url?: string }>('sign_in', 'mcp_connector_sign_in');
     if (!result?.sign_in_url) return;
-    window.open(result.sign_in_url, '_blank');
+    window.open(result.sign_in_url, '_blank', 'noopener,noreferrer');
     setNotice({ ok: true, text: 'Sign in on the page that opened.' });
   };
 

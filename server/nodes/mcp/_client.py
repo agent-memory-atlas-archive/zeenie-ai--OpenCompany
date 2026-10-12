@@ -345,7 +345,7 @@ async def read_again(
         async with asyncio.timeout(DISCOVER_S):
             return await read_server(url, sign_in, transport, http_transport=http_transport, auth=auth)
     except Exception as exc:  # noqa: BLE001 - described below, in words for the owner
-        raise ConnectorError(describe(exc, host)) from None
+        raise failure(exc, host) from None
 
 
 @dataclass
@@ -415,8 +415,17 @@ async def call_tool(
                     request, types.CallToolResult, request_read_timeout_seconds=timedelta(seconds=CALL_TIMEOUT_S)
                 )
     except Exception as exc:  # noqa: BLE001 - described below, in words for the owner
-        raise ConnectorError(describe(exc, host)) from None
+        raise failure(exc, host) from None
     return CallResult(text=result_text(result), structured=result.structuredContent, is_error=bool(result.isError))
+
+
+def failure(exc: BaseException, host: str) -> ConnectorError:
+    """The error to raise for a failed connection: one of ours as it was
+    raised (a sign-in only the owner can redo stays ``SignInNeeded``), any
+    other in words for the owner."""
+    while isinstance(exc, BaseExceptionGroup) and exc.exceptions:
+        exc = exc.exceptions[0]
+    return exc if isinstance(exc, ConnectorError) else ConnectorError(describe(exc, host))
 
 
 def describe(exc: Optional[BaseException], host: str) -> str:
@@ -534,6 +543,7 @@ __all__ = [
     "check_server",
     "describe",
     "discover",
+    "failure",
     "http_client",
     "open_session",
     "read_again",

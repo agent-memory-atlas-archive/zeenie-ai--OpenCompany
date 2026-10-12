@@ -124,7 +124,7 @@ describe.each([false, true])('connection forms with technical sections %s', (sho
     expect(mocks.sendRequest).not.toHaveBeenCalled();
     await user.click(login);
     expect(mocks.sendRequest).toHaveBeenCalledWith('provider_login', {});
-    expect(openWindow).toHaveBeenCalledWith('https://example.com/device', '_blank');
+    expect(openWindow).toHaveBeenCalledWith('https://example.com/device', '_blank', 'noopener,noreferrer');
     expect(await screen.findByText('ABCD-1234')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Save Credentials' })).not.toBeInTheDocument();
     openWindow.mockRestore();

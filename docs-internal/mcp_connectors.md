@@ -155,8 +155,9 @@ background, since the owner finishes it in their browser:
    with 401. It is not sent inside an MCP session, whose 30 s read timeout
    would cut the owner off. The provider registers a client and hands over
    the sign-in page's address. The command answers with it within
-   `DISCOVER_S`, and the app opens it in a new tab. A server that does not
-   answer 401 is refused: "didn't ask to sign in".
+   `DISCOVER_S`, and the app opens it in a new tab with `noopener`, so the
+   server's page cannot reach back into the app's own tab. A server that
+   does not answer 401 is refused: "didn't ask to sign in".
 2. The authorization server sends the owner's browser back to
    `/api/mcp/oauth/callback` (`register_oauth_callback_path("mcp", ...)`;
    the redirect URI is this app's own address,
@@ -169,18 +170,24 @@ background, since the owner finishes it in their browser:
 
 **What is kept.** The tokens go to the OAuth token store,
 `AuthService.store_oauth_tokens(provider="mcp:<slug>", ..., expiry=...)`. A
-refresh that sends no refresh token keeps the one it had. The connector's
+refresh that sends no refresh token keeps the one it had; a sign-in keeps
+only its own, since it registered a new client. The connector's
 encrypted sign-in (`SignIn.oauth`) keeps the client it registered, with its
 secret if it got one, and the endpoints it found: the authorization server's
 metadata, the server's resource metadata, and the scope.
 
-**Connections** (`connection_auth`: Test, Refresh, and every tool call) build
-a provider from those. Before first use they also set the token's expiry,
-read with `AuthService.get_stored_oauth_tokens` (never cached, because
-another process may have refreshed it), and the endpoints. The SDK itself
-loads only the tokens and the client. Without the expiry it would send an
-expired token and answer the 401 with a sign-in no one is there to finish.
-With them, an expired token is refreshed and the new one kept at once.
+**Connections** (`connect`, through `connection_auth`: Test, Refresh, and
+every tool call) build a provider from those. Before first use they also set
+the token's expiry, read with `AuthService.get_stored_oauth_tokens` (never
+cached, because another process may have refreshed it), and the endpoints.
+The SDK itself loads only the tokens and the client. Without the expiry it
+would send an expired token and answer the 401 with a sign-in no one is
+there to finish. With them, an expired token is refreshed and the new one
+kept at once. A token the server gave no expiry for looks valid to the SDK
+until the server refuses it, so when the server refuses one and a refresh
+token is kept, `connect` opens the connection once more with the token
+counted as expired, and the SDK refreshes it first. A refused request never
+reached the tool, so the call is not made twice.
 
 **Sign in again.** When the refresh is refused, only the owner can sign in
 again. The connection fails with `SignInNeeded`: "{name} needs you to sign in

@@ -27,7 +27,7 @@ from services.plugin.tool import ToolBinding, inline_schema_refs
 
 from ._client import ConnectorError, call_name, call_tool, check_arguments
 from ._credentials import TEMPLATE, McpConnectorCredential
-from ._oauth import connection_auth
+from ._oauth import connect
 from ._store import get_connector, list_connectors, read_access, slug_of
 
 
@@ -136,8 +136,10 @@ class McpConnectorNode(ToolNode):
             arguments = params.model_dump()
             check_arguments(tool["input_schema"], arguments)
             url, sign_in = await read_access(connector)
-            auth = await connection_auth(connector.ref, connector.name, url, sign_in)
-            result = await call_tool(url, sign_in, connector.meta.get("transport") or "streamable_http", tool["name"], arguments, auth=auth)
+            transport = connector.meta.get("transport") or "streamable_http"
+            result = await connect(
+                connector.ref, connector.name, url, sign_in, lambda auth: call_tool(url, sign_in, transport, tool["name"], arguments, auth=auth)
+            )
         except ConnectorError as exc:
             raise NodeUserError(str(exc)) from None
         if result.is_error:

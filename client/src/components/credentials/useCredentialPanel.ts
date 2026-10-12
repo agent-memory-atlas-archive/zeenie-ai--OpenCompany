@@ -220,7 +220,7 @@ export function useCredentialPanel(config: ProviderConfig, visible: boolean) {
     oauthLogin: () => execute('login', async () => {
       const res = await sendRequest(config.ws!.login, {});
       setVerificationCode(res.success ? (res.verification_code ?? null) : null);
-      if (res.success && res.url) window.open(res.url, '_blank');
+      if (res.success && res.url) window.open(res.url, '_blank', 'noopener,noreferrer');
       return res;
     }),
     oauthLogout: () => execute('logout', async () => {

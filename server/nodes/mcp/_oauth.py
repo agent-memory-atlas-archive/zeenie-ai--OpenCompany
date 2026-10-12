@@ -31,14 +31,19 @@ expired token and answer the 401 with a sign-in no one is there to finish.
 With them it refreshes an expired token, and the new one is kept. When the
 refresh is refused, only the owner can sign in again: the connection fails
 with ``SignInNeeded``.
+
+A token the server gave no expiry for looks valid to the SDK until the
+server refuses it, and a refusal makes it start a sign-in. So ``connect``
+renews such a token once the server refused it, and tries again.
 """
 
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional, Set, Tuple, TypeVar
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
@@ -52,6 +57,8 @@ if TYPE_CHECKING:
     from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 
 logger = get_logger(__name__)
+
+T = TypeVar("T")
 
 CALLBACK_PATH = "/api/mcp/oauth/callback"
 #: How long a sign-in waits for the owner to finish it in their browser.
@@ -118,7 +125,7 @@ class _Saved:
         return self.tokens
 
     async def set_tokens(self, tokens: "OAuthToken") -> None:
-        await save_tokens(self.ref, tokens)
+        await save_tokens(self.ref, tokens, refreshed=True)
         self.tokens = tokens
 
     async def get_client_info(self) -> Optional["OAuthClientInformationFull"]:
@@ -128,13 +135,14 @@ class _Saved:
         self.client = client_info
 
 
-async def save_tokens(ref: str, tokens: "OAuthToken") -> None:
+async def save_tokens(ref: str, tokens: "OAuthToken", *, refreshed: bool = False) -> None:
     """Keep a connector's tokens with their expiry. A refresh that sends no
-    refresh token keeps the one it had."""
+    refresh token keeps the one it had; a sign-in keeps only its own, since
+    it registered a new client and the old token was issued to another."""
     from mcp.shared.auth_utils import calculate_token_expiry
 
     auth = _auth()
-    refresh = tokens.refresh_token or await auth.get_oauth_refresh_token(ref) or ""
+    refresh = tokens.refresh_token or (await auth.get_oauth_refresh_token(ref) if refreshed else "") or ""
     expires = calculate_token_expiry(tokens.expires_in)
     kept = await auth.store_oauth_tokens(
         provider=ref,
@@ -333,9 +341,10 @@ def _timestamp(value: Any) -> Optional[float]:
     return (value if value.tzinfo else value.replace(tzinfo=timezone.utc)).timestamp()
 
 
-async def connection_auth(ref: str, name: str, url: str, sign_in: SignIn) -> Optional["OAuthClientProvider"]:
+async def connection_auth(ref: str, name: str, url: str, sign_in: SignIn, *, renew: bool = False) -> Optional["OAuthClientProvider"]:
     """How a saved connector's connection signs in with OAuth (None for any
-    other sign-in): the provider, with what its sign-in kept restored."""
+    other sign-in): the provider, with what its sign-in kept restored.
+    ``renew``: the token counts as expired, so it is refreshed first."""
     if sign_in.kind != "oauth":
         return None
     from mcp.client.auth import OAuthClientProvider
@@ -364,11 +373,25 @@ async def connection_auth(ref: str, name: str, url: str, sign_in: SignIn) -> Opt
         callback_handler=refuse,
     )
     context = provider.context
-    context.token_expiry_time = _timestamp(stored.get("token_expiry")) if stored else None
+    # A second ago: the SDK refreshes a token whose expiry has passed (no expiry means valid).
+    context.token_expiry_time = time.time() - 1 if renew else (_timestamp(stored.get("token_expiry")) if stored else None)
     context.oauth_metadata = server
     context.protected_resource_metadata = resource
     context.auth_server_url = kept.get("auth_server_url")
     return provider
+
+
+async def connect(ref: str, name: str, url: str, sign_in: SignIn, use: Callable[[Optional["OAuthClientProvider"]], Awaitable[T]]) -> T:
+    """``use`` a connection signed in the way the connector signs in. When the
+    server refuses a token it gave no expiry for, the token is renewed and
+    ``use`` runs once more; a refused request never reached the tool."""
+    auth = await connection_auth(ref, name, url, sign_in)
+    try:
+        return await use(auth)
+    except SignInNeeded:
+        if auth is None or auth.context.token_expiry_time is not None or not auth.context.can_refresh_token():
+            raise
+    return await use(await connection_auth(ref, name, url, sign_in, renew=True))
 
 
 __all__ = [
@@ -376,6 +399,7 @@ __all__ = [
     "SIGN_IN_S",
     "SignInNeeded",
     "SignedIn",
+    "connect",
     "connection_auth",
     "finish",
     "save_tokens",

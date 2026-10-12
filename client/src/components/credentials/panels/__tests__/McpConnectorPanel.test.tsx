@@ -127,7 +127,7 @@ describe('McpConnectorPanel', () => {
     expect(screen.getByText('OAuth')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Sign in again' }));
     expect(mocks.sendRequest).toHaveBeenCalledWith('mcp_connector_sign_in', { ref: 'mcp:orders' }, 60_000);
-    await waitFor(() => expect(open).toHaveBeenCalledWith('https://auth.example.com/authorize?state=s', '_blank'));
+    await waitFor(() => expect(open).toHaveBeenCalledWith('https://auth.example.com/authorize?state=s', '_blank', 'noopener,noreferrer'));
     expect(await screen.findByRole('status')).toHaveTextContent('Sign in on the page that opened.');
     open.mockRestore();
   });
