@@ -36,15 +36,8 @@ export type SoundEvent =
 export type SoundPackName =
   | 'none'
   | 'parchment'
-  | 'marble'
-  | 'ink'
-  | 'clockwork'
   | 'vibraphone'
-  | 'terminal'
-  | 'scrap'
-  | 'crypt'
-  | 'bell'
-  | 'telex';
+  | 'terminal';
 
 interface OscConfig {
   type: OscillatorType;
@@ -88,7 +81,7 @@ let activePack: EventTable = {};
  * Uses `performance.now()` for monotonic timing. The 30 ms window
  * matches the upstream `app/sound.js` reference engine's documented
  * hover debounce; we apply the same to `type` since each oscillator
- * costs ~25 ms decay on the parchment / marble packs.
+ * costs ~25 ms decay on the parchment pack.
  */
 const lastFireMs: Partial<Record<SoundEvent, number>> = {};
 const THROTTLE_MS: Partial<Record<SoundEvent, number>> = {
@@ -158,42 +151,6 @@ const PARCHMENT: EventTable = {
   modalClose: { type: 'sine',     freq: 392, dur: 0.14,  vol: 0.06, attack: 0.005, decay: 0.14, sweep: 0.7 },
 };
 
-const MARBLE: EventTable = {
-  click:      { type: 'sine',     freq: 330, dur: 0.05,  vol: 0.07, attack: 0.001, decay: 0.05 },
-  hover:      { type: 'sine',     freq: 520, dur: 0.02,  vol: 0.025, attack: 0.001, decay: 0.02 },
-  type:       { type: 'triangle', freq: 260, dur: 0.03,  vol: 0.04, attack: 0.001, decay: 0.03, lp: 1200 },
-  success:    { type: 'sine',     freq: 392, dur: 0.5,   vol: 0.09, attack: 0.005, decay: 0.5,  sweep: 1.6 },
-  error:      { type: 'sawtooth', freq: 130, dur: 0.30,  vol: 0.10, attack: 0.005, decay: 0.30, lp: 500 },
-  run:        { type: 'sine',     freq: 440, dur: 0.22,  vol: 0.10, attack: 0.005, decay: 0.22, sweep: 1.4 },
-  save:       { type: 'sine',     freq: 330, dur: 0.35,  vol: 0.10, attack: 0.01,  decay: 0.35 },
-  modalOpen:  { type: 'sine',     freq: 392, dur: 0.20,  vol: 0.07, attack: 0.02,  decay: 0.20, sweep: 1.3 },
-  modalClose: { type: 'sine',     freq: 392, dur: 0.16,  vol: 0.06, attack: 0.005, decay: 0.16, sweep: 0.7 },
-};
-
-const INK: EventTable = {
-  click:      { type: 'triangle', freq: 280, dur: 0.05,  vol: 0.05, attack: 0.005, decay: 0.05, lp: 1500 },
-  hover:      { type: 'sine',     freq: 440, dur: 0.018, vol: 0.02, attack: 0.001, decay: 0.018 },
-  type:       { type: 'sine',     freq: 220, dur: 0.04,  vol: 0.04, attack: 0.005, decay: 0.04, lp: 600 },
-  success:    { type: 'sine',     freq: 660, dur: 1.2,   vol: 0.08, attack: 0.01,  decay: 1.2 },
-  error:      { type: 'triangle', freq: 174, dur: 0.4,   vol: 0.08, attack: 0.005, decay: 0.4,  lp: 800 },
-  run:        { type: 'sine',     freq: 523, dur: 0.6,   vol: 0.08, attack: 0.02,  decay: 0.6 },
-  save:       { type: 'sine',     freq: 440, dur: 0.8,   vol: 0.10, attack: 0.01,  decay: 0.8 },
-  modalOpen:  { type: 'sine',     freq: 523, dur: 0.4,   vol: 0.06, attack: 0.04,  decay: 0.4 },
-  modalClose: { type: 'sine',     freq: 392, dur: 0.4,   vol: 0.05, attack: 0.005, decay: 0.4 },
-};
-
-const CLOCKWORK: EventTable = {
-  click:      { type: 'square',   freq: 800,  dur: 0.04,  vol: 0.06, attack: 0.001, decay: 0.04,  lp: 2200 },
-  hover:      { type: 'square',   freq: 1100, dur: 0.012, vol: 0.02, attack: 0.001, decay: 0.012 },
-  type:       { type: 'square',   freq: 600,  dur: 0.025, vol: 0.05, attack: 0.001, decay: 0.025, lp: 1800 },
-  success:    { type: 'sawtooth', freq: 523,  dur: 0.5,   vol: 0.08, attack: 0.005, decay: 0.5,   sweep: 1.5, lp: 2500 },
-  error:      { type: 'sawtooth', freq: 196,  dur: 0.35,  vol: 0.10, attack: 0.005, decay: 0.35,  lp: 700 },
-  run:        { type: 'square',   freq: 440,  dur: 0.30,  vol: 0.10, attack: 0.005, decay: 0.30,  sweep: 1.4, lp: 2000 },
-  save:       { type: 'triangle', freq: 660,  dur: 0.45,  vol: 0.10, attack: 0.01,  decay: 0.45,  lp: 2400 },
-  modalOpen:  { type: 'square',   freq: 392,  dur: 0.18,  vol: 0.07, attack: 0.005, decay: 0.18,  sweep: 1.3, lp: 1800 },
-  modalClose: { type: 'square',   freq: 392,  dur: 0.14,  vol: 0.06, attack: 0.005, decay: 0.14,  sweep: 0.65, lp: 1400 },
-};
-
 const VIBRAPHONE: EventTable = {
   click:      { type: 'triangle', freq: 880,  dur: 0.10, vol: 0.06, attack: 0.001, decay: 0.10 },
   hover:      { type: 'triangle', freq: 1320, dur: 0.05, vol: 0.025, attack: 0.001, decay: 0.05 },
@@ -218,66 +175,11 @@ const TERMINAL: EventTable = {
   modalClose: { type: 'square',   freq: 1175, dur: 0.06,  vol: 0.06, attack: 0.001, decay: 0.06,  sweep: 0.6 },
 };
 
-const SCRAP: EventTable = {
-  click:      { type: 'sawtooth', freq: 180, dur: 0.05,  vol: 0.07, attack: 0.0005, decay: 0.05,  lp: 1400 },
-  hover:      { type: 'sawtooth', freq: 320, dur: 0.012, vol: 0.025, attack: 0.0005, decay: 0.012, lp: 2000 },
-  type:       { type: 'square',   freq: 140, dur: 0.03,  vol: 0.05, attack: 0.0005, decay: 0.03,  lp: 800 },
-  success:    { type: 'sawtooth', freq: 440, dur: 0.18,  vol: 0.10, attack: 0.001,  decay: 0.18,  sweep: 1.3, lp: 1600 },
-  error:      { type: 'sawtooth', freq: 90,  dur: 0.5,   vol: 0.12, attack: 0.001,  decay: 0.5,   lp: 400 },
-  run:        { type: 'square',   freq: 220, dur: 0.20,  vol: 0.10, attack: 0.001,  decay: 0.20,  sweep: 1.2, lp: 1200 },
-  save:       { type: 'sawtooth', freq: 330, dur: 0.18,  vol: 0.10, attack: 0.001,  decay: 0.18,  lp: 1400 },
-  modalOpen:  { type: 'sawtooth', freq: 196, dur: 0.10,  vol: 0.07, attack: 0.001,  decay: 0.10,  lp: 1000 },
-  modalClose: { type: 'sawtooth', freq: 196, dur: 0.08,  vol: 0.06, attack: 0.001,  decay: 0.08,  sweep: 0.5, lp: 700 },
-};
-
-const CRYPT: EventTable = {
-  click:      { type: 'sine',     freq: 220, dur: 0.08,  vol: 0.06, attack: 0.005, decay: 0.08, lp: 600 },
-  hover:      { type: 'sine',     freq: 330, dur: 0.025, vol: 0.02, attack: 0.005, decay: 0.025, lp: 800 },
-  type:       { type: 'sine',     freq: 165, dur: 0.04,  vol: 0.04, attack: 0.005, decay: 0.04, lp: 400 },
-  success:    { type: 'triangle', freq: 261, dur: 0.8,   vol: 0.08, attack: 0.02,  decay: 0.8,  sweep: 1.5, lp: 1200 },
-  error:      { type: 'sawtooth', freq: 73,  dur: 0.6,   vol: 0.10, attack: 0.01,  decay: 0.6,  lp: 300 },
-  run:        { type: 'sine',     freq: 196, dur: 0.45,  vol: 0.10, attack: 0.02,  decay: 0.45, sweep: 1.3, lp: 800 },
-  save:       { type: 'sine',     freq: 174, dur: 0.7,   vol: 0.10, attack: 0.05,  decay: 0.7,  lp: 700 },
-  modalOpen:  { type: 'sine',     freq: 220, dur: 0.5,   vol: 0.07, attack: 0.05,  decay: 0.5,  lp: 600 },
-  modalClose: { type: 'sine',     freq: 220, dur: 0.4,   vol: 0.06, attack: 0.005, decay: 0.4,  sweep: 0.6, lp: 500 },
-};
-
-const BELL: EventTable = {
-  click:      { type: 'triangle', freq: 392, dur: 0.10,  vol: 0.06, attack: 0.001, decay: 0.10, lp: 1500 },
-  hover:      { type: 'sine',     freq: 660, dur: 0.025, vol: 0.025, attack: 0.001, decay: 0.025 },
-  type:       { type: 'square',   freq: 220, dur: 0.025, vol: 0.04, attack: 0.001, decay: 0.025, lp: 800 },
-  success:    { type: 'triangle', freq: 523, dur: 1.0,   vol: 0.09, attack: 0.001, decay: 1.0 },
-  error:      { type: 'sawtooth', freq: 110, dur: 0.6,   vol: 0.10, attack: 0.005, decay: 0.6,  lp: 500 },
-  run:        { type: 'triangle', freq: 440, dur: 0.6,   vol: 0.10, attack: 0.001, decay: 0.6 },
-  save:       { type: 'triangle', freq: 392, dur: 0.9,   vol: 0.10, attack: 0.001, decay: 0.9 },
-  modalOpen:  { type: 'triangle', freq: 523, dur: 0.4,   vol: 0.07, attack: 0.001, decay: 0.4 },
-  modalClose: { type: 'triangle', freq: 392, dur: 0.4,   vol: 0.06, attack: 0.001, decay: 0.4 },
-};
-
-const TELEX: EventTable = {
-  click:      { type: 'square',   freq: 1500, dur: 0.012, vol: 0.07, attack: 0.0005, decay: 0.012 },
-  hover:      { type: 'square',   freq: 2200, dur: 0.006, vol: 0.02, attack: 0.0005, decay: 0.006 },
-  type:       { type: 'square',   freq: 1100, dur: 0.010, vol: 0.05, attack: 0.0005, decay: 0.010 },
-  success:    { type: 'square',   freq: 1318, dur: 0.10,  vol: 0.08, attack: 0.0005, decay: 0.10 },
-  error:      { type: 'sawtooth', freq: 220,  dur: 0.4,   vol: 0.12, attack: 0.0005, decay: 0.4 },
-  run:        { type: 'square',   freq: 1760, dur: 0.06,  vol: 0.10, attack: 0.0005, decay: 0.06 },
-  save:       { type: 'square',   freq: 1175, dur: 0.08,  vol: 0.08, attack: 0.0005, decay: 0.08 },
-  modalOpen:  { type: 'square',   freq: 988,  dur: 0.05,  vol: 0.07, attack: 0.0005, decay: 0.05 },
-  modalClose: { type: 'square',   freq: 988,  dur: 0.04,  vol: 0.06, attack: 0.0005, decay: 0.04, sweep: 0.6 },
-};
-
 const PACKS: Record<SoundPackName, EventTable> = {
   none: {},
   parchment: PARCHMENT,
-  marble: MARBLE,
-  ink: INK,
-  clockwork: CLOCKWORK,
   vibraphone: VIBRAPHONE,
   terminal: TERMINAL,
-  scrap: SCRAP,
-  crypt: CRYPT,
-  bell: BELL,
-  telex: TELEX,
 };
 
 // ── Public API ───────────────────────────────────────────────────────────

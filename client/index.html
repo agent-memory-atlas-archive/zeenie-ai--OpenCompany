@@ -36,32 +36,27 @@
     </script>
     <!--
       Theme typography. Each theme picks its display + body + mono via
-      the --font-display / --font-body / --font-mono tokens. Loading
-      these as `media="print" onload=...` defers the network cost so
-      the default light/dark theme (system fonts via @fontsource-
-      variable/geist bundled at build time) renders without blocking,
-      and Renaissance + Cyber fonts swap in once their stylesheets land.
+      the --font-display / --font-body / --font-mono tokens. Light and
+      dark use Geist (@fontsource-variable/geist, bundled at build time)
+      and the system mono. Loading Atomic's fonts as `media="print"
+      onload=...` defers the network cost, so light and dark render
+      without blocking and Atomic's fonts swap in once their stylesheet
+      lands.
 
-      Renaissance: Cinzel (display), Cormorant Garamond (body),
-                   IM Fell English (mono / italic accents).
-      Cyber:       Space Mono (display — design-handoff legibility
-                   substitution for Major Mono Display), VT323 (body
-                   fallback), JetBrains Mono (body + mono).
-      Plague:      Cinzel (display — substitution for UnifrakturCook
-                   blackletter), EB Garamond (body), Special Elite (mono).
+      Atomic: Bevan (display), Lato (body), Space Mono (mono).
     -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
       rel="stylesheet"
-      href="https://fonts.googleapis.com/css2?family=Anonymous+Pro:ital,wght@0,400;0,700;1,400&family=Bevan&family=Cinzel:wght@400;600;700&family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=Courier+Prime:ital,wght@0,400;0,700;1,400&family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&family=IM+Fell+English+SC&family=IM+Fell+English:ital@0;1&family=JetBrains+Mono:wght@400;500;600;700&family=Lato:wght@400;700&family=Pirata+One&family=Sawarabi+Mincho&family=Shippori+Mincho:wght@400;500;600;700&family=Space+Mono:ital,wght@0,400;0,700;1,400&family=Special+Elite&family=VT323&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Bevan&family=Lato:wght@400;700&family=Space+Mono:ital,wght@0,400;0,700;1,400&display=swap"
       media="print"
       onload="this.media='all'"
     />
     <noscript>
       <link
         rel="stylesheet"
-        href="https://fonts.googleapis.com/css2?family=Anonymous+Pro:ital,wght@0,400;0,700;1,400&family=Bevan&family=Cinzel:wght@400;600;700&family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=Courier+Prime:ital,wght@0,400;0,700;1,400&family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&family=IM+Fell+English+SC&family=IM+Fell+English:ital@0;1&family=JetBrains+Mono:wght@400;500;600;700&family=Lato:wght@400;700&family=Pirata+One&family=Sawarabi+Mincho&family=Shippori+Mincho:wght@400;500;600;700&family=Space+Mono:ital,wght@0,400;0,700;1,400&family=Special+Elite&family=VT323&display=swap"
+        href="https://fonts.googleapis.com/css2?family=Bevan&family=Lato:wght@400;700&family=Space+Mono:ital,wght@0,400;0,700;1,400&display=swap"
       />
     </noscript>
     <title>OpenCompany</title>

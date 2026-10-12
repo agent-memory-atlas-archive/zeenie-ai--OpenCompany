@@ -432,7 +432,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
           <Section title="Audio" Icon={Volume2} tone="tool">
             <Row
               label="Sound Effects"
-              description="Play per-theme click / hover / save / error sounds. Each theme ships a different pack (parchment, terminal, marble, ink, clockwork, ...). Enabled by default — toggle off if you prefer silence."
+              description="Play per-theme click / hover / save / error sounds. Each theme has its own pack (parchment for Light, terminal for Dark, vibraphone for Atomic). Enabled by default — toggle off if you prefer silence."
             >
               <Switch
                 checked={soundEnabled}
