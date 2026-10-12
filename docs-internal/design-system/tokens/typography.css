@@ -2,7 +2,7 @@
  * OpenCompany — typography tokens
  * App font: Geist (loaded via @fontsource-variable/geist in the real app;
  * here served from Google Fonts — see tokens/fonts.css).
- * Mono: JetBrains Mono (Cyber theme / code) falling back to system mono.
+ * Mono: JetBrains Mono (code) falling back to system mono.
  * Base UI size is 14px — OpenCompany is a dense desktop tool.
  * ========================================================================== */
 

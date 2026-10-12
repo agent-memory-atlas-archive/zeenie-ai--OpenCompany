@@ -11,7 +11,7 @@ Design system for **OpenCompany** — opencompany.sh's open-source, local-first 
 1. **OpenCompany app** (`localhost:3000`) — the core product. A three-zone desktop workspace: workflow sidebar (left), node canvas (center), component palette (right), top toolbar, bottom status bar, multi-tab console dock. Recreated in `ui_kits/opencompany/`.
 2. **Marketing/docs** (opencompany.sh, docs.opencompany.sh) — not in the repo; no UI kit was fabricated for them. Use the foundations here plus the README voice when designing those.
 
-The app ships 12 visual themes (light, dark, Renaissance, Cyber, Edo, Steampunk…). This design system encodes the two canonical ones: **light** (default `:root`) and **dark** (`class="dark"` — the signature look used in every screenshot and demo).
+The app ships 3 visual themes: light, dark and Atomic. This design system encodes the two canonical ones: **light** (default `:root`) and **dark** (`class="dark"` — the signature look used in every screenshot and demo).
 
 ---
 
@@ -64,10 +64,10 @@ The app ships 12 visual themes (light, dark, Renaissance, Cyber, Edo, Steampunk�
 
 - `styles.css` — global entry; imports everything in `tokens/`.
 - `tokens/` — `colors.css`, `typography.css`, `spacing.css`, `motion.css`, `animations.css`, `fonts.css`, `base.css`.
-- `guidelines/` — foundation specimen cards (Design System tab), plus `THEMES.md` (deep analysis of the app's 12-theme architecture) and `theme-matrix.html` (visual comparison of all 12 themes).
+- `guidelines/` — foundation specimen cards (Design System tab), plus `THEMES.md` (the app's theme architecture).
 - `reference/themes/` — pointer README only; the snapshots went stale and were retired in favor of the authoritative `client/src/themes/`.
 - `HANDOFF.md` — merged design-handoff brief + recorded product amendments (read alongside `IMPLEMENTATION.md`).
-- `reference-mockup/` — 17-panel × 12-theme fidelity target (`Panel Theme Matrix.dc.html`, open in a browser).
+- `reference-mockup/` — 17-panel × 3-theme fidelity target (`Panel Theme Matrix.dc.html`, open in a browser).
 - `assets/` — `product-canvas-screenshot.png`; `diagrams/` is a pointer to the live [`docs/diagrams/`](../../docs/diagrams/), the only copy of the 20 diagrams.
 - `components/buttons/` — ActionButton (6 intents), Button (shadcn variants).
 - `components/forms/` — Input, Select, RadioGroup, Textarea, Switch, Checkbox, Slider, ApiKeyInput.
@@ -83,5 +83,5 @@ The app ships 12 visual themes (light, dark, Renaissance, Cyber, Edo, Steampunk�
 - **Fonts substituted:** Geist served from Google Fonts instead of the app's bundled `@fontsource-variable/geist` (same typeface, different delivery). Drop real `.woff2` files into `tokens/` + add `@font-face` if pixel-exact metrics matter.
 - **Logo:** the Open Council mark and the outlined Newsreader wordmark live in the app as SVG paths (`client/src/components/brand/geometry.ts`); the wordmark card copies them and draws them in `--fg-default`, as the app does (black on light, white on dark). The favicon, the desktop icon and the icon-only logo files in `media/brand/` (SVGs, plus square PNG renders) use the same mark path. The README hero is still a GitHub user-attachment.
 - opencompany.sh marketing site isn't in the repo; no marketing UI kit was invented.
-- The app's 10 themed skins are analyzed in `guidelines/THEMES.md` (token contract, per-theme matrix, porting recipe) with the authoritative sources in `client/src/themes/` — but only light/dark are encoded as live token scopes here. Ask to port a skin (e.g. Cyber) into `tokens/` if you want it usable.
-- **Motion** is documented in `guidelines/ANIMATIONS.md` and encoded in `tokens/animations.css` (per-theme `--dur`/`--ease`/`--motion-style` scopes + signature keyframes for all 12 themes). Live demo: `guidelines/animations-all-themes.html`.
+- The app's one themed skin, Atomic, is analyzed in `guidelines/THEMES.md` (token contract, theme table, porting recipe) with the authoritative source in `client/src/themes/atomic.css` — but only light/dark are encoded as live token scopes here. Ask to port Atomic into `tokens/` if you want it usable.
+- **Motion** is documented in `guidelines/ANIMATIONS.md` and encoded in `tokens/animations.css` (per-theme `--dur`/`--ease`/`--motion-style` scopes + signature keyframes for the three themes).

@@ -14,5 +14,5 @@
 }
 
 /* The executing-node pulse, per-theme motion contracts, signature keyframes
- * (node-pulse, cyber-*, surv-*, ren-*), and the `.opencompany-pulse` helper live
+ * (node-pulse, trigger-listening), and the `.opencompany-pulse` helper live
  * in tokens/animations.css. See guidelines/ANIMATIONS.md for the full system. */

@@ -80,7 +80,7 @@ color: var(--action-run-ink);          /* readable accent */
 ```
 
 ### Type
-`--font-display` / `--font-body` are `'Geist Variable'` on light and dark (display = body; `index.css` also fixes `--font-sans` to the same stack) · `--font-mono` (counts, state, timestamps — the "machine voice"): the live light / dark themes use the system mono stack `ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Monaco, Consolas, monospace` (`client/src/themes/light.css`, `dark.css`). JetBrains Mono appears only in skins: it is the mono font of Cyber, Edo and Rot, Cyber's body font, and the fallback after Space Mono in Atomic's mono and Cyber's display stacks. This bundle's `tokens/typography.css` still leads with `'JetBrains Mono'` — the live theme files win.
+`--font-display` / `--font-body` are `'Geist Variable'` on light and dark (display = body; `index.css` also fixes `--font-sans` to the same stack) · `--font-mono` (counts, state, timestamps — the "machine voice"): the live light / dark themes use the system mono stack `ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Monaco, Consolas, monospace` (`client/src/themes/light.css`, `dark.css`). JetBrains Mono appears only as the fallback after Space Mono in Atomic's mono stack (the app no longer loads it). This bundle's `tokens/typography.css` still leads with `'JetBrains Mono'` — the live theme files win.
 Scale (14px base, dense desktop): `--text-2xs 11` `--text-xs 12` `--text-sm 13` `--text-base 14` `--text-md 16` `--text-lg 18` `--text-xl 24` `--text-2xl 32` `--text-3xl 44`.
 Weights: 400 body / 500 UI labels / 600 headings & buttons. Sentence case; uppercase + `--tracking-label .04em` only in the status bar and micro-labels.
 
@@ -94,7 +94,7 @@ Fixed chrome: `--h-toolbar 48` `--h-statusbar 24` `--h-control 32` `--w-sidebar 
 `--dur-fast 90ms` `--dur-default 180ms` `--dur-slow 320ms` · `--ease-default cubic-bezier(.2,.7,.3,1)` · `--ease-emphasis cubic-bezier(.6,-.05,.3,1.4)`. Hover lifts -1px; press translates +1px; disabled opacity .5. Honor `prefers-reduced-motion`.
 
 ### Motion / animation (`tokens/animations.css` — see §6)
-Motion is theme-scoped: each `[data-theme]` overrides `--dur-*`, `--ease-default`, a named `--motion-style`, and which executing-pulse keyframe it uses. The glow color is **`--node-pulse-color`** — a theme-chosen contrast accent, never the node's own fill. Signature keyframes: `node-pulse` (default 3-layer glow), `trigger-listening` (armed heartbeat), `cyber-*` (steps strobe + CRT + scanline), `surv-*`, `ren-pulse-exec`. Helper classes: `.opencompany-pulse`, `.opencompany-trigger-armed`, `.opencompany-bolt`, `.opencompany-crt`, `.opencompany-scanline`.
+Motion is theme-scoped: each `[data-theme]` overrides `--dur-*`, `--ease-default`, a named `--motion-style`, and which executing-pulse keyframe it uses. The glow color is **`--node-pulse-color`** — a theme-chosen contrast accent, never the node's own fill. Signature keyframes: `node-pulse` (default 3-layer glow) and `trigger-listening` (armed heartbeat). Helper classes: `.opencompany-pulse`, `.opencompany-trigger-armed`, `.opencompany-bolt`.
 
 ---
 
@@ -136,17 +136,16 @@ Layout contract: fixed 48px toolbar + 24px status bar top/bottom; 280px sidebar 
 
 ## 5. Theming beyond light/dark
 
-The real app ships **12 themes** (light, dark + 10 "skins": Renaissance, Greek, Edo, Steampunk, Atomic, Cyber, Wasteland, Rot, Plague, Surveillance). Only light/dark are encoded as live token scopes here. The architecture, per-theme token tables, and porting recipe are in `guidelines/THEMES.md`; the authoritative theme CSS lives in `client/src/themes/` (the `reference/themes/` snapshots were retired — see its README). To add a skin: copy its token block into a `[data-theme="X"]` scope, map its accents onto the action/node role triplets, and load its fonts. **Readability rule:** decorative display faces (blackletter, Major Mono, etc.) are documentation specimens only — UI copy always uses a readable body font; the product ships Space Mono (Cyber) and Cinzel (Plague) as display faces per the HANDOFF.md legibility substitutions.
+The real app ships **3 themes**: light, dark and one "skin", Atomic (the other nine skins — Renaissance, Greek, Edo, Steampunk, Cyber, Wasteland, Rot, Plague, Surveillance — were removed on 2026-10-12). Only light/dark are encoded as live token scopes here. The architecture, per-theme token tables, and porting recipe are in `guidelines/THEMES.md`; the authoritative theme CSS lives in `client/src/themes/` (the `reference/themes/` snapshots were retired — see its README). To add a skin: copy its token block into a `[data-theme="X"]` scope, map its accents onto the action/node role triplets, and load its fonts. **Readability rule:** decorative display faces are documentation specimens only — UI copy always uses a readable body font.
 
-Visual verification pages (open in a browser): `guidelines/theme-comparison-full.html` (full screen ×12), `guidelines/panels-all-themes.html` (every panel — chrome + overlays — ×12), `guidelines/theme-matrix.html` (token matrix), `guidelines/animations-all-themes.html` (live motion ×12).
+Visual verification (open in a browser): `reference-mockup/Panel Theme Matrix.dc.html` — every panel in the three themes.
 
 ## 5b. Motion & animation (`tokens/animations.css` · `guidelines/ANIMATIONS.md`)
 
-Motion is part of each theme's identity — the personality lives in the **easing function**, not just duration (smooth · organic · mechanical · bouncy 1.6-overshoot · steps glitch · jittery · 680ms drift · stiff · linear scanline). Per-`[data-theme]` scopes set `--dur-*`, `--ease-*`, `--motion-style`, and `--pulse-keyframe/-duration/-timing`.
+Motion is part of each theme's identity — the personality lives in the **easing function**, not just duration (smooth for light and dark, bouncy 1.6-overshoot for Atomic). Per-`[data-theme]` scopes set `--dur-*`, `--ease-*`, `--motion-style`, and `--pulse-keyframe/-duration/-timing`.
 
 - **Executing pulse:** add `.opencompany-pulse` to a running node; it reads the theme's keyframe + `--node-pulse-color` (the theme's contrast glow color — set it on/above the node).
 - **Trigger nodes:** `.opencompany-trigger-armed` is the continuous "listening" heartbeat while a trigger waits for events (distinct from the one-shot execution pulse); pair with the lightning ⚡ badge (`.opencompany-bolt`) and no input handle. `trigger-fire` flashes when an event lands.
-- **Ambient:** `.opencompany-crt` (CRT flicker) + `.opencompany-scanline` (rolling band) for Cyber/Surveillance frames.
 - All loops stop under `prefers-reduced-motion`; always ship the static end-state so print/PDF render meaningfully.
 
 ---
@@ -162,10 +161,10 @@ Second person, possessive ("your own AI assistant"). Terse declarative fragments
 - `styles.css` — global entry (import this). `tokens/` — the seven token files including `animations.css` (ship as-is).
 - `components/<group>/` — 34 components (`.jsx` + `.d.ts` + `.prompt.md`; SettingsRow ships inside SettingsSection.jsx) + one `*.card.html` specimen per group.
 - `ui_kits/opencompany/` — interactive full-app recreation (`index.html` + JSX) incl. Settings / Credentials / Node-Config panels.
-- `guidelines/` — foundation specimen cards, `THEMES.md`, `ANIMATIONS.md`, and the theme/panel/animation comparison pages.
+- `guidelines/` — foundation specimen cards, `THEMES.md` and `ANIMATIONS.md`.
 - `reference/themes/` — pointer README only; the snapshots went stale (pre-hex-migration) and were retired in favor of the live `client/src/themes/`.
 - `HANDOFF.md` — the merged design-handoff brief (glow ladder + traps, step-edge contract, toolbar layout traps, canvas-layer asymmetries) with recorded product amendments.
-- `reference-mockup/` — the 17-panel × 12-theme fidelity target (`Panel Theme Matrix.dc.html`, open in a browser).
+- `reference-mockup/` — the 17-panel × 3-theme fidelity target (`Panel Theme Matrix.dc.html`, open in a browser).
 - `assets/` — product screenshot + official architecture diagrams (SVG).
 - `readme.md` — design guide (voice, visual foundations, iconography). `SKILL.md` — Agent-Skill entry point.
 

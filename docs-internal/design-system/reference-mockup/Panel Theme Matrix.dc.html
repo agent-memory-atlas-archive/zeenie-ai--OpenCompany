@@ -10,7 +10,7 @@
 <helmet data-dc-atomics>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Anonymous+Pro:wght@400;700&family=Bevan&family=Cinzel:wght@400;600;700&family=Cormorant+Garamond:wght@400;500;600;700&family=Courier+Prime:wght@400;700&family=EB+Garamond:wght@400;500;600&family=Geist:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IM+Fell+English+SC&family=IM+Fell+English:ital@0;1&family=JetBrains+Mono:wght@400;500;600;700&family=Lato:wght@400;700;900&family=Pirata+One&family=Shippori+Mincho:wght@400;500;600;700&family=Space+Mono:wght@400;700&family=Special+Elite&family=VT323&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bevan&family=Geist:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Lato:wght@400;700;900&family=Space+Mono:wght@400;700&display=swap">
 <style>
   *{box-sizing:border-box}
   body{margin:0;background:#0d0f13;color:#e8eaed;font-family:'Geist',system-ui,sans-serif;-webkit-font-smoothing:antialiased}
@@ -29,20 +29,6 @@
   @keyframes ocpulse{
     0%,100%{box-shadow:0 0 0 0 color-mix(in srgb,var(--node-pulse-color) 80%,transparent),0 0 14px 2px color-mix(in srgb,var(--node-pulse-color) 50%,transparent)}
     50%{box-shadow:0 0 0 10px color-mix(in srgb,var(--node-pulse-color) 40%,transparent),0 0 28px 6px color-mix(in srgb,var(--node-pulse-color) 60%,transparent)}}
-  @keyframes ren-pulse-exec{
-    0%,100%{box-shadow:0 0 0 1px var(--node-pulse-color),0 0 10px 1px color-mix(in srgb,var(--node-pulse-color) 40%,transparent)}
-    50%{box-shadow:0 0 0 2px var(--node-pulse-color),0 0 22px 5px color-mix(in srgb,var(--node-pulse-color) 60%,transparent)}}
-  @keyframes ren-flicker{0%,100%{opacity:.5}50%{opacity:.8}}
-  @keyframes cyber-pulse-exec{
-    0%,49%{box-shadow:0 0 0 1px var(--node-pulse-color),0 0 10px var(--node-pulse-color)}
-    50%,100%{box-shadow:0 0 0 1px var(--node-pulse-color),0 0 26px var(--node-pulse-color),0 0 44px color-mix(in srgb,var(--node-pulse-color) 50%,transparent)}}
-  @keyframes cyber-blink{0%,49%{opacity:1}50%,100%{opacity:.4}}
-  @keyframes cyber-flicker{0%,92%,100%{opacity:1}93%{opacity:.88}94%{opacity:1}96%{opacity:.92}}
-  @keyframes cyber-roll{0%{transform:translateY(-100%)}100%{transform:translateY(900%)}}
-  @keyframes surv-pulse-exec{
-    0%,49%{box-shadow:0 0 0 1px var(--node-pulse-color),0 0 6px color-mix(in srgb,var(--node-pulse-color) 40%,transparent)}
-    50%,100%{box-shadow:0 0 0 1px var(--node-pulse-color),0 0 18px color-mix(in srgb,var(--node-pulse-color) 70%,transparent)}}
-  @keyframes surv-blink{50%{opacity:.2}}
   @keyframes trigger-listening{
     0%,100%{box-shadow:0 0 0 0 color-mix(in srgb,var(--node-pulse-color) 0%,transparent),0 0 9px 1px color-mix(in srgb,var(--node-pulse-color) 38%,transparent)}
     50%{box-shadow:0 0 0 6px color-mix(in srgb,var(--node-pulse-color) 20%,transparent),0 0 20px 4px color-mix(in srgb,var(--node-pulse-color) 55%,transparent)}}
@@ -56,31 +42,9 @@
   <header style="flex:none;display:flex;align-items:center;gap:20px;padding:0 22px;height:56px;border-bottom:1px solid #2b2f37;background:#15171c;position:sticky;top:0;z-index:20">
     <div style="display:flex;align-items:baseline;gap:10px">
       <span style="font-size:15px;font-weight:600;letter-spacing:-.01em">OpenCompany · panel × theme matrix</span>
-      <span style="font:400 11px/1 ui-monospace,Menlo,monospace;color:#a3abb8">17 PANELS × 12 THEMES · {{ selName }}</span>
+      <span style="font:400 11px/1 ui-monospace,Menlo,monospace;color:#a3abb8">17 PANELS × 3 THEMES · {{ selName }}</span>
     </div>
     <div style="display:flex;align-items:center;gap:6px;margin-left:auto">
-      <span style="font:500 11px/1 ui-monospace,Menlo,monospace;letter-spacing:.1em;color:#a3abb8">FAMILY</span>
-      <button type="button" onClick="{{ setAll }}" style="position:relative;font:500 11px/1 'Geist',sans-serif;padding:6px 11px;border-radius:6px;cursor:pointer;background:transparent;border:1px solid #3c424c;color:#9aa1ac">
-        <sc-if value="{{ famIs.all }}" hint-placeholder-val="{{ true }}"><span style="position:absolute;inset:-1px;border-radius:6px;background:rgba(139,233,253,.14);border:1px solid rgba(139,233,253,.5)"></span></sc-if>
-        <sc-if value="{{ famIs.all }}" hint-placeholder-val="{{ true }}"><span style="position:relative;color:#8be9fd">All 12</span></sc-if>
-        <sc-if value="{{ famNot.all }}"><span style="position:relative">All 12</span></sc-if>
-      </button>
-      <button type="button" onClick="{{ setBase }}" style="position:relative;font:500 11px/1 'Geist',sans-serif;padding:6px 11px;border-radius:6px;cursor:pointer;background:transparent;border:1px solid #3c424c;color:#9aa1ac">
-        <sc-if value="{{ famIs.base }}"><span style="position:absolute;inset:-1px;border-radius:6px;background:rgba(139,233,253,.14);border:1px solid rgba(139,233,253,.5)"></span></sc-if>
-        <sc-if value="{{ famIs.base }}"><span style="position:relative;color:#8be9fd">Base 2</span></sc-if>
-        <sc-if value="{{ famNot.base }}" hint-placeholder-val="{{ true }}"><span style="position:relative">Base 2</span></sc-if>
-      </button>
-      <button type="button" onClick="{{ setUto }}" style="position:relative;font:500 11px/1 'Geist',sans-serif;padding:6px 11px;border-radius:6px;cursor:pointer;background:transparent;border:1px solid #3c424c;color:#9aa1ac">
-        <sc-if value="{{ famIs.uto }}"><span style="position:absolute;inset:-1px;border-radius:6px;background:rgba(139,233,253,.14);border:1px solid rgba(139,233,253,.5)"></span></sc-if>
-        <sc-if value="{{ famIs.uto }}"><span style="position:relative;color:#8be9fd">Utopian 5</span></sc-if>
-        <sc-if value="{{ famNot.uto }}" hint-placeholder-val="{{ true }}"><span style="position:relative">Utopian 5</span></sc-if>
-      </button>
-      <button type="button" onClick="{{ setDys }}" style="position:relative;font:500 11px/1 'Geist',sans-serif;padding:6px 11px;border-radius:6px;cursor:pointer;background:transparent;border:1px solid #3c424c;color:#9aa1ac">
-        <sc-if value="{{ famIs.dys }}"><span style="position:absolute;inset:-1px;border-radius:6px;background:rgba(139,233,253,.14);border:1px solid rgba(139,233,253,.5)"></span></sc-if>
-        <sc-if value="{{ famIs.dys }}"><span style="position:relative;color:#8be9fd">Dystopian 5</span></sc-if>
-        <sc-if value="{{ famNot.dys }}" hint-placeholder-val="{{ true }}"><span style="position:relative">Dystopian 5</span></sc-if>
-      </button>
-      <span style="width:1px;height:22px;background:#2b2f37;margin:0 6px"></span>
       <button type="button" onClick="{{ togglePlay }}" style="position:relative;font:500 11px/1 'Geist',sans-serif;padding:6px 11px;border-radius:6px;cursor:pointer;background:transparent;border:1px solid #3c424c;color:#9aa1ac">
         <sc-if value="{{ playing }}" hint-placeholder-val="{{ true }}"><span style="position:absolute;inset:-1px;border-radius:6px;background:rgba(80,250,123,.13);border:1px solid rgba(80,250,123,.5)"></span></sc-if>
         <sc-if value="{{ playing }}" hint-placeholder-val="{{ true }}"><span style="position:relative;color:#50fa7b">■ Motion on</span></sc-if>
@@ -109,7 +73,7 @@
         </button>
       </sc-for>
       <div style="padding:20px 16px 8px;font:500 11px/1 ui-monospace,Menlo,monospace;letter-spacing:.12em;color:#a3abb8">SHOWING</div>
-      <sc-for list="{{ themes }}" as="t" hint-placeholder-count="12">
+      <sc-for list="{{ themes }}" as="t" hint-placeholder-count="3">
         <div style="display:flex;align-items:center;gap:8px;padding:5px 16px">
           <span style="display:flex;flex:none;width:34px;height:16px;border-radius:3px;overflow:hidden;border:1px solid #2b2f37">
             <span style="flex:1;background:{{ t.bg }}"></span>
@@ -134,7 +98,7 @@
             <span style="font:400 11px/1 ui-monospace,Menlo,monospace;color:#a3abb8">280px · client/src/components/ui/WorkflowSidebar.tsx</span>
           </div>
           <div style="display:flex;flex-wrap:wrap;gap:26px">
-            <sc-for list="{{ themes }}" as="t" hint-placeholder-count="12">
+            <sc-for list="{{ themes }}" as="t" hint-placeholder-count="3">
               <div style="{{ t.vars }}">
                 <div style="display:flex;align-items:baseline;gap:7px;margin:0 0 7px 2px">
                   <span style="font:600 11px/1 ui-monospace,Menlo,monospace;letter-spacing:.09em;text-transform:uppercase;color:#e8eaed">{{ t.name }}</span>
@@ -191,7 +155,7 @@
             <span style="font:400 11px/1 ui-monospace,Menlo,monospace;color:#a3abb8">320px · ui/ComponentPalette.tsx · search filters every theme at once</span>
           </div>
           <div style="display:flex;flex-wrap:wrap;gap:26px">
-            <sc-for list="{{ themes }}" as="t" hint-placeholder-count="12">
+            <sc-for list="{{ themes }}" as="t" hint-placeholder-count="3">
               <div style="{{ t.vars }}">
                 <div style="display:flex;align-items:baseline;gap:7px;margin:0 0 7px 2px">
                   <span style="font:600 11px/1 ui-monospace,Menlo,monospace;letter-spacing:.09em;text-transform:uppercase;color:#e8eaed">{{ t.name }}</span>
@@ -253,7 +217,7 @@
             <span style="font:400 11px/1 ui-monospace,Menlo,monospace;color:#a3abb8">3-column modal · ParameterPanel.tsx · press Run to fill the output column</span>
           </div>
           <div style="display:flex;flex-wrap:wrap;gap:26px">
-            <sc-for list="{{ themes }}" as="t" hint-placeholder-count="12">
+            <sc-for list="{{ themes }}" as="t" hint-placeholder-count="3">
               <div style="{{ t.vars }}">
                 <div style="display:flex;align-items:baseline;gap:7px;margin:0 0 7px 2px">
                   <span style="font:600 11px/1 ui-monospace,Menlo,monospace;letter-spacing:.09em;text-transform:uppercase;color:#e8eaed">{{ t.name }}</span>
@@ -357,7 +321,7 @@
             <span style="font:400 11px/1 ui-monospace,Menlo,monospace;color:#a3abb8">ui/SettingsPanel.tsx · switches + slider are live</span>
           </div>
           <div style="display:flex;flex-wrap:wrap;gap:26px">
-            <sc-for list="{{ themes }}" as="t" hint-placeholder-count="12">
+            <sc-for list="{{ themes }}" as="t" hint-placeholder-count="3">
               <div style="{{ t.vars }}">
                 <div style="display:flex;align-items:baseline;gap:7px;margin:0 0 7px 2px">
                   <span style="font:600 11px/1 ui-monospace,Menlo,monospace;letter-spacing:.09em;text-transform:uppercase;color:#e8eaed">{{ t.name }}</span>
@@ -453,7 +417,7 @@
             <span style="font:400 11px/1 ui-monospace,Menlo,monospace;color:#a3abb8">credentials/CredentialsModal.tsx + ApiKeyPanel.tsx</span>
           </div>
           <div style="display:flex;flex-wrap:wrap;gap:26px">
-            <sc-for list="{{ themes }}" as="t" hint-placeholder-count="12">
+            <sc-for list="{{ themes }}" as="t" hint-placeholder-count="3">
               <div style="{{ t.vars }}">
                 <div style="display:flex;align-items:baseline;gap:7px;margin:0 0 7px 2px">
                   <span style="font:600 11px/1 ui-monospace,Menlo,monospace;letter-spacing:.09em;text-transform:uppercase;color:#e8eaed">{{ t.name }}</span>
@@ -501,10 +465,10 @@
           <div style="display:flex;align-items:baseline;gap:12px;margin:0 0 16px">
             <span style="font:600 11.5px/1 ui-monospace,Menlo,monospace;background:#1b1e25;border:1px solid #2b2f37;color:#8be9fd;padding:4px 8px;border-radius:5px">06</span>
             <span style="font-size:16px;font-weight:600">Console Dock</span>
-            <span style="font:400 11px/1 ui-monospace,Menlo,monospace;color:#a3abb8">ui/ConsolePanel.tsx · tabs switch all 12 together</span>
+            <span style="font:400 11px/1 ui-monospace,Menlo,monospace;color:#a3abb8">ui/ConsolePanel.tsx · tabs switch all three together</span>
           </div>
           <div style="display:flex;flex-wrap:wrap;gap:26px">
-            <sc-for list="{{ themes }}" as="t" hint-placeholder-count="12">
+            <sc-for list="{{ themes }}" as="t" hint-placeholder-count="3">
               <div style="{{ t.vars }}">
                 <div style="display:flex;align-items:baseline;gap:7px;margin:0 0 7px 2px">
                   <span style="font:600 11px/1 ui-monospace,Menlo,monospace;letter-spacing:.09em;text-transform:uppercase;color:#e8eaed">{{ t.name }}</span>
@@ -564,7 +528,7 @@
             <span style="font:400 11px/1 ui-monospace,Menlo,monospace;color:#a3abb8">output/OutputPanel.tsx · Response / Thinking / Raw JSON collapsibles</span>
           </div>
           <div style="display:flex;flex-wrap:wrap;gap:26px">
-            <sc-for list="{{ themes }}" as="t" hint-placeholder-count="12">
+            <sc-for list="{{ themes }}" as="t" hint-placeholder-count="3">
               <div style="{{ t.vars }}">
                 <div style="display:flex;align-items:baseline;gap:7px;margin:0 0 7px 2px">
                   <span style="font:600 11px/1 ui-monospace,Menlo,monospace;letter-spacing:.09em;text-transform:uppercase;color:#e8eaed">{{ t.name }}</span>
@@ -622,7 +586,7 @@ https://github.com/zeenie-ai/OpenCompany/pull/482
             <span style="font:400 11px/1 ui-monospace,Menlo,monospace;color:#a3abb8">350px · ui/InputNodesPanel.tsx on shared/DataPanel.tsx</span>
           </div>
           <div style="display:flex;flex-wrap:wrap;gap:26px">
-            <sc-for list="{{ themes }}" as="t" hint-placeholder-count="12">
+            <sc-for list="{{ themes }}" as="t" hint-placeholder-count="3">
               <div style="{{ t.vars }}">
                 <div style="display:flex;align-items:baseline;gap:7px;margin:0 0 7px 2px">
                   <span style="font:600 11px/1 ui-monospace,Menlo,monospace;letter-spacing:.09em;text-transform:uppercase;color:#e8eaed">{{ t.name }}</span>
@@ -668,7 +632,7 @@ https://github.com/zeenie-ai/OpenCompany/pull/482
             <span style="font:400 11px/1 ui-monospace,Menlo,monospace;color:#a3abb8">parameterPanel/ContextPanel.tsx · journal + active replay</span>
           </div>
           <div style="display:flex;flex-wrap:wrap;gap:26px">
-            <sc-for list="{{ themes }}" as="t" hint-placeholder-count="12">
+            <sc-for list="{{ themes }}" as="t" hint-placeholder-count="3">
               <div style="{{ t.vars }}">
                 <div style="display:flex;align-items:baseline;gap:7px;margin:0 0 7px 2px">
                   <span style="font:600 11px/1 ui-monospace,Menlo,monospace;letter-spacing:.09em;text-transform:uppercase;color:#e8eaed">{{ t.name }}</span>
@@ -749,7 +713,7 @@ https://github.com/zeenie-ai/OpenCompany/pull/482
             <span style="font:400 11px/1 ui-monospace,Menlo,monospace;color:#a3abb8">parameterPanel/MemoryToolPanel.tsx</span>
           </div>
           <div style="display:flex;flex-wrap:wrap;gap:26px">
-            <sc-for list="{{ themes }}" as="t" hint-placeholder-count="12">
+            <sc-for list="{{ themes }}" as="t" hint-placeholder-count="3">
               <div style="{{ t.vars }}">
                 <div style="display:flex;align-items:baseline;gap:7px;margin:0 0 7px 2px">
                   <span style="font:600 11px/1 ui-monospace,Menlo,monospace;letter-spacing:.09em;text-transform:uppercase;color:#e8eaed">{{ t.name }}</span>
@@ -793,7 +757,7 @@ https://github.com/zeenie-ai/OpenCompany/pull/482
             <span style="font:400 11px/1 ui-monospace,Menlo,monospace;color:#a3abb8">parameterPanel/TaskManagerPanel.tsx · click a row</span>
           </div>
           <div style="display:flex;flex-wrap:wrap;gap:26px">
-            <sc-for list="{{ themes }}" as="t" hint-placeholder-count="12">
+            <sc-for list="{{ themes }}" as="t" hint-placeholder-count="3">
               <div style="{{ t.vars }}">
                 <div style="display:flex;align-items:baseline;gap:7px;margin:0 0 7px 2px">
                   <span style="font:600 11px/1 ui-monospace,Menlo,monospace;letter-spacing:.09em;text-transform:uppercase;color:#e8eaed">{{ t.name }}</span>
@@ -850,7 +814,7 @@ https://github.com/zeenie-ai/OpenCompany/pull/482
             <span style="font:400 11px/1 ui-monospace,Menlo,monospace;color:#a3abb8">parameterPanel/TeamMonitorPanel.tsx</span>
           </div>
           <div style="display:flex;flex-wrap:wrap;gap:26px">
-            <sc-for list="{{ themes }}" as="t" hint-placeholder-count="12">
+            <sc-for list="{{ themes }}" as="t" hint-placeholder-count="3">
               <div style="{{ t.vars }}">
                 <div style="display:flex;align-items:baseline;gap:7px;margin:0 0 7px 2px">
                   <span style="font:600 11px/1 ui-monospace,Menlo,monospace;letter-spacing:.09em;text-transform:uppercase;color:#e8eaed">{{ t.name }}</span>
@@ -892,7 +856,7 @@ https://github.com/zeenie-ai/OpenCompany/pull/482
             <span style="font:400 11px/1 ui-monospace,Menlo,monospace;color:#a3abb8">parameterPanel/ProcessManagerPanel.tsx · 9-column process table</span>
           </div>
           <div style="display:flex;flex-wrap:wrap;gap:26px">
-            <sc-for list="{{ themes }}" as="t" hint-placeholder-count="12">
+            <sc-for list="{{ themes }}" as="t" hint-placeholder-count="3">
               <div style="{{ t.vars }}">
                 <div style="display:flex;align-items:baseline;gap:7px;margin:0 0 7px 2px">
                   <span style="font:600 11px/1 ui-monospace,Menlo,monospace;letter-spacing:.09em;text-transform:uppercase;color:#e8eaed">{{ t.name }}</span>
@@ -971,7 +935,7 @@ https://github.com/zeenie-ai/OpenCompany/pull/482
             <span style="font:400 11px/1 ui-monospace,Menlo,monospace;color:#a3abb8">parameterPanel/GalleryPanel.tsx · gallery/WorkspaceBrowser.tsx · fileIcons.tsx tones</span>
           </div>
           <div style="display:flex;flex-wrap:wrap;gap:26px">
-            <sc-for list="{{ themes }}" as="t" hint-placeholder-count="12">
+            <sc-for list="{{ themes }}" as="t" hint-placeholder-count="3">
               <div style="{{ t.vars }}">
                 <div style="display:flex;align-items:baseline;gap:7px;margin:0 0 7px 2px">
                   <span style="font:600 11px/1 ui-monospace,Menlo,monospace;letter-spacing:.09em;text-transform:uppercase;color:#e8eaed">{{ t.name }}</span>
@@ -1062,7 +1026,7 @@ https://github.com/zeenie-ai/OpenCompany/pull/482
             <span style="font:400 11px/1 ui-monospace,Menlo,monospace;color:#a3abb8">48px + 24px chrome · ui_kits Toolbar.jsx · ModeToggle.jsx · StatusBar.jsx</span>
           </div>
           <div style="display:flex;flex-wrap:wrap;gap:26px">
-            <sc-for list="{{ themes }}" as="t" hint-placeholder-count="12">
+            <sc-for list="{{ themes }}" as="t" hint-placeholder-count="3">
               <div style="{{ t.vars }}">
                 <div style="display:flex;align-items:baseline;gap:7px;margin:0 0 7px 2px">
                   <span style="font:600 11px/1 ui-monospace,Menlo,monospace;letter-spacing:.09em;text-transform:uppercase;color:#e8eaed">{{ t.name }}</span>
@@ -1130,7 +1094,7 @@ https://github.com/zeenie-ai/OpenCompany/pull/482
             <span style="font:400 11px/1 ui-monospace,Menlo,monospace;color:#a3abb8">Dashboard.tsx · SquareNode.tsx · per-theme --canvas-grid + ornaments · one node per glow state: selected, executing ×2, armed, success</span>
           </div>
           <div style="display:flex;flex-wrap:wrap;gap:26px">
-            <sc-for list="{{ themes }}" as="t" hint-placeholder-count="12">
+            <sc-for list="{{ themes }}" as="t" hint-placeholder-count="3">
               <div style="{{ t.vars }}">
                 <div style="display:flex;align-items:baseline;gap:7px;margin:0 0 7px 2px">
                   <span style="font:600 11px/1 ui-monospace,Menlo,monospace;letter-spacing:.09em;text-transform:uppercase;color:#e8eaed">{{ t.name }}</span>
@@ -1141,11 +1105,6 @@ https://github.com/zeenie-ai/OpenCompany/pull/482
                   <div style="{{ t.stack }}"></div>
                   <div style="{{ t.canvas }}"></div>
                   <div style="{{ t.dots }}"></div>
-                  <sc-if value="{{ t.hasFloor }}"><div style="{{ t.floor }}"></div></sc-if>
-                  <sc-if value="{{ t.hasMarquee }}"><div style="position:absolute;top:12px;right:16px;z-index:42;pointer-events:none;font-family:var(--font-mono);font-size:11px;letter-spacing:.2em;color:var(--node-pulse-color);text-shadow:0 0 4px var(--node-pulse-color);animation:cyber-blink 1.6s steps(2) infinite;animation-play-state:var(--play)">{{ t.marquee }}</div></sc-if>
-                  <sc-if value="{{ t.hasCrt }}"><div style="position:absolute;inset:0;pointer-events:none;z-index:40;background:repeating-linear-gradient(0deg,transparent 0 2px,rgba(0,0,0,0.25) 2px 3px);animation:cyber-flicker 5s linear infinite;animation-play-state:var(--play)"></div></sc-if>
-                  <sc-if value="{{ t.hasScan }}"><div style="position:absolute;left:0;right:0;height:12%;pointer-events:none;z-index:41;background:linear-gradient(180deg,transparent,color-mix(in srgb,var(--node-pulse-color) 18%,transparent),transparent);animation:cyber-roll 8s linear infinite;animation-play-state:var(--play)"></div></sc-if>
-                  <sc-if value="{{ t.isRen }}"><div style="position:absolute;inset:0;pointer-events:none;z-index:38;background:radial-gradient(circle 220px at 22% 24%,color-mix(in srgb,var(--action-config) 12%,transparent),transparent 70%);animation:ren-flicker 6s ease-in-out infinite;animation-play-state:var(--play)"></div></sc-if>
 
                   <svg width="620" height="488" viewBox="0 0 620 488" style="position:absolute;inset:0;z-index:1;pointer-events:none">
                     <g fill="none" stroke="color-mix(in srgb,var(--fg-default) 62%,transparent)" stroke-width="1.5" stroke-dasharray="5 5" stroke-linejoin="round">
@@ -1233,7 +1192,7 @@ https://github.com/zeenie-ai/OpenCompany/pull/482
             <span style="font:400 11px/1 ui-monospace,Menlo,monospace;color:#a3abb8">tokens/animations.css + themes/base.css · easing carries the personality; the glow ladder is rest → hover → selected → executing → success → error</span>
           </div>
           <div style="display:flex;flex-wrap:wrap;gap:26px">
-            <sc-for list="{{ themes }}" as="t" hint-placeholder-count="12">
+            <sc-for list="{{ themes }}" as="t" hint-placeholder-count="3">
               <div style="{{ t.vars }}">
                 <div style="display:flex;align-items:baseline;gap:7px;margin:0 0 7px 2px">
                   <span style="font:600 11px/1 ui-monospace,Menlo,monospace;letter-spacing:.09em;text-transform:uppercase;color:#e8eaed">{{ t.name }}</span>
@@ -1307,11 +1266,6 @@ https://github.com/zeenie-ai/OpenCompany/pull/482
                           <span style="font-family:var(--font-mono);font-size:11px;color:var(--fg-muted)">pips</span>
                         </div>
                       </div>
-                      <div style="margin-top:auto;position:relative;height:34px;overflow:hidden;border:1px solid var(--border-default);border-radius:var(--radius-md);background:var(--bg-canvas)">
-                        <sc-if value="{{ t.hasScan }}"><span style="position:absolute;left:0;right:0;height:40%;background:linear-gradient(180deg,transparent,color-mix(in srgb,var(--node-pulse-color) 22%,transparent),transparent);animation:cyber-roll 3s linear infinite;animation-play-state:var(--play)"></span></sc-if>
-                        <sc-if value="{{ t.isRen }}"><span style="position:absolute;inset:0;background:radial-gradient(circle 60px at 30% 50%,color-mix(in srgb,var(--action-config) 22%,transparent),transparent 70%);animation:ren-flicker 6s ease-in-out infinite;animation-play-state:var(--play)"></span></sc-if>
-                        <span style="position:absolute;left:8px;top:50%;transform:translateY(-50%);font-family:var(--font-mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--fg-muted)">ambient: {{ t.ambient }}</span>
-                      </div>
                     </div>
                   </div>
                 </div>
@@ -1345,43 +1299,7 @@ const THEMES = [
     ok:'#22c55e', warn:'#f59e0b', bad:'#ef4444', info:'#38bdf8',
     na:'#bd93f9', nm:'#8be9fd', nt:'#50fa7b', ng:'#ff79c6', nw:'#ffb86c',
     type:'Geist · sentence case', motion:'90/180/320 smooth', snd:'terminal' },
-  { k:'renaissance', n:'Renaissance', fam:'UTOPIAN', w:'illuminated codex', dark:false,
-    bg:'#f3e8c8', pan:'#ead09a', cv:'#e8d4a0', el:'#fbf3dc', inp:'#fbf3dc',
-    fg:'#3a2008', mu:'#5a3c12', fa:'#9a7a44', bd:'#8a5e1c', st:'#6a4410',
-    disp:"'Cinzel',serif", body:"'Cormorant Garamond',serif", mono:"'IM Fell English',serif", monoLabel:'IM Fell',
-    caps:'uppercase', tr:'0.10em', base:'14px', r:[2,3,4,12],
-    run:'hsl(78 63% 25%)', stop:'hsl(2 79% 30%)', save:'hsl(41 65% 51%)', cfg:'hsl(35 71% 44%)', sec:'hsl(211 56% 23%)', tools:'hsl(32 53% 48%)',
-    ok:'hsl(78 63% 25%)', warn:'hsl(35 71% 44%)', bad:'hsl(2 79% 30%)', info:'hsl(211 56% 23%)',
-    na:'#2548c8', nm:'#d4a030', nt:'hsl(78 63% 25%)', ng:'#8a1410', nw:'#f0c850',
-    type:'Cinzel + Cormorant · UPPER .10em', motion:'140/280/520 organic', snd:'parchment' },
-  { k:'greek', n:'Greek', fam:'UTOPIAN', w:'sun-bleached marble agora', dark:false,
-    bg:'#ede5d0', pan:'#f5efde', cv:'#e6dcc2', el:'#faf6e9', inp:'#faf6e9',
-    fg:'#2a2415', mu:'#6a5d3c', fa:'#9a8d6c', bd:'#b8a878', st:'#8a7a50',
-    disp:"'Cinzel',serif", body:"'Cormorant Garamond',serif", mono:"'Courier Prime',monospace", monoLabel:'Courier Prime',
-    caps:'uppercase', tr:'0.18em', base:'14px', r:[0,0,2,2],
-    run:'hsl(71 41% 33%)', stop:'hsl(1 66% 29%)', save:'hsl(41 56% 52%)', cfg:'hsl(41 56% 52%)', sec:'hsl(217 53% 33%)', tools:'hsl(217 53% 33%)',
-    ok:'hsl(71 41% 33%)', warn:'hsl(41 56% 52%)', bad:'hsl(1 66% 29%)', info:'hsl(217 53% 33%)',
-    na:'#284b82', nm:'#c8a040', nt:'#6a7a32', ng:'#7a1a18', nw:'#284b82',
-    type:'Cinzel + Cormorant · UPPER .18em', motion:'120/240/460 smooth', snd:'marble' },
-  { k:'edo', n:'Edo', fam:'UTOPIAN', w:'washi paper + sumi-e ink', dark:false,
-    bg:'#f4ecd8', pan:'#faf3e0', cv:'#ede4ca', el:'#fdf8ea', inp:'#fdf8ea',
-    fg:'#1a1410', mu:'#6a5e48', fa:'#9a8e70', bd:'#c8b890', st:'#a09070',
-    disp:"'Shippori Mincho',serif", body:"'Shippori Mincho',serif", mono:"'JetBrains Mono',monospace", monoLabel:'JetBrains',
-    caps:'none', tr:'0.06em', base:'14px', r:[0,0,0,0],
-    run:'hsl(100 29% 32%)', stop:'hsl(0 71% 41%)', save:'hsl(0 71% 41%)', cfg:'hsl(41 60% 49%)', sec:'hsl(24 25% 8%)', tools:'hsl(100 29% 32%)',
-    ok:'hsl(100 29% 32%)', warn:'hsl(41 60% 49%)', bad:'hsl(0 71% 41%)', info:'hsl(24 25% 8%)',
-    na:'#1a1410', nm:'#b41e1e', nt:'#4a6a3a', ng:'#e89aa8', nw:'#b41e1e',
-    type:'Shippori Mincho · .06em', motion:'90/220/520 organic', snd:'ink' },
-  { k:'steampunk', n:'Steampunk', fam:'UTOPIAN', w:'brass, copper, riveted leather', dark:true,
-    bg:'#2a1f12', pan:'#3a2a18', cv:'#1a1208', el:'#4a3620', inp:'#2a1f12',
-    fg:'#e8d8b0', mu:'#d6c199', fa:'#8a7450', bd:'#6a4a20', st:'#8a6430',
-    disp:"'IM Fell English SC',serif", body:"'IM Fell English',serif", mono:"'Special Elite',monospace", monoLabel:'Special Elite',
-    caps:'uppercase', tr:'0.10em', base:'14px', r:[2,4,8,8],
-    run:'hsl(79 41% 38%)', stop:'hsl(14 68% 32%)', save:'hsl(40 64% 56%)', cfg:'hsl(40 64% 56%)', sec:'hsl(200 39% 47%)', tools:'hsl(18 63% 44%)',
-    ok:'hsl(79 41% 38%)', warn:'hsl(40 64% 56%)', bad:'hsl(14 68% 32%)', info:'hsl(200 39% 47%)',
-    na:'#d8a848', nm:'#b8602a', nt:'hsl(79 41% 38%)', ng:'#8a3a1a', nw:'#d8a848',
-    type:'IM Fell SC · UPPER .10em', motion:'110/240/480 mechanical', snd:'clockwork' },
-  { k:'atomic', n:'Atomic', fam:'UTOPIAN', w:'1962 Eames optimism', dark:false,
+  { k:'atomic', n:'Atomic', fam:'SKIN', w:'1962 Eames optimism', dark:false,
     bg:'#f0e6d2', pan:'#faf2dc', cv:'#e8dcc0', el:'#ffffff', inp:'#ffffff',
     fg:'#2a3a4a', mu:'#4a5867', fa:'#8a9aaa', bd:'#c8b890', st:'#a09880',
     disp:"'Bevan',serif", body:"'Lato',sans-serif", mono:"'Space Mono',monospace", monoLabel:'Space Mono',
@@ -1390,51 +1308,6 @@ const THEMES = [
     ok:'hsl(120 21% 45%)', warn:'hsl(41 67% 53%)', bad:'hsl(14 81% 53%)', info:'hsl(184 46% 43%)',
     na:'#e85a26', nm:'#3a9aa0', nt:'hsl(130 60% 28%)', ng:'#d8a838', nw:'#2a3a4a',
     type:'Bevan + Lato · UPPER .06em', motion:'100/200/380 bouncy', snd:'vibraphone' },
-  { k:'cyber', n:'Cyber', fam:'DYSTOPIAN', w:'Neuromancer night market', dark:true,
-    bg:'#050010', pan:'#0a0420', cv:'#03000a', el:'#15103a', inp:'#0a0420',
-    fg:'#f0e0ff', mu:'#a090c0', fa:'#6a5a90', bd:'#2a1f50', st:'#4a3a80',
-    disp:"'Space Mono','JetBrains Mono',monospace", body:"'JetBrains Mono',monospace", mono:"'JetBrains Mono',monospace", monoLabel:'JetBrains',
-    caps:'uppercase', tr:'0.18em', base:'13px', r:[0,0,0,0],
-    run:'hsl(147 71% 50%)', stop:'hsl(347 100% 56%)', save:'hsl(184 79% 51%)', cfg:'hsl(46 100% 58%)', sec:'hsl(316 92% 54%)', tools:'hsl(316 92% 54%)',
-    ok:'hsl(147 71% 50%)', warn:'hsl(46 100% 58%)', bad:'hsl(347 100% 56%)', info:'hsl(184 79% 51%)',
-    na:'#f51eb6', nm:'#1dd9e5', nt:'#26d97a', ng:'#ffd028', nw:'#f51eb6',
-    type:'Space Mono · UPPER .18em · 13px · display swapped for legibility', motion:'60/120/240 steps() glitch', snd:'terminal' },
-  { k:'wasteland', n:'Wasteland', fam:'DYSTOPIAN', w:'irradiated scrap-metal dust', dark:true,
-    bg:'#2a2018', pan:'#3a2c1c', cv:'#1a1410', el:'#4a3826', inp:'#2a2018',
-    fg:'#e8d8a8', mu:'#e0cba4', fa:'#8a7048', bd:'#6a4a28', st:'#8a6438',
-    disp:"'Special Elite',monospace", body:"'Special Elite',monospace", mono:"'VT323',monospace", monoLabel:'VT323',
-    caps:'uppercase', tr:'0.10em', base:'14px', r:[0,0,0,0],
-    run:'hsl(64 56% 41%)', stop:'hsl(6 75% 41%)', save:'hsl(28 80% 53%)', cfg:'hsl(64 56% 51%)', sec:'hsl(28 80% 53%)', tools:'hsl(64 56% 51%)',
-    ok:'hsl(64 56% 41%)', warn:'hsl(64 56% 51%)', bad:'hsl(6 75% 41%)', info:'hsl(28 80% 53%)',
-    na:'#e88a28', nm:'#c8d038', nt:'#c8d038', ng:'#8a3a18', nw:'#d8c8a0',
-    type:'Special Elite · UPPER .10em', motion:'60/180/320 jittery', snd:'scrap' },
-  { k:'rot', n:'Rot', fam:'DYSTOPIAN', w:'moss-overgrown crypt', dark:true,
-    bg:'#14181a', pan:'#1c2226', cv:'#0a0e10', el:'#242c30', inp:'#1c2226',
-    fg:'#c8d8c0', mu:'#9dae9d', fa:'#56685c', bd:'#2a3a30', st:'#3e5246',
-    disp:"'Pirata One',serif", body:"'EB Garamond',serif", mono:"'JetBrains Mono',monospace", monoLabel:'JetBrains',
-    caps:'none', tr:'0.04em', base:'14px', r:[1,2,4,4],
-    run:'hsl(120 43% 63%)', stop:'hsl(0 49% 44%)', save:'hsl(35 78% 56%)', cfg:'hsl(35 78% 56%)', sec:'hsl(200 36% 53%)', tools:'hsl(120 43% 63%)',
-    ok:'hsl(120 43% 63%)', warn:'hsl(35 78% 56%)', bad:'hsl(0 49% 44%)', info:'hsl(200 36% 53%)',
-    na:'#78c878', nm:'#d8d0b8', nt:'#78c878', ng:'#e8a838', nw:'#e8a838',
-    type:'Pirata One + EB Garamond', motion:'140/320/680 drift', snd:'crypt' },
-  { k:'plague', n:'Plague', fam:'DYSTOPIAN', w:'1349 quarantine broadsheet', dark:false,
-    bg:'#d8d4c0', pan:'#e4dfc8', cv:'#c8c4b0', el:'#efeacf', inp:'#efeacf',
-    fg:'#2a1c14', mu:'#584230', fa:'#9a8470', bd:'#a89478', st:'#7a6450',
-    disp:"'Cinzel',serif", body:"'EB Garamond',serif", mono:"'Special Elite',monospace", monoLabel:'Special Elite',
-    caps:'uppercase', tr:'0.06em', base:'14px', r:[0,0,0,0],
-    run:'hsl(75 47% 30%)', stop:'hsl(14 50% 31%)', save:'hsl(14 50% 31%)', cfg:'hsl(65 49% 44%)', sec:'hsl(213 17% 35%)', tools:'hsl(14 50% 31%)',
-    ok:'hsl(75 47% 30%)', warn:'hsl(65 49% 44%)', bad:'hsl(14 50% 31%)', info:'hsl(213 17% 35%)',
-    na:'#783c28', nm:'#98a838', nt:'#98a838', ng:'#783c28', nw:'#1a1410',
-    type:'Cinzel + EB Garamond · display swapped for legibility', motion:'100/220/460 stiff', snd:'bell' },
-  { k:'surveillance', n:'Surveillance', fam:'DYSTOPIAN', w:'1970s panopticon control room', dark:true,
-    bg:'#1a1c1e', pan:'#232628', cv:'#0a0c0e', el:'#2c3034', inp:'#232628',
-    fg:'#c8ccd0', mu:'#b4b8bc', fa:'#62666a', bd:'#3a3e42', st:'#52565a',
-    disp:"'Anonymous Pro',monospace", body:"'IBM Plex Mono',monospace", mono:"'IBM Plex Mono',monospace", monoLabel:'IBM Plex',
-    caps:'uppercase', tr:'0.10em', base:'13px', r:[0,0,0,0],
-    run:'hsl(120 49% 61%)', stop:'hsl(0 81% 53%)', save:'hsl(120 49% 61%)', cfg:'hsl(41 74% 49%)', sec:'hsl(0 81% 53%)', tools:'hsl(213 51% 56%)',
-    ok:'hsl(120 49% 61%)', warn:'hsl(41 74% 49%)', bad:'hsl(0 81% 53%)', info:'hsl(213 51% 56%)',
-    na:'#6acc6a', nm:'#d8a020', nt:'#6acc6a', ng:'#e82626', nw:'#888c90',
-    type:'Anonymous Pro + IBM Plex · 13px', motion:'60/140/240 linear scan', snd:'telex' },
 ];
 
 /* Motion contract + canvas decoration, per theme.
@@ -1448,122 +1321,22 @@ const MOTION = {
   dark: { d:[90,180,320], ease:'cubic-bezier(0.2,0.7,0.3,1)', style:'smooth',
     curve:'M0,100 C20,30 30,0 100,0', pulse:'node-pulse 1.4s ease-in-out infinite', glow:'#38bdf8',
     grid:'none', gsize:'auto', gop:1 },
-  renaissance: { d:[140,280,520], ease:'cubic-bezier(0.4,0,0.2,1)', style:'organic',
-    curve:'M0,100 C40,100 20,0 100,0', pulse:'ren-pulse-exec 2s ease-in-out infinite', glow:'#2548c8',
-    grid:`url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='80' height='80' viewBox='0 0 80 80'><g fill='none' stroke='%238a5e1c' stroke-width='0.4' opacity='0.35'><path d='M40 22 Q35 32, 30 32 Q26 32, 28 28 Q32 26, 40 28 Q48 26, 52 28 Q54 32, 50 32 Q45 32, 40 22 Z'/><path d='M40 28 L40 40 M36 36 L44 36'/><circle cx='40' cy='42' r='2'/></g></svg>")`, gsize:'auto',
-    stack:`radial-gradient(ellipse at center,transparent 30%,rgba(90,50,18,0.25) 100%)`, ssize:'auto', gop:1,
-    frame:'inset 0 0 0 2px #8a5e1c, inset 0 0 0 6px #d4a030, inset 0 0 0 8px #5a3a14, inset 0 0 60px rgba(90,50,18,0.3)',
-    ambient:'candle flicker 6s' },
-  greek: { d:[120,240,460], ease:'cubic-bezier(0.3,0.7,0.4,1)', style:'smooth',
-    curve:'M0,100 C30,30 40,0 100,0', pulse:'node-pulse 1.4s ease-in-out infinite', glow:'#284b82',
-    grid:`url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='80' height='80'><g fill='none' stroke='%234a3818' stroke-width='0.4' opacity='0.18'><path d='M0 40 H10 V20 H30 V60 H50 V20 H70 V40 H80'/></g></svg>")`, gsize:'auto', gop:1 },
-  edo: { d:[90,220,520], ease:'cubic-bezier(0.4,0,0.2,1)', style:'organic',
-    curve:'M0,100 C40,100 20,0 100,0', pulse:'node-pulse 1.6s ease-in-out infinite', glow:'#b41e1e',
-    grid:`none`, gsize:'auto',
-    stack:`radial-gradient(ellipse 600px 200px at 80% 90%,rgba(26,20,16,0.10),transparent 60%)`, ssize:'auto', gop:1 },
-  steampunk: { d:[110,240,480], ease:'cubic-bezier(0.5,0,0.4,1.1)', style:'mechanical',
-    curve:'M0,100 C50,100 40,-10 100,0', pulse:'node-pulse 1.4s ease-in-out infinite', glow:'#d8a848',
-    grid:`url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='80' height='80'><g fill='%23b88838' opacity='0.10'><circle cx='40' cy='40' r='1.5'/><circle cx='10' cy='10' r='1'/><circle cx='70' cy='70' r='1'/></g></svg>")`, gsize:'auto',
-    stack:`radial-gradient(circle at 20% 20%,var(--node-model) 0%,transparent 1.5%),radial-gradient(circle at 80% 30%,var(--node-model) 0%,transparent 1.5%),radial-gradient(circle at 30% 80%,var(--node-model) 0%,transparent 1.5%),radial-gradient(circle at 90% 90%,var(--node-model) 0%,transparent 1.5%)`, ssize:'auto', gop:1 },
   atomic: { d:[100,200,380], ease:'cubic-bezier(0.34,1.6,0.5,1)', style:'bouncy',
     curve:'M0,100 C34,-60 50,0 100,0', pulse:'node-pulse 1.4s ease-in-out infinite', glow:'#3a9aa0',
     grid:`url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><g stroke='%232a3a4a' stroke-width='0.6' fill='none' opacity='0.18'><path d='M40 80 L120 80 M80 40 L80 120 M50 50 L110 110 M110 50 L50 110'/></g></svg>")`, gsize:'auto',
     stack:`radial-gradient(circle at 12% 15%,var(--node-agent) 0%,transparent 0.8%),radial-gradient(circle at 88% 12%,var(--node-model) 0%,transparent 0.6%),radial-gradient(circle at 18% 88%,var(--node-trigger) 0%,transparent 0.7%),radial-gradient(circle at 82% 90%,var(--node-agent) 0%,transparent 0.5%),radial-gradient(circle at 50% 50%,var(--node-model) 0%,transparent 0.4%)`, ssize:'auto', gop:1 },
-  cyber: { d:[60,120,240], ease:'steps(4,end)', style:'glitch',
-    curve:'M0,100 L25,100 L25,75 L50,75 L50,50 L75,50 L75,25 L100,25 L100,0',
-    pulse:'cyber-pulse-exec 1.6s steps(2) infinite', glow:'#1dd9e5',
-    grid:'repeating-linear-gradient(0deg,transparent 0 23px,rgba(245,30,182,0.10) 23px 24px),repeating-linear-gradient(90deg,transparent 0 23px,rgba(29,217,229,0.10) 23px 24px)', gsize:'auto', gop:1,
-    crt:true, scan:true, ambient:'CRT flicker 5s + scanline 8s',
-    stack:'radial-gradient(ellipse at 50% 100%,rgba(245,30,182,0.25),transparent 60%),linear-gradient(180deg,transparent 0%,transparent 50%,rgba(29,217,229,0.04) 50%,rgba(29,217,229,0.08) 100%),linear-gradient(rgba(245,30,182,0.08) 1px,transparent 1px),linear-gradient(90deg,rgba(29,217,229,0.08) 1px,transparent 1px)',
-    ssize:'auto,auto,24px 24px,24px 24px',
-    floor:'linear-gradient(180deg,transparent,rgba(245,30,182,0.10) 80%),repeating-linear-gradient(180deg,transparent 0 20px,rgba(29,217,229,0.4) 20px 21px)',
-    marquee:'\u25c6 SIGNAL \u25c6 NIGHT_MARKET.7 \u25c6 03:47:22' },
-  wasteland: { d:[60,180,320], ease:'cubic-bezier(0.6,0,0.4,1)', style:'jittery',
-    curve:'M0,100 C60,100 40,0 100,0', pulse:'node-pulse 1.3s ease-in-out infinite', glow:'#c8d038',
-    grid:`url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><g stroke='%23e88a28' stroke-width='0.4' fill='none' opacity='0.10'><path d='M40 10 Q60 60 30 100 Q10 140 50 180 M120 0 Q140 80 100 140 M180 30 Q160 80 190 130'/></g></svg>")`, gsize:'auto', gop:1 },
-  rot: { d:[140,320,680], ease:'cubic-bezier(0.4,0,0.6,1)', style:'drift',
-    curve:'M0,100 C40,100 60,0 100,0', pulse:'node-pulse 2.2s ease-in-out infinite', glow:'#78c878',
-    grid:`url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='80' height='80'><g stroke='%234a6a4a' stroke-width='0.4' fill='none' opacity='0.25'><path d='M0 30 H80 M30 0 V80 M0 60 H80 M60 0 V80'/></g></svg>")`, gsize:'auto',
-    stack:`radial-gradient(circle 200px at 25% 30%,rgba(232,168,56,0.06),transparent 70%),radial-gradient(circle 180px at 78% 65%,rgba(232,168,56,0.05),transparent 70%)`, ssize:'auto', gop:1 },
-  plague: { d:[100,220,460], ease:'cubic-bezier(0.4,0,0.6,1)', style:'stiff',
-    curve:'M0,100 C40,100 60,0 100,0', pulse:'node-pulse 1.6s ease-in-out infinite', glow:'hsl(14 50% 31%)',
-    grid:`url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><g stroke='%23783c28' stroke-width='1.6' fill='none' opacity='0.10' stroke-linecap='square'><path d='M40 40 L60 60 M60 40 L40 60'/><path d='M180 80 L200 100 M200 80 L180 100'/><path d='M80 180 L100 200 M100 180 L80 200'/></g></svg>")`, gsize:'auto', gop:1 },
-  surveillance: { d:[60,140,240], ease:'linear', style:'scanline',
-    curve:'M0,100 L100,0', pulse:'surv-pulse-exec 1s steps(2) infinite', glow:'hsl(0 81% 53%)',
-    grid:`url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='1920' height='1080'><g stroke='%23e82626' stroke-width='1' fill='none' opacity='0.18'><path d='M40 40 H120 M40 40 V120 M1880 40 H1800 M1880 40 V120 M40 1040 H120 M40 1040 V960 M1880 1040 H1800 M1880 1040 V960'/><circle cx='960' cy='540' r='40' opacity='0.2'/><path d='M960 480 V600 M900 540 H1020' opacity='0.25'/></g></svg>"),repeating-linear-gradient(0deg,transparent 0 3px,rgba(106,204,106,0.04) 3px 4px),url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='40' height='40'><g stroke='%23888c90' stroke-width='0.4' fill='none' opacity='0.12'><path d='M0 20 H40 M20 0 V40'/></g></svg>")`, gsize:'100% 100%,auto,auto', gop:1,
-    scan:true, ambient:'REC blink + scanline' },
 };
 
 
 /* THEMED_GLYPHS subset — verbatim inner markup from
  * client/src/assets/icons/themedGlyphs.ts (six of the 29 IconKeys the panels
- * use). Renaissance keeps its heraldic cartouche wrap; Cyber keeps its neon
- * drop-shadow wrap and currentColor fills. Themes with no entry fall through
- * to the neutral lucide set, exactly as <NodeIcon> does. */
+ * use); Atomic is the only theme with a set. Themes with no entry fall
+ * through to the neutral lucide set, exactly as <NodeIcon> does. */
 const SVG_OPEN = '<svg viewBox="0 0 32 32" fill="none" width="100%" height="100%">';
-const SVG_OPEN_CYBER = '<svg viewBox="0 0 32 32" fill="none" width="100%" height="100%" style="filter:drop-shadow(0 0 3px currentColor)">';
-const CARTOUCHE = '<path d="M4 4 H28 V22 Q28 28, 16 30 Q4 28, 4 22 Z" fill="#fbf3dc" stroke="#5a3a14" stroke-width="1.5"/><path d="M5 5 H27 V22 Q27 27, 16 29 Q5 27, 5 22 Z" fill="none" stroke="#d4a030" stroke-width="0.8"/>';
 const w = (i) => SVG_OPEN + i + '</svg>';
-const wC = (i) => SVG_OPEN_CYBER + i + '</svg>';
-const wR = (i) => SVG_OPEN + CARTOUCHE + i + '</svg>';
 const LU = (i) => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="100%" height="100%">' + i + '</svg>';
 
 const GLYPHS = {
-  renaissance: {
-    send: wR('<g stroke="#5a3a14" stroke-width="1.4" fill="#d4a030"><path d="M9 22 L24 14 L11 13 L13 17 L9 22 Z"/></g>'),
-    tool: wR('<g stroke="#5a3a14" stroke-width="1.4" fill="#d4a030"><path d="M10 22 L18 14 M22 12 L24 14 M22 12 L20 10 M22 12 Q26 8, 20 8 L18 10 Z"/><circle cx="11" cy="22" r="1.5" fill="#5a3a14"/></g>'),
-    trigger: wR('<g stroke="#5a3a14" stroke-width="1.4" fill="#d4a030"><path d="M16 8 L12 18 L16 18 L14 24 L20 14 L16 14 Z"/></g>'),
-    agent: wR('<g stroke="#5a3a14" stroke-width="1.4" fill="#d4a030" stroke-linejoin="round"><circle cx="16" cy="13" r="4"/><path d="M9 22 Q16 17, 23 22 L23 25 Q16 27, 9 25 Z"/><path d="M14 12 L13 9 M18 12 L19 9" stroke-width="1"/></g>'),
-    folder: wR('<g stroke="#5a3a14" stroke-width="1.4" fill="#d4a030"><path d="M9 12 L13 12 L15 14 L23 14 L23 23 L9 23 Z"/></g>'),
-    search: wR('<g stroke="#5a3a14" stroke-width="1.4" fill="none"><circle cx="14" cy="14" r="4"/><path d="M17 17 L22 22"/></g>'),
-    settings: wR('<g stroke="#5a3a14" stroke-width="1.4" fill="#d4a030"><circle cx="16" cy="16" r="3"/><path d="M16 9 L16 12 M16 20 L16 23 M9 16 L12 16 M20 16 L23 16 M11 11 L13 13 M19 19 L21 21 M11 21 L13 19 M19 13 L21 11"/></g>'),
-    credentials: wR('<g stroke="#5a3a14" stroke-width="1.4" fill="#d4a030"><circle cx="14" cy="16" r="4"/><path d="M18 16 L24 16 L24 18 M22 16 L22 19"/></g>'),
-    memory: wR('<g stroke="#5a3a14" stroke-width="1.4" fill="#fbf3dc"><rect x="9" y="10" width="14" height="14"/><path d="M9 14 L23 14 M9 18 L23 18 M13 10 L13 24 M19 10 L19 24" stroke-width="0.8"/></g>'),
-  },
-  cyber: {
-    send: wC('<g stroke="currentColor" stroke-width="1.2" fill="none"><path d="M5 16 L27 6 L20 27 L17 18 L8 16 Z" fill="currentColor" fill-opacity="0.2"/></g>'),
-    tool: wC('<g stroke="currentColor" stroke-width="1.2" fill="none"><rect x="6" y="14" width="20" height="4"/><path d="M10 14 L10 12 L14 12 L14 14 M18 18 L18 20 L22 20 L22 18"/></g>'),
-    trigger: wC('<g stroke="currentColor" stroke-width="1.2" fill="none"><path d="M16 4 L11 16 L16 16 L13 28 L21 14 L16 14 Z" fill="currentColor" fill-opacity="0.3"/></g>'),
-    agent: wC('<g stroke="currentColor" stroke-width="1.2" fill="none"><rect x="9" y="6" width="14" height="20"/><rect x="12" y="11" width="2" height="2" fill="currentColor"/><rect x="18" y="11" width="2" height="2" fill="currentColor"/><path d="M12 18 L20 18 M14 22 L18 22"/><path d="M16 6 L16 4 M16 26 L16 28" stroke-dasharray="1 1"/></g>'),
-    folder: wC('<g stroke="currentColor" stroke-width="1.2" fill="none"><path d="M5 10 L13 10 L15 12 L27 12 L27 24 L5 24 Z"/></g>'),
-    search: wC('<g stroke="currentColor" stroke-width="1.4" fill="none"><circle cx="14" cy="14" r="6"/><path d="M19 19 L26 26"/></g>'),
-    settings: wC('<g stroke="currentColor" stroke-width="1.2" fill="none"><circle cx="16" cy="16" r="3"/><circle cx="16" cy="16" r="8"/><path d="M16 4 L16 8 M16 24 L16 28 M4 16 L8 16 M24 16 L28 16"/></g>'),
-    credentials: wC('<g stroke="currentColor" stroke-width="1.2" fill="none"><circle cx="12" cy="16" r="4"/><path d="M16 16 L28 16 L28 19 M24 16 L24 20 M20 16 L20 18"/></g>'),
-    memory: wC('<g stroke="currentColor" stroke-width="1.2" fill="none"><rect x="7" y="9" width="18" height="14"/><path d="M7 13 L25 13 M7 17 L25 17 M7 21 L25 21 M11 9 L11 23 M16 9 L16 23 M21 9 L21 23"/></g>'),
-  },
-  greek: {
-    send: w('<g stroke="#284b82" stroke-width="1.4" fill="#c8a040"><path d="M5 27 L27 5 L19 13 L13 11 L11 19 L5 27 Z"/></g>'),
-    tool: w('<g stroke="#284b82" stroke-width="1.4" fill="none"><path d="M6 22 L18 10 M22 6 L26 10 M24 8 Q28 4, 22 4 L18 8 Z" fill="#c8a040"/><circle cx="7" cy="22" r="1.5" fill="#284b82"/></g>'),
-    trigger: w('<g stroke="#284b82" stroke-width="1.4" fill="#c8a040"><path d="M16 5 L8 17 L14 17 L12 27 L24 13 L18 13 L20 5 Z"/></g>'),
-    agent: w('<g stroke="#284b82" stroke-width="1.4" fill="#284b82"><circle cx="16" cy="11" r="3.5" fill="none"/><path d="M9 23 Q9 17, 16 17 Q23 17, 23 23 Z" fill="none"/><path d="M14 9 L13 7 L19 7 L18 9" stroke-width="1"/></g>'),
-    folder: w('<g stroke="#284b82" stroke-width="1.4" fill="#c8a040"><path d="M5 10 L13 10 L15 12 L27 12 L27 24 L5 24 Z"/><path d="M5 14 L27 14"/></g>'),
-    search: w('<g stroke="#284b82" stroke-width="1.6" fill="none"><circle cx="13" cy="13" r="6"/><path d="M18 18 L26 26"/></g>'),
-    settings: w('<g stroke="#284b82" stroke-width="1.4" fill="none"><circle cx="16" cy="16" r="3"/><circle cx="16" cy="16" r="8"/><path d="M16 4 L16 8 M16 24 L16 28 M4 16 L8 16 M24 16 L28 16 M8 8 L11 11 M21 21 L24 24 M8 24 L11 21 M21 11 L24 8"/></g>'),
-    credentials: w('<g stroke="#284b82" stroke-width="1.4" fill="#c8a040"><circle cx="12" cy="16" r="4" fill="none"/><path d="M16 16 L28 16 L28 19 M24 16 L24 20 M20 16 L20 18"/></g>'),
-    memory: w('<g stroke="#284b82" stroke-width="1.4" fill="none"><rect x="6" y="8" width="20" height="16"/><path d="M6 13 L26 13 M6 18 L26 18 M11 8 L11 24 M21 8 L21 24"/></g>'),
-  },
-  edo: {
-    send: w('<g stroke="#1a1410" stroke-width="1.6" fill="#b41e1e" stroke-linejoin="round"><path d="M5 27 L27 5 L17 13 L13 11 L13 17 L5 27 Z"/></g>'),
-    tool: w('<g stroke="#1a1410" stroke-width="1.8" fill="none" stroke-linecap="round"><path d="M6 24 L20 10 M22 8 L24 10 M22 8 Q26 4, 22 4 L20 6"/></g>'),
-    trigger: w('<g stroke="#1a1410" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M17 4 L10 17 L15 17 L13 28 L22 14 L17 14 Z" fill="#b41e1e" fill-opacity="0.15"/></g>'),
-    agent: w('<g stroke="#1a1410" stroke-width="1.6" fill="none" stroke-linecap="round"><circle cx="16" cy="11" r="3.5"/><path d="M9 24 Q9 18, 16 18 Q23 18, 23 24"/></g>'),
-    folder: w('<g stroke="#1a1410" stroke-width="1.6" fill="none"><path d="M5 11 L13 11 L15 13 L27 13 L27 24 L5 24 Z"/></g>'),
-    search: w('<g stroke="#1a1410" stroke-width="1.6" fill="none" stroke-linecap="round"><circle cx="13" cy="13" r="6"/><path d="M18 18 L25 25"/></g>'),
-    settings: w('<g stroke="#1a1410" stroke-width="1.6" fill="none"><circle cx="16" cy="16" r="3"/><path d="M16 5 L16 9 M16 23 L16 27 M5 16 L9 16 M23 16 L27 16 M8 8 L11 11 M21 21 L24 24 M8 24 L11 21 M21 11 L24 8"/></g>'),
-    credentials: w('<g stroke="#1a1410" stroke-width="1.6" fill="none"><circle cx="12" cy="16" r="4"/><path d="M16 16 L27 16 L27 19 M24 16 L24 20 M20 16 L20 18"/></g>'),
-    memory: w('<g stroke="#1a1410" stroke-width="1.6" fill="none"><rect x="6" y="9" width="20" height="14"/><path d="M6 13 L26 13 M6 18 L26 18 M13 9 L13 23 M19 9 L19 23"/></g>'),
-  },
-  steampunk: {
-    send: w('<g stroke="#4a2818" stroke-width="1.3" fill="#d8a848"><path d="M5 27 L27 5 L19 13 L13 11 L13 19 L5 27 Z"/></g>'),
-    tool: w('<g stroke="#4a2818" stroke-width="1.3" fill="#d8a848"><circle cx="16" cy="16" r="6"/><path d="M16 8 L16 12 M16 20 L16 24 M8 16 L12 16 M20 16 L24 16 M11 11 L13 13 M19 19 L21 21 M11 21 L13 19 M19 13 L21 11"/><circle cx="16" cy="16" r="2" fill="#b8602a"/></g>'),
-    trigger: w('<g stroke="#4a2818" stroke-width="1.3" fill="#d8a848"><circle cx="16" cy="16" r="9"/><path d="M16 8 L16 16 L20 19" stroke-width="1.6"/><circle cx="16" cy="16" r="1.5" fill="#4a2818"/></g>'),
-    agent: w('<g stroke="#4a2818" stroke-width="1.3" fill="#d8a848"><circle cx="16" cy="11" r="3.5"/><path d="M9 24 Q9 18, 16 18 Q23 18, 23 24 Z"/><circle cx="16" cy="11" r="1" fill="#4a2818"/></g>'),
-    folder: w('<g stroke="#4a2818" stroke-width="1.3" fill="#b8602a"><path d="M5 11 L13 11 L15 13 L27 13 L27 24 L5 24 Z"/><circle cx="7" cy="22" r="0.8" fill="#4a2818"/><circle cx="25" cy="22" r="0.8" fill="#4a2818"/></g>'),
-    search: w('<g stroke="#4a2818" stroke-width="1.5" fill="none"><circle cx="13" cy="13" r="6"/><path d="M18 18 L25 25" stroke-width="2"/></g>'),
-    settings: w('<g stroke="#4a2818" stroke-width="1.3" fill="#d8a848"><path d="M16 4 L18 8 L22 6 L22 11 L26 13 L24 16 L26 19 L22 21 L22 26 L18 24 L16 28 L14 24 L10 26 L10 21 L6 19 L8 16 L6 13 L10 11 L10 6 L14 8 Z"/><circle cx="16" cy="16" r="3" fill="#b8602a"/></g>'),
-    credentials: w('<g stroke="#4a2818" stroke-width="1.3" fill="#d8a848"><circle cx="12" cy="16" r="4"/><circle cx="12" cy="16" r="1.5" fill="#4a2818"/><path d="M16 16 L27 16 L27 20 M23 16 L23 20 M19 16 L19 18"/></g>'),
-    memory: w('<g stroke="#4a2818" stroke-width="1.3" fill="#b8602a"><rect x="6" y="9" width="20" height="14"/><path d="M6 14 L26 14 M6 19 L26 19" stroke="#d8a848"/><circle cx="9" cy="11" r="0.8" fill="#4a2818"/><circle cx="23" cy="11" r="0.8" fill="#4a2818"/><circle cx="9" cy="21" r="0.8" fill="#4a2818"/><circle cx="23" cy="21" r="0.8" fill="#4a2818"/></g>'),
-  },
   atomic: {
     send: w('<g stroke="#2a3a4a" stroke-width="2" fill="#e85a26" stroke-linejoin="round"><path d="M4 28 L28 4 L18 14 L12 11 L11 19 Z"/></g>'),
     tool: w('<g stroke="#2a3a4a" stroke-width="2" fill="#3a9aa0" stroke-linejoin="round"><path d="M5 25 L18 12 M22 8 L26 12 M22 8 Q28 2, 22 4 L18 8 Z"/></g>'),
@@ -1575,32 +1348,10 @@ const GLYPHS = {
     credentials: w('<g stroke="#2a3a4a" stroke-width="2" fill="#d8a838"><circle cx="12" cy="16" r="4"/><path d="M16 16 L28 16 L28 20 M23 16 L23 21 M19 16 L19 19"/></g>'),
     memory: w('<g stroke="#2a3a4a" stroke-width="2" fill="#3a9aa0"><rect x="5" y="9" width="22" height="14" rx="3"/><path d="M5 14 L27 14 M5 19 L27 19" stroke="#2a3a4a"/></g>'),
   },
-  wasteland: {
-    send: w('<g stroke="#e88a28" stroke-width="2" fill="#e88a28" fill-opacity="0.3" stroke-linejoin="round"><path d="M5 27 L27 5 L19 13 L13 11 L13 19 L5 27 Z"/></g>'),
-    tool: w('<g stroke="#e88a28" stroke-width="2" fill="none" stroke-linejoin="round"><path d="M5 25 L17 13 M19 11 L21 13 M19 11 Q25 5, 21 7 L17 11 Z"/><path d="M5 25 L7 27"/></g>'),
-    trigger: w('<g stroke="#c8d038" stroke-width="2" fill="#c8d038" fill-opacity="0.3" stroke-linejoin="round"><path d="M16 4 L9 18 L15 18 L12 28 L23 13 L17 13 L19 4 Z"/></g>'),
-    agent: w('<g stroke="#e88a28" stroke-width="2" fill="none" stroke-linejoin="round"><path d="M12 7 L20 7 L20 14 L23 14 L23 24 L9 24 L9 14 L12 14 Z"/><rect x="13" y="10" width="2" height="2" fill="#e88a28"/><rect x="17" y="10" width="2" height="2" fill="#e88a28"/></g>'),
-    folder: w('<g stroke="#e88a28" stroke-width="2" fill="none" stroke-linejoin="round"><path d="M5 11 L13 11 L15 13 L27 13 L27 24 L5 24 Z"/></g>'),
-    search: w('<g stroke="#e88a28" stroke-width="2" fill="none" stroke-linecap="square"><circle cx="13" cy="13" r="6"/><path d="M18 18 L25 25"/></g>'),
-    settings: w('<g stroke="#e88a28" stroke-width="2" fill="none"><circle cx="16" cy="16" r="3"/><path d="M16 4 L16 9 M16 23 L16 28 M4 16 L9 16 M23 16 L28 16 M8 8 L11 11 M21 21 L24 24 M8 24 L11 21 M21 11 L24 8"/></g>'),
-    credentials: w('<g stroke="#e88a28" stroke-width="2" fill="none"><circle cx="12" cy="16" r="4"/><path d="M16 16 L27 16 L27 20 M23 16 L23 20"/></g>'),
-    memory: w('<g stroke="#e88a28" stroke-width="2" fill="none"><rect x="6" y="9" width="20" height="14"/><path d="M6 13 L26 13 M6 18 L26 18 M11 9 L11 23 M21 9 L21 23"/></g>'),
-  },
-  rot: {
-    send: w('<g stroke="#d8d0b8" stroke-width="1.4" fill="#78c878" fill-opacity="0.2" stroke-linejoin="round"><path d="M5 27 L27 5 L19 13 L13 11 L13 19 L5 27 Z"/></g>'),
-    tool: w('<g stroke="#d8d0b8" stroke-width="1.4" fill="none"><path d="M6 25 L18 13 M22 9 L24 11 M22 9 Q26 5, 22 5 L18 9 Z" fill="#78c878" fill-opacity="0.3"/></g>'),
-    trigger: w('<g stroke="#78c878" stroke-width="1.6" fill="none" stroke-linecap="round"><path d="M16 5 L11 17 L16 17 L13 27 L21 14 L16 14 Z" fill="#78c878" fill-opacity="0.2"/></g>'),
-    agent: w('<g stroke="#d8d0b8" stroke-width="1.4" fill="none"><circle cx="16" cy="11" r="3.5"/><path d="M9 24 Q9 18, 16 18 Q23 18, 23 24"/><path d="M14 13 L14 16 M18 13 L18 16" stroke="#78c878" stroke-width="0.8"/></g>'),
-    folder: w('<g stroke="#d8d0b8" stroke-width="1.4" fill="none"><path d="M5 11 L13 11 L15 13 L27 13 L27 24 L5 24 Z"/></g>'),
-    search: w('<g stroke="#d8d0b8" stroke-width="1.4" fill="none"><circle cx="13" cy="13" r="6"/><path d="M18 18 L25 25"/></g>'),
-    settings: w('<g stroke="#d8d0b8" stroke-width="1.4" fill="none"><circle cx="16" cy="16" r="3"/><path d="M16 4 L16 9 M16 23 L16 28 M4 16 L9 16 M23 16 L28 16 M8 8 L11 11 M21 21 L24 24 M8 24 L11 21 M21 11 L24 8"/></g>'),
-    credentials: w('<g stroke="#d8d0b8" stroke-width="1.4" fill="none"><circle cx="12" cy="16" r="4"/><path d="M16 16 L27 16 L27 20 M23 16 L23 20"/></g>'),
-    memory: w('<g stroke="#d8d0b8" stroke-width="1.4" fill="none"><rect x="6" y="9" width="20" height="14"/><path d="M6 13 L26 13 M6 18 L26 18 M11 9 L11 23 M21 9 L21 23"/></g>'),
-  },
 };
 
-/* Neutral lucide fallback — light, dark, plague and surveillance declare no
- * THEMED_GLYPHS entries, so <NodeIcon> resolves them through lucide. */
+/* Neutral lucide fallback — light and dark declare no THEMED_GLYPHS
+ * entries, so <NodeIcon> resolves them through lucide. */
 const LUCIDE = {
   folder: LU('<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>'),
   search: LU('<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>'),
@@ -1621,10 +1372,6 @@ const glyph = (themeKey, key, size) => {
     dangerouslySetInnerHTML: { __html: svg },
   });
 };
-
-// Mid-luminance dark grounds: their --fg-default is a mid cream/sage, so the
-// accent has to be pulled much further toward it than on a true near-black.
-const ACCENT_MIX = { renaissance: '26%', steampunk: '28%', wasteland: '24%', rot: '32%', surveillance: '26%' };
 
 const PALETTE = [
   { id:'ai', label:'AI', icon:'🤖', role:'na', items:[
@@ -1660,7 +1407,7 @@ const PANELS = [
 
 class Component extends DCLogic {
   state = {
-    fam: 'ALL', zoom: 1, query: '', tab: 'console',
+    zoom: 1, query: '', tab: 'console',
     sw: { sidebar: true, palette: true, skill: true },
     temp: 70, ratio: 80, ran: false,
     wf: 'w2', task: 't1', view: 'grid',
@@ -1679,7 +1426,7 @@ class Component extends DCLogic {
       '--bg-hover': t.dark ? 'rgba(255,255,255,.05)' : 'rgba(0,0,0,.04)',
       '--bg-active': t.dark ? 'rgba(255,255,255,.08)' : 'rgba(0,0,0,.06)',
       '--fg-default': t.fg, '--fg-muted': t.mu, '--fg-faint': t.fa,
-      '--accent-text-mix': ACCENT_MIX[t.k] || (t.dark ? '65%' : '34%'),
+      '--accent-text-mix': t.dark ? '65%' : '34%',
       '--border-default': t.bd, '--border-strong': t.st,
       '--font-display': t.disp, '--font-body': t.body, '--font-mono': t.mono,
       '--type-uppercase': t.caps, '--type-tracking-display': t.tr,
@@ -1710,8 +1457,7 @@ class Component extends DCLogic {
 
   renderVals() {
     const s = this.state;
-    const fam = s.fam;
-    const themes = THEMES.filter((t) => fam === 'ALL' || t.fam === fam).map((t) => {
+    const themes = THEMES.map((t) => {
       const m = MOTION[t.k];
       return {
         key: t.k, name: t.n, fam: t.fam, world: t.w, upper: t.n.toUpperCase(),
@@ -1726,12 +1472,6 @@ class Component extends DCLogic {
         dots: { position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 0,
           backgroundImage: 'radial-gradient(color-mix(in srgb,var(--fg-muted) 30%,transparent) 1px,transparent 1px)',
           backgroundSize: '20px 20px' },
-        floor: { position: 'absolute', left: 0, right: 0, bottom: 0, height: '50%',
-          pointerEvents: 'none', zIndex: 0, opacity: 0.4,
-          transform: 'perspective(300px) rotateX(60deg)', transformOrigin: 'bottom',
-          backgroundImage: m.floor },
-        hasFloor: !!m.floor, marquee: m.marquee || '', hasMarquee: !!m.marquee,
-        isRen: t.k === 'renaissance',
         pulseAnim: m.pulse, glow: m.glow,
         pulseAnimSq: m.pulse.replace(/ [\d.]+s /, ' 1.5s '),
         themedIcons: !!GLYPHS[t.k],
@@ -1750,8 +1490,6 @@ class Component extends DCLogic {
         mStyle: m.style, ease: m.ease, curve: m.curve,
         durF: m.d[0] + 'ms', durD: m.d[1] + 'ms', durS: m.d[2] + 'ms',
         pulseName: m.pulse.split(' ')[0] + ' · ' + m.pulse.split(' ')[1],
-        hasScan: !!m.scan, hasCrt: !!m.crt,
-        ambient: m.ambient || '—',
         slideAnim: 'ocslide ' + (m.d[2] * 2.4) + 'ms ' + m.ease + ' infinite alternate',
       };
     });
@@ -1784,12 +1522,6 @@ class Component extends DCLogic {
       zoomLabel: Math.round(s.zoom * 100) + '%',
       zoomIn: () => this.setState({ zoom: Math.min(1.2, +(s.zoom + 0.1).toFixed(2)) }),
       zoomOut: () => this.setState({ zoom: Math.max(0.4, +(s.zoom - 0.1).toFixed(2)) }),
-      famIs: { all: fam === 'ALL', base: fam === 'BASE', uto: fam === 'UTOPIAN', dys: fam === 'DYSTOPIAN' },
-      famNot: { all: fam !== 'ALL', base: fam !== 'BASE', uto: fam !== 'UTOPIAN', dys: fam !== 'DYSTOPIAN' },
-      setAll: () => this.setState({ fam: 'ALL' }),
-      setBase: () => this.setState({ fam: 'BASE' }),
-      setUto: () => this.setState({ fam: 'UTOPIAN' }),
-      setDys: () => this.setState({ fam: 'DYSTOPIAN' }),
       query: s.query,
       onQuery: (e) => this.setState({ query: e.target.value }),
       tab: { chat: s.tab === 'chat', console: s.tab === 'console', term: s.tab === 'terminal' },

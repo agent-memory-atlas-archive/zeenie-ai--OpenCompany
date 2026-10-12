@@ -1,6 +1,6 @@
 # OpenCompany animation system
 
-Motion is a **first-class part of each theme's identity**, not a global constant. Every theme declares the same six-token motion contract; the personality lives in the **easing function**, not just duration. Live demo: `guidelines/animations-all-themes.html`. Tokens + keyframes: `tokens/animations.css`.
+Motion is a **first-class part of each theme's identity**, not a global constant. Every theme declares the same six-token motion contract; the personality lives in the **easing function**, not just duration. Tokens + keyframes: `tokens/animations.css`.
 
 ## The contract (per theme)
 
@@ -9,38 +9,26 @@ Motion is a **first-class part of each theme's identity**, not a global constant
 | `--dur-fast / -default / -slow` | interaction / transition / panel timings |
 | `--ease-default` | the curve every transition uses — carries the personality |
 | `--ease-emphasis` | entrances, springy moments |
-| `--motion-style` | a name (smooth, organic, mechanical, bouncy, glitch, jittery, drift, stiff, scanline) |
+| `--motion-style` | a name (smooth for light and dark, bouncy for Atomic) |
 | `--pulse-keyframe / -duration / -timing` | which executing-node pulse this theme uses |
 | `--node-pulse-color` | the glow color — **theme-chosen for contrast**, never the node's own role color |
 
-## All 12 themes
+## All three themes
 
 | Theme | fast/def/slow | ease-default | motion-style | exec pulse | ambient |
 |---|---|---|---|---|---|
 | Light | 90/180/320 | cubic(.2,.7,.3,1) | smooth | node-pulse 1.4s ease-in-out | — |
 | Dark | 90/180/320 | cubic(.2,.7,.3,1) | smooth | node-pulse 1.4s | — |
-| Renaissance | 140/280/520 | cubic(.4,0,.2,1) | organic | ren-pulse-exec 2.0s (candle flame) | candle flicker 6s |
-| Greek | 120/240/460 | cubic(.3,.7,.4,1) | smooth | node-pulse 1.4s | — |
-| Edo | 90/220/520 | cubic(.4,0,.2,1) | organic | node-pulse 1.6s | — |
-| Steampunk | 110/240/480 | cubic(.5,0,.4,1.1) | mechanical | node-pulse 1.4s | — |
 | Atomic | 100/200/380 | **cubic(.34,1.6,.5,1)** | bouncy (1.6 overshoot) | node-pulse 1.4s | — |
-| Cyber | 60/120/240 | **steps(4,end)** | glitch | cyber-pulse-exec 1.6s steps(2) | CRT flicker 5s + rolling scanline 8s + hover glitch |
-| Wasteland | 60/180/320 | cubic(.6,0,.4,1) | jittery | node-pulse 1.3s | — |
-| Rot | 140/320/**680** | cubic(.4,0,.6,1) | drift (slowest) | node-pulse 2.2s | — |
-| Plague | 100/220/460 | cubic(.4,0,.6,1) | stiff | node-pulse 1.6s | — |
-| Surveillance | 60/140/240 | **linear** | scanline | surv-pulse-exec 1.0s steps(2) | REC-LED blink + scanline |
 
 ## Signature keyframes (`tokens/animations.css`)
 
-- **`node-pulse`** — default 3-layer glow (ring + mid halo + atmospheric halo) scaling out/in. Used by 8 themes.
-- **`ren-pulse-exec`** — candle-flame: never fully dark, gentle ease-in-out swell (Renaissance).
-- **`cyber-pulse-exec` / `cyber-flicker` / `cyber-roll` / `cyber-blink` / `cyber-glitch`** — hard digital strobe via `steps(2)`, whole-frame CRT flicker, rolling scanline band, LED blink, hover text-shear (Cyber).
-- **`surv-pulse-exec` / `surv-blink`** — REC-red glow strobe + status-LED blink (Surveillance).
+- **`node-pulse`** — default 3-layer glow (ring + mid halo + atmospheric halo) scaling out/in. Used by every theme.
 - **`opencompany-pip-blink`** — generic status-pip blink. **`opencompany-spin`** — spinner.
 
 ## Interaction motion (all themes)
 
-- **Hover:** background tint shift; cards/nodes lift `-1` to `-2px` and gain shadow. Cyber replaces lift with a glitch shear.
+- **Hover:** background tint shift; cards/nodes lift `-1` to `-2px` and gain shadow.
 - **Press:** `translateY(1px)`.
 - **Disabled:** `opacity .5`, no transition.
 - **Entrances:** slide/fade gated on `[data-deck-active]`-style activation and `--ease-emphasis`; base state is the visible end-state so reduced-motion / print show content, never the pre-animation frame.
@@ -48,9 +36,8 @@ Motion is a **first-class part of each theme's identity**, not a global constant
 ## Usage
 
 ```html
-<html data-theme="cyber">           <!-- picks the whole motion contract -->
+<html data-theme="atomic">          <!-- picks the whole motion contract -->
 <div class="opencompany-pulse node">…</div>  <!-- executing node: reads --pulse-keyframe + color -->
-<div class="opencompany-crt opencompany-scanline">…</div>  <!-- app frame ambient (cyber/surveillance) -->
 ```
 
 Set `--node-pulse-color` on (or above) the pulsing element. `.opencompany-pulse` automatically uses the active theme's keyframe, duration and timing. All loops stop under `prefers-reduced-motion: reduce`.
@@ -71,11 +58,11 @@ Triggers (`whatsappReceive`, `cronScheduler`, `webhookTrigger`, `start`) animate
 
 ## Glow color & visibility
 
-The glow is **never the node's own faint role tint** — it uses `--node-pulse-color` (or the component's `pulseColor`), a saturated accent the theme picks **for contrast against its own canvas**: lapis on Renaissance vellum, neon cyan on Cyber's near-black void, REC-red on Surveillance grey, deep teal on Atomic cream. This keeps both the execution pulse and the trigger listening glow legible on light and dark themes alike. When adding a theme, choose its `--node-pulse-color` against the background, not to match the node.
+The glow is **never the node's own faint role tint** — it uses `--node-pulse-color` (or the component's `pulseColor`), a saturated accent the theme picks **for contrast against its own canvas**: turquoise on Atomic's cream, the info blue on light and dark. This keeps both the execution pulse and the trigger listening glow legible on light and dark themes alike. When adding a theme, choose its `--node-pulse-color` against the background, not to match the node.
 
 ## Rules
 
 1. **Drive transitions from `var(--ease-default)` / `var(--dur-*)`** — never hardcode timing, so a theme swap restyles motion for free.
 2. **Loops only for live processes** (executing pulse, connection LED). No decorative perpetual motion on idle content.
-3. **The pulse color is the theme's, not the node's** — guarantees contrast on every canvas (lapis on vellum, cyan on void, REC-red on grey).
+3. **The pulse color is the theme's, not the node's** — guarantees contrast on every canvas (turquoise on Atomic's cream).
 4. **Always provide the static end-state** so print, PDF export and reduced-motion render meaningfully.
