@@ -10,10 +10,12 @@
  * Leaving every stage keeps the engine for the next one; the app disposes
  * it (App.tsx).
  *
- * Slots show the static mark instead when the orb cannot run. No WebGL,
- * reduced motion and a lost WebGL context hold for the session; an engine
- * chunk that failed to load shows the mark until the next stage mounts,
- * which tries again.
+ * Slots show the static mark instead when the orb cannot run. No WebGL and
+ * reduced motion hold for the session. While the browser has taken the
+ * WebGL context away (after sleep, or a GPU switch), the mark shows until it
+ * hands the context back, and the same engine carries on. An engine chunk
+ * that failed to load shows the mark until the next stage mounts, which
+ * tries again.
  */
 
 import { useSyncExternalStore } from 'react';
@@ -75,7 +77,10 @@ interface OrbEngine {
   dispose(): void;
 }
 
-type Fallback = 'none' | 'missing' | 'latched';
+/** Why slots show the mark: the engine's chunk did not load (`missing`),
+ *  the orb cannot run here (`latched`), or the browser has the WebGL
+ *  context for now (`lost`). */
+type Fallback = 'none' | 'missing' | 'latched' | 'lost';
 
 let engine: OrbEngine | null = null;
 let loading = false;
@@ -126,11 +131,7 @@ function show(): void {
   import('./orbEngine')
     .then(({ createOrbEngine }) => {
       loading = false;
-      engine = createOrbEngine(() => {
-        engine?.dispose();
-        engine = null;
-        setFallback('latched');
-      });
+      engine = createOrbEngine((lost) => setFallback(lost ? 'lost' : 'none'));
       setFallback('none');
       show();
     })

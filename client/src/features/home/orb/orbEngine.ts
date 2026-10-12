@@ -20,6 +20,12 @@
  * leaves a 1x1 buffer. Frames stop while the page is hidden or the window
  * is blurred (lib/pageActivity).
  *
+ * The browser can take the WebGL context away (after sleep, or when a
+ * laptop switches GPU) and hand it back. The engine asks for it back and
+ * says when it goes and returns (`onContextChange`); meanwhile three draws
+ * nothing, and it rebuilds the scene's GPU resources once the context is
+ * back.
+ *
  * Changes from the prototype's three r149 for current three:
  * - colour management off and sRGB output, so colours read as authored;
  * - lights are physically based now: intensities x PI, and the point
@@ -140,18 +146,21 @@ function crescentGeometry(headAngle: number): BufferGeometry {
   return geometry;
 }
 
-export function createOrbEngine(onLost: () => void) {
+export function createOrbEngine(onContextChange: (lost: boolean) => void) {
   const R = new WebGLRenderer({ antialias: true, alpha: true });
   R.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   R.outputColorSpace = SRGBColorSpace;
   R.toneMapping = ACESFilmicToneMapping;
   R.toneMappingExposure = 1.1;
   R.domElement.style.cssText = 'position:absolute;inset:0;width:100%;height:100%';
+  // preventDefault asks the browser to hand the context back.
   const lost = (event: Event) => {
     event.preventDefault();
-    onLost();
+    onContextChange(true);
   };
+  const restored = () => onContextChange(false);
   R.domElement.addEventListener('webglcontextlost', lost);
+  R.domElement.addEventListener('webglcontextrestored', restored);
 
   const scene = new Scene();
   const cam = new PerspectiveCamera(35, 1, 0.1, 100);
@@ -523,6 +532,7 @@ export function createOrbEngine(onLost: () => void) {
       this.detach();
       unsubscribe();
       R.domElement.removeEventListener('webglcontextlost', lost);
+      R.domElement.removeEventListener('webglcontextrestored', restored);
       scene.traverse((object) => {
         const mesh = object as Mesh;
         mesh.geometry?.dispose();

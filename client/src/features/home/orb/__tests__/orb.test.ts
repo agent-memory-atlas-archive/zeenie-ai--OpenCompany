@@ -2,20 +2,23 @@
  * The orb's lifecycle (orb.ts): stages and slots are stacks, so a screen
  * mounted over another borrows the orb and hands it back; the engine loads
  * once; a failed engine load shows the mark until the next stage tries
- * again, while no WebGL, reduced motion and a lost context hold for good.
+ * again; a lost WebGL context shows it until the browser hands the context
+ * back; no WebGL and reduced motion hold for good.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, renderHook } from '@testing-library/react';
 
+type ContextChange = (lost: boolean) => void;
+
 const engine = { attach: vi.fn(), detach: vi.fn(), dispose: vi.fn() };
-const createOrbEngine = vi.fn((onLost: () => void) => {
-  lose = onLost;
+const createOrbEngine = vi.fn((onContextChange: ContextChange) => {
+  contextChange = onContextChange;
   return engine;
 });
-let lose: () => void = () => {};
+let contextChange: ContextChange = () => {};
 
-vi.mock('../orbEngine', () => ({ createOrbEngine: (onLost: () => void) => createOrbEngine(onLost) }));
+vi.mock('../orbEngine', () => ({ createOrbEngine: (onContextChange: ContextChange) => createOrbEngine(onContextChange) }));
 
 import { setReducedMotion } from '@/test/waapi';
 import { mountOrb, orbState, popOrbSlot, pushOrbSlot, resetOrbForTests, unmountOrb, useOrbFallback } from '../orb';
@@ -152,15 +155,18 @@ describe('the static mark', () => {
     expect(result.current).toBe(true);
   });
 
-  it('holds after the WebGL context is lost', async () => {
+  it('shows while the browser has the WebGL context, and the same orb comes back with it', async () => {
     const { result } = renderHook(() => useOrbFallback());
-    mountOrb(element());
+    const home = element();
+    mountOrb(home);
     await loaded();
-    act(() => lose());
-    expect(engine.dispose).toHaveBeenCalledTimes(1);
+    act(() => contextChange(true));
     expect(result.current).toBe(true);
-    mountOrb(element());
-    await loaded();
+    expect(engine.dispose).not.toHaveBeenCalled();
+
+    act(() => contextChange(false));
+    expect(result.current).toBe(false);
     expect(createOrbEngine).toHaveBeenCalledTimes(1);
+    expect(engine.attach).toHaveBeenLastCalledWith(home);
   });
 });

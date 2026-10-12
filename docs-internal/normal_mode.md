@@ -197,10 +197,14 @@ colour; in dark the orb keeps colours of its own (a purple-to-cyan ring; pink,
 yellow and green heads) with white particles and packets; in light it is
 glossy piano-black under a white rim light. Its glows and particles blend
 additively in dark and normally in light (additive glow vanishes on white),
-fading through zero at the midpoint of a theme change. Without WebGL, under
-reduced motion, or after a lost WebGL context, the slot shows the static mark
-for the session; when the engine's chunk fails to load it shows the mark until
-the next stage mounts and tries again (`orb/__tests__/orb.test.ts`).
+fading through zero at the midpoint of a theme change. Without WebGL or under
+reduced motion the slot shows the static mark for the session. When the
+browser takes the WebGL context away (after sleep, or when a laptop switches
+GPU), the engine asks for it back (`preventDefault` on `webglcontextlost`) and
+the slot shows the mark until `webglcontextrestored`; then the same engine
+carries on, three.js having rebuilt the scene's GPU resources. When the
+engine's chunk fails to load the slot shows the mark until the next stage
+mounts and tries again (`orb/__tests__/orb.test.ts`).
 
 ## The Workspace
 
