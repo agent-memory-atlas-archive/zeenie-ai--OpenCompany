@@ -294,7 +294,7 @@
    * (the node's accent) so the executing-node glow stays high-contrast
    * against the canvas background regardless of which plugin is running.
    * A theme may override this with its most visible accent (Atomic uses
-   * its orange accent). The default resolves to the theme's `--info`
+   * its turquoise accent). The default resolves to the theme's `--info`
    * accent. */
   --node-pulse-color: var(--info);
 
