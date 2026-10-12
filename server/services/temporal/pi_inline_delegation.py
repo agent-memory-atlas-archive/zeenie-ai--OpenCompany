@@ -31,7 +31,7 @@ INLINE_SCOPE_KEYS = (
     "parameter_snapshot", "graphVersion", "generation", "run_scope",
     "data_scope_id", "context_execution_id", "context_session_id", "employee_job_id",
     "delegation_depth", "max_delegation_depth", "max_concurrent_subagents",
-    "team_id", "temporal_worker_pool_enabled", "browser_bindings",
+    "team_id", "team_task_id", "team_execution_id", "temporal_worker_pool_enabled", "browser_bindings",
     "execution_control_version", "controller_workflow_id", "execution_control_state",
     "execution_control_revision", "execution_control_producers_held",
     "execution_control_root_run_id", "execution_control_released_revision",
@@ -177,7 +177,7 @@ async def start_inline_pi_delegation(args: dict, config: dict, *, precreated_tas
                      for edge in edges)]
     team_service = get_agent_team_service()
     team = await team_service.get_or_create_execution_team(team_lead_node_id=parent_id, teammates=teammates,
-        workflow_id=workflow_id, execution_id=str(config.get("execution_id") or root_id), root_execution_id=root_id,
+        workflow_id=workflow_id, execution_id=str(config.get("team_execution_id") or config.get("employee_job_id") or config.get("execution_id") or root_id), root_execution_id=root_id,
         team_lead_type=parent.get("type", "aiAgent"), team_lead_label=(parent.get("data") or {}).get("label"),
         config={"mode": "parallel", "max_concurrent_subagents": limit})
     team_id = str((team or {}).get("team_id") or (team or {}).get("id") or "")

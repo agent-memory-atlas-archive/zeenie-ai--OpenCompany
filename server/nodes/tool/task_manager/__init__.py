@@ -101,7 +101,8 @@ def _scope(config: Dict[str, Any]) -> Dict[str, Any]:
     lead_id = str(config.get("parent_node_id") or config.get("team_lead_node_id") or "")
     if not workflow_id or not lead_id:
         raise ValueError("Task Manager requires trusted workflow and team-lead execution context")
-    return {"workflow_id": workflow_id, "team_lead_node_id": lead_id, "execution_id": config.get("execution_id")}
+    execution_id = config.get("team_execution_id") if config.get("employee_job_id") else None
+    return {"workflow_id": workflow_id, "team_lead_node_id": lead_id, "execution_id": execution_id or config.get("execution_id")}
 
 
 def _resolve_teammate(config: Dict[str, Any], args: Dict[str, Any]) -> Dict[str, Any]:

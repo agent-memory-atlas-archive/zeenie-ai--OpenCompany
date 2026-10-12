@@ -36,6 +36,7 @@ _UNCAPPED_TOOL_TYPES = frozenset(
         "_builtin_skill",
         "_builtin_check_delegated_tasks",
         "taskManager",
+        "employeeJobSource",
     }
 )
 

@@ -3345,10 +3345,12 @@ class Database:
     async def update_team_status(self, team_id: str, status: str) -> bool:
         """Update team status."""
         try:
-            async with self.get_session() as session:
+            async with self.reserved_session() as session:
                 result = await session.execute(select(AgentTeam).where(AgentTeam.id == team_id))
                 team = result.scalar_one_or_none()
                 if not team:
+                    return False
+                if status != "failed" and await self._team_failed_without_assignments(session, team_id):
                     return False
                 team.status = status
                 if status in ("completed", "failed", "dissolved"):
@@ -3442,13 +3444,15 @@ class Database:
     ) -> Optional[Dict[str, Any]]:
         """Add task to team's shared list."""
         try:
-            async with self.get_session() as session:
+            async with self.reserved_session() as session:
                 existing = await session.execute(select(TeamTask).where(TeamTask.id == task_id))
                 task = existing.scalar_one_or_none()
                 if task:
                     if task.team_id != team_id:
                         return None
                     return {"id": task.id, "title": task.title, "status": task.status}
+                if await self._team_failed_without_assignments(session, team_id):
+                    return None
                 task = TeamTask(
                     id=task_id,
                     team_id=team_id,
@@ -3516,10 +3520,12 @@ class Database:
     async def create_durable_team_task(self, **values: Any) -> Optional[Dict[str, Any]]:
         """Persist one scoped queue item, idempotently by task id."""
         try:
-            async with self.get_session() as session:
+            async with self.reserved_session() as session:
                 existing = (await session.execute(select(TeamTask).where(TeamTask.id == values["id"]))).scalar_one_or_none()
                 if existing:
                     return self._team_task_dict(existing) if existing.team_id == values["team_id"] else None
+                if await self._team_failed_without_assignments(session, values["team_id"]):
+                    return None
                 maximum = (await session.execute(
                     select(func.max(TeamTask.queue_sequence)).where(TeamTask.team_id == values["team_id"])
                 )).scalar_one_or_none() or 0
@@ -3535,6 +3541,11 @@ class Database:
         except Exception as e:
             logger.error(f"Failed to create durable team task: {e}")
             return None
+
+    @staticmethod
+    async def _team_failed_without_assignments(session: AsyncSession, team_id: str) -> bool:
+        jobs = (await session.execute(select(EmployeeJob).where(EmployeeJob.team_id == team_id))).scalars()
+        return any(job.state == "failed" and (job.delivery.get("failure") or {}).get("code") == "lead_no_assignments" for job in jobs)
 
     async def get_durable_team_task(self, team_id: str, task_id: str) -> Optional[Dict[str, Any]]:
         async with self.get_session() as session:

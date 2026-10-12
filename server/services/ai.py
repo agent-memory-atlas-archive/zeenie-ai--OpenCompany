@@ -1222,6 +1222,8 @@ class AIService:
                     config["generation"] = context.get("generation")
                     config["parameter_snapshot"] = context.get("parameter_snapshot", {})
                     config["employee_job_id"] = context.get("employee_job_id")
+                    config["team_task_id"] = context.get("team_task_id")
+                    config["team_execution_id"] = context.get("team_execution_id")
                     for scope_key in ("data_scope_id", "context_execution_id", "context_session_id", "session_id", "graphVersion", "outputs", "pi_harness_version"):
                         if scope_key in context:
                             config[scope_key] = context[scope_key]
@@ -1997,6 +1999,8 @@ class AIService:
                         config["generation"] = context.get("generation")
                         config["parameter_snapshot"] = context.get("parameter_snapshot", {})
                         config["employee_job_id"] = context.get("employee_job_id")
+                        config["team_task_id"] = context.get("team_task_id")
+                        config["team_execution_id"] = context.get("team_execution_id")
                         for scope_key in ("data_scope_id", "context_execution_id", "context_session_id", "session_id", "graphVersion", "outputs", "pi_harness_version"):
                             if scope_key in context:
                                 config[scope_key] = context[scope_key]

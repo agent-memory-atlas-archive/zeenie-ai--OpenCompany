@@ -229,7 +229,7 @@
           "mark_as_read": false,
           "poll_interval": 60
         },
-        "prompt": "New email from ${trigger.from}\nSubject: ${trigger.subject}\n\n${trigger.body}"
+        "prompt": "New email from ${trigger.from}\nSubject: ${trigger.subject}\n\n${trigger.body_text}"
       },
       "reply": {
         "type": "googleGmail",

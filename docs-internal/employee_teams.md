@@ -81,3 +81,52 @@ Independent rollout switches:
 Existing single-agent employees continue executing. Conversion is never
 automatic. Run backend, frontend, CLI, replay and distribution checks before
 enabling conversion for an installation.
+
+## Gmail intake and no-assignment rollout
+
+Managed Gmail admission preserves the original trigger output and rendered
+mission in the job's existing source JSON. Initial context uses readable text
+and fits within the 20,000-character mission limit, including any shortening
+notice. Literal instructions and other email fields are preserved. The
+intrinsic read-only `employee_job_source` tool pages through `body_text`,
+`original_body`, or `original_mission` with character offsets and pages up to
+10,000 characters. Its job and assignment identities come from runtime scope;
+agents cannot choose another job through tool arguments.
+
+New admitted jobs have separate team identities even when email arrivals share
+one deployment generation. Saved recipe v1 graphs retain their nodes, while
+recipe v2 admits jobs off canvas. Existing bound teams and original recipients
+remain attached across worker retries and resumes.
+
+Upgrade workers normally. The polling payload correction changes child input
+only: already-recorded empty child inputs remain historical, while queued and
+future events use native polling dictionaries. No graph rewrite or database
+migration is needed. The `employee-no-delegation-repair-v1` Temporal marker
+allows one corrective delegation instruction within the existing iteration
+budget. A queued durable assignment counts as progress. Exhausted or repeated
+no-assignment finalization records `lead_no_assignments`, without publishing
+the rejected draft or entering approval or sending.
+
+Historical cleanup is deliberate and dry-run by default. From `server/`, using
+the installation's existing database and Temporal settings:
+
+```powershell
+python -m services.employees.reconcile_jobs --workflow-id ID
+python -m services.employees.reconcile_jobs --workflow-id ID --job-id JOB_ID
+python -m services.employees.reconcile_jobs --workflow-id ID --job-id JOB_ID --apply
+```
+
+Review the content-free JSON decisions and exact run proof references before
+applying. The service requires zero persisted assignments and an unambiguous
+completed lead execution, verifies Continue-As-New chains, and rechecks
+eligibility under the same transaction reservation used by task insertion.
+Paused, reused, reset, ambiguous or unavailable executions and any approval or
+delivery evidence are skipped. Repeated application is idempotent. The command
+does not start model calls, workflows, approvals or sends, and there is no
+periodic historical scanner.
+
+Regression tests can use a disposable PostgreSQL server via
+`TEST_POSTGRES_URL=postgresql+asyncpg://.../postgres`; the shared employee fixture
+creates and drops a unique database per test. Real controller upgrade and
+history replay checks use a native Temporal CLI selected with
+`TEMPORAL_TEST_CLI`.

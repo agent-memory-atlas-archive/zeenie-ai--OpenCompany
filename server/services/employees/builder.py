@@ -91,7 +91,7 @@ from services.graph_build import (
     tool_edge,
 )
 
-BUILDER_VERSION = 5
+BUILDER_VERSION = 6
 #: The first builder whose graphs follow the live Ask first rule (every app
 #: reply behind a gate, sending tools attached and held per call). Older
 #: graphs need Apply for a changed rule to take full effect.

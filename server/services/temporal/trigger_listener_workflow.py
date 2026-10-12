@@ -307,6 +307,7 @@ class TriggerListenerWorkflow:
         admission_check=None,
         search_attributes: Optional[TypedSearchAttributes] = None,
         child_start_control: Any = None,
+        payload_mode: str = "envelope",
     ) -> None:
         """Build the filtered downstream graph + start a child MachinaWorkflow.
 
@@ -383,7 +384,14 @@ class TriggerListenerWorkflow:
         # message details / etc.). The full envelope (specversion, type,
         # subject, …) stays in event for any downstream introspection
         # via the agent layer, but the trigger output is the data dict.
-        trigger_output = event.get("data") if isinstance(event.get("data"), dict) else {}
+        # Controller polling activities already return the native node output,
+        # unlike push producers which send a CloudEvents envelope. The mode is
+        # selected from the controller's recorded trigger spec, never inferred
+        # from a business field named `data`. This changes child input only and
+        # leaves the recorded command sequence and filter path unchanged.
+        trigger_output = event if payload_mode == "native" else (
+            event.get("data") if isinstance(event.get("data"), dict) else {}
+        )
         trigger_output = {**trigger_output, "_event_envelope": event}
 
         filtered_nodes, filtered_edges = _build_run_graph(

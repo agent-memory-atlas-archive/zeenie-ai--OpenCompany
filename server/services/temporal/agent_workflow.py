@@ -304,6 +304,8 @@ _INHERITED_SCOPE_KEYS = (
     # or a delegated agent can attach what it produces to that answer.
     "run_scope",
     "employee_job_id",
+    "team_task_id",
+    "team_execution_id",
     "parameter_snapshot",
     "execution_control_version",
     "controller_workflow_id",
@@ -334,6 +336,28 @@ _AGENT_HISTORY_SOFT_CAP = 10_000
 # token-bounded and the byte guard below keeps it under Temporal's 2 MiB
 # payload error limit.
 _RESUME_MARKER = "_agent_resume"
+_NO_DELEGATION_PATCH = "employee-no-delegation-repair-v1"
+_NO_DELEGATION_ERROR = "EmployeeLeadNoAssignments"
+_DELEGATION_CORRECTION = (
+    "The employee job has no durable task assignments. Before finishing, use Task Manager to assign "
+    "work to a connected teammate with a clear mission, context, and acceptance criteria. A durable queued assignment is sufficient; do not wait for it "
+    "to finish or bypass teammate review and owner approval. This is the one corrective attempt "
+    "and it must use the remaining iteration budget."
+)
+
+
+def _employee_runtime_metadata() -> dict:
+    info = workflow.info()
+    parent, root = getattr(info, "parent", None), getattr(info, "root", None)
+    metadata = {
+        "namespace": getattr(info, "namespace", None),
+        "lead_workflow_id": info.workflow_id, "lead_initial_run_id": info.run_id,
+        "lead_first_execution_run_id": getattr(info, "first_execution_run_id", None),
+        "parent_workflow_id": getattr(parent, "workflow_id", None), "parent_run_id": getattr(parent, "run_id", None),
+        "root_workflow_id": getattr(root, "workflow_id", None) or info.workflow_id,
+        "root_run_id": getattr(root, "run_id", None) or info.run_id,
+    }
+    return {key: value for key, value in metadata.items() if isinstance(value, str) and value}
 
 # Legacy transcript-only limit remains for replay. Version 1 checks the
 # complete encoded continuation and fails explicitly if it cannot fit.
@@ -922,7 +946,7 @@ class AgentWorkflow:
             async with self._execution_control.action():
                 payload = await workflow.execute_activity(
                     "agent.prepare_payload",
-                    args=[context],
+                    args=[{**context, "_employee_runtime": _employee_runtime_metadata()}],
                     activity_id="prepare-payload",
                     start_to_close_timeout=PERSIST_TURN_TIMEOUT * 2,
                     retry_policy=AGENT_ACTIVITY_RETRY,
@@ -972,6 +996,8 @@ class AgentWorkflow:
             context["parameter_snapshot"] = payload["parameter_snapshot"]
         if payload.get("employee_job_id"):
             context["employee_job_id"] = payload["employee_job_id"]
+        if payload.get("team_execution_id"):
+            context["team_execution_id"] = payload["team_execution_id"]
         binding_refresh_v2 = workflow.patched("agent-node-binding-refresh-v2")
         # A node that gives several tools (ToolNode.tool_bindings) has one
         # entry per tool, told apart by ``binding_key``.
@@ -1117,6 +1143,12 @@ class AgentWorkflow:
 
         # ---- Main loop --------------------------------------------------
         iteration_offset = int(resume.get("iteration") or 0)
+        correction_count = int(resume.get("delegation_correction_count") or 0)
+        if correction_count and not any(_DELEGATION_CORRECTION == message.get("content") for message in messages):
+            # Legacy rollover can drop an oversized transcript. Preserve the
+            # already-issued correction without granting a second allowance.
+            messages.append(_native_message(role="user", content=_DELEGATION_CORRECTION))
+        delegation_repair = False
         for iteration in range(iteration_offset, max_iterations):
             await self._wait_until_resumed()
             workflow.logger.info(f"AgentWorkflow iteration {iteration} " f"(messages={len(messages)} tools={len(tools)})")
@@ -1353,15 +1385,33 @@ class AgentWorkflow:
                         # the durable team active, but must not force this lead
                         # invocation to wait. Completion will emit taskTrigger and
                         # start the separately scoped review invocation.
-                        await workflow.execute_activity(
+                        delegation_repair = workflow.patched(_NO_DELEGATION_PATCH)
+                        finalized = await workflow.execute_activity(
                             "agent.finalize_team",
-                            args=[{"team_id": team_id}],
-                            activity_id="finalize-agent-team",
+                            args=[{"team_id": team_id, "workflow_id": agent_workflow_id, "node_id": agent_node_id,
+                                "execution_id": task_scope_execution_id, "employee_job_id": context.get("employee_job_id"),
+                                "correction_count": correction_count}] if delegation_repair else [{"team_id": team_id}],
+                            activity_id=f"finalize-agent-team-{correction_count}" if delegation_repair else "finalize-agent-team",
                             start_to_close_timeout=PERSIST_TURN_TIMEOUT,
                             retry_policy=AGENT_ACTIVITY_RETRY,
                         )
-                    await self._persist_turn(payload, human_text=user_prompt, assistant_text=final_content)
-                    break
+                        if delegation_repair and finalized.get("requires_delegation"):
+                            context["employee_job_id"] = finalized["job_id"]
+                            if correction_count or iteration + 1 >= max_iterations:
+                                return await self._fail_without_assignments(context, payload, team_id, correction_count, iteration + 1, usage_total)
+                            correction_count = 1
+                            messages.append(_native_message(role="user", content=_DELEGATION_CORRECTION))
+                            final_content = None
+                            # Follow the normal clean-turn boundary below, including
+                            # Continue-As-New. This turn schedules no tools.
+                            kind = "tool_calls"
+                            step_result = {**step_result, "calls": []}
+                        elif delegation_repair and finalized.get("status") == "failed" and finalized.get("protected"):
+                            context["employee_job_id"] = finalized["job_id"]
+                            return await self._fail_without_assignments(context, payload, team_id, correction_count, iteration + 1, usage_total)
+                    if kind == "final":
+                        await self._persist_turn(payload, human_text=user_prompt, assistant_text=final_content)
+                        break
 
                 if kind != "tool_calls":
                     await self._complete_runtime_turn(messages)
@@ -1559,6 +1609,7 @@ class AgentWorkflow:
                     "parent_node_id": agent_node_id,
                     "delegation_depth": delegation_depth + 1,
                     "team_id": payload.get("team_id") or context.get("team_id"),
+                    "employee_job_id": context.get("employee_job_id"),
                     "team_task_id": (
                         f"task-{root_execution_id}-{agent_node_id}-"
                         f"{iteration + 1}-{call_index + 1}"
@@ -2123,6 +2174,8 @@ class AgentWorkflow:
                     "parent_node_id": agent_node_id,
                     "team_lead_node_id": agent_node_id,
                     "team_id": payload.get("team_id") or context.get("team_id"),
+                    "employee_job_id": context.get("employee_job_id"),
+                    "team_task_id": context.get("team_task_id"),
                     "root_execution_id": root_execution_id,
                     "delegation_depth": delegation_depth,
                     "nodes": child_nodes,
@@ -2938,6 +2991,7 @@ class AgentWorkflow:
                             **self._execution_control.carry(),
                             _RESUME_MARKER: {
                                 "iteration": iteration + 1,
+                                "delegation_correction_count": correction_count,
                                 "execution_id": execution_id,
                                 "transcript": messages,
                                 "usage": usage_total,
@@ -2989,6 +3043,7 @@ class AgentWorkflow:
                                 **context,
                                 _RESUME_MARKER: {
                                     "iteration": iteration + 1,
+                                    "delegation_correction_count": correction_count,
                                     "execution_id": execution_id,
                                     "transcript": carried,
                                     "usage": usage_total,
@@ -3001,6 +3056,16 @@ class AgentWorkflow:
         else:
             # Loop exited without break -- hit max_iterations.
             workflow.logger.warning(f"AgentWorkflow hit max_iterations={max_iterations}; truncating")
+            if payload.get("team_id") and payload.get("owns_execution_team") and workflow.patched(_NO_DELEGATION_PATCH):
+                finalized = await workflow.execute_activity("agent.finalize_team", {
+                    "team_id": payload["team_id"], "workflow_id": agent_workflow_id, "node_id": agent_node_id,
+                    "execution_id": task_scope_execution_id, "employee_job_id": context.get("employee_job_id"),
+                    "correction_count": correction_count,
+                }, activity_id=f"finalize-agent-team-budget-{correction_count}",
+                    start_to_close_timeout=PERSIST_TURN_TIMEOUT, retry_policy=AGENT_ACTIVITY_RETRY)
+                if finalized.get("requires_delegation") or (finalized.get("protected") and finalized.get("status") == "failed"):
+                    context["employee_job_id"] = finalized["job_id"]
+                    return await self._fail_without_assignments(context, payload, payload["team_id"], correction_count, max_iterations, usage_total)
             final_content = final_content or (
                 "[AgentWorkflow truncated after max_iterations; " "the model did not produce a final response]"
             )
@@ -3071,6 +3136,34 @@ class AgentWorkflow:
         return {"success": True, "result": result_payload}
 
     # ---- Private helpers ------------------------------------------------
+
+    async def _fail_without_assignments(self, context, payload, team_id, correction_count, iterations, usage):
+        # Both saved graph v1 and admitted v2 leads invoke this explicitly.
+        # No rejected draft is persisted to OutputStore or downstream delivery.
+        failed = await workflow.execute_activity("employee.job.failed", {**context, "team_id": team_id,
+            "failure_code": "lead_no_assignments", "correction_count": correction_count},
+            activity_id=f"employee-no-assignments-failed-{correction_count}",
+            start_to_close_timeout=PERSIST_TURN_TIMEOUT, retry_policy=AGENT_ACTIVITY_RETRY)
+        await workflow.execute_activity("agent.skill.clear", {"workflow_id": payload.get("workflow_id"),
+            "execution_id": payload.get("team_execution_id") or context.get("team_execution_id") or context.get("execution_id"),
+            "agent_node_id": payload["node_id"]},
+            activity_id="clear-active-skills-no-assignments", start_to_close_timeout=PERSIST_TURN_TIMEOUT,
+            retry_policy=AGENT_ACTIVITY_RETRY)
+        if failed.get("reason") == "assignments_exist":
+            # Assignment insertion won the transaction race. Async work owns
+            # completion now; the abandoned acknowledgement is never published.
+            await self._emit_phase(payload["node_id"], payload.get("workflow_id"), iterations,
+                int(payload.get("max_iterations") or _default_max_iterations()), phase="completed", status="success")
+            return {"success": True, "result": {"response": None, "team_id": team_id,
+                "execution_id": context.get("execution_id"), "employee_job_id": context.get("employee_job_id"),
+                "iterations": iterations, "usage": usage}}
+        await self._emit_phase(payload["node_id"], payload.get("workflow_id"), iterations,
+            int(payload.get("max_iterations") or _default_max_iterations()), phase="failed", status="error",
+            extra={"error_type": _NO_DELEGATION_ERROR, "error": "The lead completed without assigning work to a teammate."})
+        return {"success": False, "error_type": _NO_DELEGATION_ERROR,
+            "error": "The lead completed without assigning work to a teammate.",
+            "result": {"iterations": iterations, "usage": usage, "team_id": team_id,
+                "employee_job_id": context.get("employee_job_id"), "correction_count": correction_count}}
 
     async def _execute_model_step(self, llm_payload, context, payload, iteration):
         """Native command sequence; the Pi subclass bridges this durable leaf."""

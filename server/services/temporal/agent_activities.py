@@ -1144,7 +1144,8 @@ async def prepare_agent_payload(context: Dict[str, Any]) -> Dict[str, Any]:
     # snapshot at scheduling time). Prefer DB for liveness.
     from services.employees.permissions import assert_runtime_access
     await assert_runtime_access(database, str(workflow_id or ""), node_id, node_type, context)
-    from services.employees.team_runtime import employee_job_parameters
+    from services.employees.team_runtime import attach_employee_job, employee_job_parameters, employee_review_input
+    await attach_employee_job(database, context, employee_review_input(context))
     snapshot = await employee_job_parameters(database, context)
     context["parameter_snapshot"] = snapshot
     connection_database = ParameterSnapshotDatabase(database, snapshot)
@@ -1173,7 +1174,11 @@ async def prepare_agent_payload(context: Dict[str, Any]) -> Dict[str, Any]:
     workflow_service = container.workflow_service()
     nodes = context.get("nodes") or []
     edges = context.get("edges") or []
-    if nodes and edges:
+    from services.employees.email_input import project_managed_gmail_parameters
+    parameters, projected_context, email_projected = await project_managed_gmail_parameters(
+        database, node_id, parameters, context, getattr(getattr(workflow_service, "_param_resolver", None), "resolve", None))
+    context.update(projected_context)
+    if nodes and edges and not email_projected:
         # ``inputs`` holds this run's direct upstream outputs (the firing
         # trigger, for a deployed agent). Resolving from it keeps two
         # concurrent firings from reading each other's message out of the
@@ -1184,7 +1189,7 @@ async def prepare_agent_payload(context: Dict[str, Any]) -> Dict[str, Any]:
             nodes,
             edges,
             session_id,
-            run_outputs=context.get("inputs") or None,
+            run_outputs=context.get("outputs") or context.get("inputs") or None,
         )
 
     options = parameters.get("options") or {}
@@ -1326,14 +1331,16 @@ async def prepare_agent_payload(context: Dict[str, Any]) -> Dict[str, Any]:
     from services.employees.team_runtime import admit_employee_runtime_job
     await admit_employee_runtime_job(database, context, employee_plan, prompt, trigger_task_data)
     if trigger_task_data:
+        await attach_employee_job(database, context, trigger_task_data)
         task_prompt = format_task_context(trigger_task_data)
         prompt = f"{task_prompt}\n\n{prompt}" if prompt else task_prompt
     else:
-        from services.employees.team_runtime import employee_job_mission
-
-        job_mission = await employee_job_mission(database, context)
-        if job_mission is not None:
-            prompt = job_mission
+        from services.employees.team_runtime import employee_lead_prompt
+        prompt = await employee_lead_prompt(database, context, prompt)
+    from services.employees.team_runtime import capture_employee_runtime
+    await capture_employee_runtime(database, context)
+    from services.plugin.edge_walker import bind_employee_job_source
+    await bind_employee_job_source(node_id, context, database, tool_data)
 
     # Team-handle edges are configuration edges and are intentionally not
     # returned by collect_agent_connections.  Expand them here before tools
@@ -1396,11 +1403,14 @@ async def prepare_agent_payload(context: Dict[str, Any]) -> Dict[str, Any]:
                 context.get("root_execution_id") or execution_id
             )
             if execution_id:
-                team = await get_agent_team_service().get_or_create_execution_team(
+                team = await database.get_team(context["_employee_job_team_id"]) if context.get("_employee_job_team_id") else None
+                if team and (team.get("workflow_id") != workflow_id or team.get("team_lead_node_id") != node_id):
+                    raise ValueError("The captured job team does not belong to this lead")
+                team = team or await get_agent_team_service().get_or_create_execution_team(
                     team_lead_node_id=node_id,
                     teammates=teammates,
                     workflow_id=workflow_id,
-                    execution_id=execution_id,
+                    execution_id=str(context.get("employee_job_id") or execution_id),
                     root_execution_id=root_execution_id,
                     team_lead_type=node_type,
                     team_lead_label=parameters.get("label") or node_type,
@@ -1409,6 +1419,8 @@ async def prepare_agent_payload(context: Dict[str, Any]) -> Dict[str, Any]:
                 if not team:
                     raise RuntimeError("Failed to persist agent execution team")
                 execution_team_id = team.get("team_id") or team.get("id")
+                if context.get("employee_job_id"):
+                    team_execution_id = team.get("execution_id") or context["employee_job_id"]
                 owns_execution_team = True
 
     if execution_team_id and workflow_id:
@@ -1418,6 +1430,7 @@ async def prepare_agent_payload(context: Dict[str, Any]) -> Dict[str, Any]:
             database, workflow_id=workflow_id, lead_node_id=node_id,
             execution_id=str(team_execution_id or context.get("execution_id") or ""),
             team_id=execution_team_id,
+            employee_job_id=context.get("employee_job_id"),
         )
 
     # ---- Skill prompt injection ----------------------------------------
@@ -1783,6 +1796,7 @@ async def prepare_agent_payload(context: Dict[str, Any]) -> Dict[str, Any]:
         "max_delegation_depth": max_delegation_depth,
         "team_id": execution_team_id,
         "team_execution_id": team_execution_id,
+        "team_task_id": context.get("team_task_id"),
         "owns_execution_team": owns_execution_team,
         "root_execution_id": str(
             context.get("root_execution_id")
@@ -2438,7 +2452,15 @@ async def finalize_agent_team(payload: Dict[str, Any]) -> Dict[str, Any]:
     if not team_id:
         raise ValueError("team_id is required")
     service = get_agent_team_service()
-    tasks = await service.database.get_team_tasks(team_id)
+    from services.employees.jobs import check_lead_assignments
+    guard = await check_lead_assignments(service.database, payload)
+    if guard.get("requires_delegation") or guard.get("protected"):
+        return guard
+    # Read directly: a database outage cannot masquerade as an empty team.
+    from models.database import TeamTask
+    from sqlmodel import select
+    async with service.database.get_session() as session:
+        tasks = [{"status": task.status} for task in (await session.execute(select(TeamTask).where(TeamTask.team_id == team_id))).scalars()]
     # Child completion is only a submission.  The lead (or a human operator)
     # must explicitly accept every required task before the execution team can
     # be finalized.

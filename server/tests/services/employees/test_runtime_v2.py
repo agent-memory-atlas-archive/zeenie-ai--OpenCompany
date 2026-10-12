@@ -39,10 +39,11 @@ async def test_admission_preserves_original_outputs_and_review_reuses_job(monkey
     assert create.await_args.kwargs["dispatch"] is False
     @asynccontextmanager
     async def session():
-        yield SimpleNamespace(execute=AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: SimpleNamespace(id="job"))))
+        yield SimpleNamespace(get=AsyncMock(return_value=SimpleNamespace(workflow_id="wf", team_id="team")),
+            execute=AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: SimpleNamespace(id="job", workflow_id="wf", lead_node_id="lead", team_id=None, source={}))))
     review = {**context, "execution_id": "later-review"}
     review.pop("employee_job_id")
-    await admit_employee_runtime_job(SimpleNamespace(get_session=session), review, plan, "Review submitted work", {"team_id": "team"})
+    await admit_employee_runtime_job(SimpleNamespace(get_session=session), review, plan, "Review submitted work", {"team_id": "team", "task_id": "task"})
     assert review["employee_job_id"] == "job"
     create.assert_awaited_once()
 

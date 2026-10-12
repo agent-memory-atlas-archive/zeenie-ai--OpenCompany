@@ -31,17 +31,40 @@ async def deliver_employee_job(context: dict[str, Any]) -> dict:
 async def fail_employee_job(context: dict[str, Any]) -> dict:
     from core.container import container
     from models.employees import EmployeeJob
+    from services.employees.jobs import fail_no_assignments, no_assignments_failed, protected_job_outcome, job_has_approval, _now
+    if context.get("failure_code") == "lead_no_assignments":
+        return await fail_no_assignments(container.database(), context)
+    changed = False
     async with container.database().reserved_session() as session:
         job = await session.get(EmployeeJob, str(context.get("employee_job_id")))
         if job is None and context.get("runtime_admission"):
             from sqlmodel import select
             found = await session.execute(select(EmployeeJob).where(EmployeeJob.workflow_id == context.get("workflow_id"),
                 EmployeeJob.lead_node_id == context.get("node_id"), EmployeeJob.origin_execution_id == context.get("execution_id")))
-            job = found.scalar_one_or_none()
-        if job and job.state not in {"delivered", "delivering"}:
+            candidates = list(found.scalars())
+            # Admission may commit before prepare returns its trusted id.
+            # Concurrent emails share a graph execution, so recorded lead
+            # evidence must match even when only the other email has admitted.
+            if activity.in_activity() and any((candidate.source.get("runtime") or {}).get("lead_workflow_id") for candidate in candidates):
+                info = activity.info()
+                matches = [candidate for candidate in candidates if
+                    (candidate.source.get("runtime") or {}).get("namespace") == info.workflow_namespace
+                    and (candidate.source.get("runtime") or {}).get("lead_workflow_id") == info.workflow_id
+                    and (candidate.source.get("runtime") or {}).get("lead_initial_run_id") == info.workflow_run_id]
+                job = matches[0] if len(matches) == 1 else None
+            elif len(candidates) == 1:
+                job = candidates[0]  # Unambiguous legacy admission without run evidence.
+            if candidates and job is None:
+                return {"saved": False, "reason": "ambiguous_admission"}
+        if job and not no_assignments_failed(job) and not protected_job_outcome(job) and not await job_has_approval(session, job):
             job.state = "cancelled" if context.get("cancelled") else "failed"
+            job.updated_at = _now()
             await session.commit()
-    return {"saved": True}
+            changed = True
+    if changed:
+        from services.employees.events import employee_changed_now
+        employee_changed_now(job.workflow_id)
+    return {"saved": changed}
 
 
 @workflow.defn(name="EmployeeJobWorkflow", sandboxed=False)

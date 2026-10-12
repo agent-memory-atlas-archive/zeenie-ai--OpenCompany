@@ -15,7 +15,7 @@ from services.plugin.approval import ApprovalSpec
 from .._credentials import GoogleCredential
 
 from .._base import build_google_service, run_sync, track_google_usage
-from .._gmail import fetch_email_details, format_message
+from .._gmail import format_message
 
 
 class GmailParams(BaseModel):
@@ -88,6 +88,8 @@ class GmailOutput(BaseModel):
     from_: Optional[str] = Field(default=None)
     date: Optional[str] = None
     body: Optional[str] = None
+    body_text: Optional[str] = None
+    body_mime_type: Optional[str] = None
     snippet: Optional[str] = None
     labels: Optional[List[str]] = None
     attachments: Optional[List[dict]] = None

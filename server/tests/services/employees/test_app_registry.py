@@ -47,7 +47,7 @@ TRIGGER_EMITS = {
         "author_id", "author_name", "author_display_name", "author_is_bot", "content", "timestamp",
     },
     "googleGmailReceive": {
-        "message_id", "thread_id", "from", "to", "cc", "subject", "date", "snippet", "labels", "body",
+        "message_id", "thread_id", "from", "to", "cc", "subject", "date", "snippet", "labels", "body", "body_text", "body_mime_type",
     },
     "msMailReceive": {
         "message_id", "id", "conversation_id", "from", "from_name", "to", "subject", "body_preview",

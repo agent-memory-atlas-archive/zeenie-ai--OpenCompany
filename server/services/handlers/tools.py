@@ -194,7 +194,7 @@ async def _dispatch_tool(tool_name: str, tool_args: Dict[str, Any], config: Dict
         "execution_id": config.get("execution_id"),
     }
     # These scopes come from the server execution config, never tool arguments.
-    for key in ("run_scope", "generation", "parameter_snapshot", "employee_job_id",
+    for key in ("run_scope", "generation", "parameter_snapshot", "employee_job_id", "team_task_id",
                 "root_execution_id", "team_id", "team_execution_id", "data_scope_id", "context_execution_id",
                 "context_session_id", "session_id", "graphVersion", "outputs", "credential_customer_id",
                 "ai_service", "database"):
@@ -496,7 +496,7 @@ async def _execute_delegated_agent(
             {"nodes": nodes, "edges": edges, "workflow_id": workflow_id},
             database,
         )
-        execution_key = str(config.get("execution_id") or root_execution_id)
+        execution_key = str(config.get("team_execution_id") or config.get("employee_job_id") or config.get("execution_id") or root_execution_id)
         team = await team_service.get_or_create_execution_team(
             team_lead_node_id=parent_node_id,
             teammates=teammates,
@@ -588,6 +588,10 @@ async def _execute_delegated_agent(
             "user_id",
             "session_id",
             "workspace_dir",
+            "employee_job_id",
+            "parameter_snapshot",
+            "run_scope",
+            "team_execution_id",
         )
         if key in config
     }

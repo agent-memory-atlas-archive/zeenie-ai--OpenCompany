@@ -765,6 +765,7 @@ class WorkflowControlWorkflow:
         await listener._spawn_child_run(
             event,
             listener_args,
+            payload_mode=("native" if spec.get("workflow_type") == "PollingTriggerWorkflow" else "envelope"),
             admission_check=self._wait_until_review if self._drain_tasks and listener_args.get("node_type") == "taskTrigger" else self._wait_until_running,
             search_attributes=(
                 event_workflow_search_attributes(

@@ -8,6 +8,9 @@ Google Workspace plugins.
 from __future__ import annotations
 
 import base64
+import re
+from email.message import Message
+from html.parser import HTMLParser
 from typing import Any, Dict, List, Set
 
 from ._base import run_sync
@@ -81,7 +84,8 @@ def format_message(message: Dict[str, Any], include_body: bool = False) -> Dict[
     }
 
     if include_body:
-        formatted["body"] = _extract_body(payload)
+        formatted["body"], formatted["body_mime_type"] = _extract_body_with_type(payload)
+        formatted["body_text"] = readable_message_body(payload)
 
     attachments = _extract_attachments(payload)
     if attachments:
@@ -92,22 +96,119 @@ def format_message(message: Dict[str, Any], include_body: bool = False) -> Dict[
 
 def _extract_body(payload: Dict[str, Any]) -> str:
     """Extract text body from a (possibly multipart) Gmail payload."""
+    return _extract_body_with_type(payload)[0]
+
+
+def _extract_body_with_type(payload: Dict[str, Any]) -> tuple[str, str]:
+    """Keep the established raw-body selection while exposing its MIME type."""
     if payload.get("body", {}).get("data"):
-        return base64.urlsafe_b64decode(payload["body"]["data"]).decode("utf-8", errors="ignore")
+        return _decode_body(payload["body"]["data"]), str(payload.get("mimeType") or "text/plain")
 
     body = ""
     for part in payload.get("parts", []):
         mime = part.get("mimeType", "")
         data = part.get("body", {}).get("data")
         if mime == "text/plain" and data:
-            return base64.urlsafe_b64decode(data).decode("utf-8", errors="ignore")
+            return _decode_body(data), mime
         if mime == "text/html" and data and not body:
-            body = base64.urlsafe_b64decode(data).decode("utf-8", errors="ignore")
+            body = _decode_body(data)
         elif mime.startswith("multipart/"):
-            nested = _extract_body(part)
+            nested, nested_type = _extract_body_with_type(part)
             if nested:
-                return nested
-    return body
+                return nested, nested_type
+    return body, "text/html" if body else str(payload.get("mimeType") or "text/plain")
+
+
+def _decode_body(data: str) -> str:
+    # Gmail uses unpadded base64url; accepting padding also supports old fixtures.
+    return base64.urlsafe_b64decode(data + "=" * (-len(data) % 4)).decode("utf-8", errors="ignore")
+
+
+class _ReadableHTML(HTMLParser):
+    """A local, tolerant HTML projection; never resolves remote resources."""
+
+    _blocks = frozenset({"p", "div", "br", "li", "tr", "table", "section", "article", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "hr"})
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+        self.hidden: list[str] = []
+        self.links: list[str] = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag in {"script", "style"}:
+            self.hidden.append(tag)
+        if self.hidden:
+            return
+        if tag in self._blocks:
+            self.parts.append("\n")
+        if tag == "a":
+            self.links.append(str(dict(attrs).get("href") or ""))
+        if tag == "img":
+            alt = str(dict(attrs).get("alt") or "")
+            if alt:
+                self.parts.append(alt)
+
+    def handle_endtag(self, tag):
+        if self.hidden:
+            if tag in self.hidden:
+                self.hidden = self.hidden[:self.hidden.index(tag)]
+            return
+        if tag == "a" and self.links:
+            href = self.links.pop()
+            if href:
+                self.parts.append(f" ({href})")
+        if tag in self._blocks:
+            self.parts.append("\n")
+
+    def handle_data(self, data):
+        if not self.hidden:
+            self.parts.append(data)
+
+    def text(self):
+        # Email layout produces many redundant spaces/newlines; content and
+        # URLs are retained. Normalization never touches the original body.
+        trailing_links = "".join(f" ({href})" for href in reversed(self.links) if href)
+        return re.sub(r"\n{3,}", "\n\n", re.sub(r"[^\S\n]+", " ", "".join(self.parts) + trailing_links)).strip()
+
+
+def html_body_text(body: str) -> str:
+    parser = _ReadableHTML()
+    parser.feed(body)
+    parser.close()
+    return parser.text()
+
+
+def readable_message_body(payload: Dict[str, Any]) -> str:
+    """Prefer any non-attachment plain alternative across the entire MIME tree."""
+    plain: list[str] = []
+    html: list[str] = []
+
+    def visit(part):
+        headers = {str(h.get("name", "")).lower(): str(h.get("value", "")) for h in part.get("headers", [])}
+        if part.get("filename") or headers.get("content-disposition", "").lower().startswith("attachment"):
+            return
+        data = (part.get("body") or {}).get("data")
+        mime = str(part.get("mimeType") or "").lower()
+        if data and mime in {"text/plain", "text/html"}:
+            content_type = Message()
+            content_type["content-type"] = headers.get("content-type", mime)
+            charset = content_type.get_content_charset() or "utf-8"
+            decoded = base64.urlsafe_b64decode(data + "=" * (-len(data) % 4))
+            try:
+                text = decoded.decode(charset, errors="replace")
+            except LookupError:
+                text = decoded.decode("utf-8", errors="replace")
+            (plain if mime == "text/plain" else html).append(text)
+        for child in part.get("parts", []):
+            visit(child)
+
+    visit(payload)
+    if plain:
+        return plain[0]
+    if html:
+        return html_body_text(html[0])
+    return ""
 
 
 def _extract_attachments(payload: Dict[str, Any]) -> List[Dict[str, Any]]:

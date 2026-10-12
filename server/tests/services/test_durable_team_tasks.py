@@ -71,8 +71,18 @@ async def test_stale_revision_is_rejected():
 
 @pytest.mark.asyncio
 async def test_finish_requires_every_task_to_be_reviewed():
+    from contextlib import asynccontextmanager
+    from unittest.mock import MagicMock
     database = _database()
-    database.get_team_tasks.return_value = [{"id": "task-1", "status": "submitted"}]
+    result_job = MagicMock()
+    result_job.scalar_one_or_none.return_value = None
+    result_tasks = MagicMock()
+    result_tasks.scalars.return_value = [SimpleNamespace(status="submitted")]
+    session = SimpleNamespace(execute=AsyncMock(side_effect=[result_job, result_tasks]))
+    @asynccontextmanager
+    async def reserved():
+        yield session
+    database.reserved_session = reserved
     service = AgentTeamService(database)
 
     with pytest.raises(ValueError, match="unresolved"):

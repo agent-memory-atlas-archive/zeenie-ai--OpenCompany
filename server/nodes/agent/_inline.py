@@ -63,16 +63,40 @@ async def prepare_agent_call(
     if "api_key" in raw_params and "api_key" not in parameters:
         parameters = {**parameters, "api_key": raw_params["api_key"]}
 
+    context.update({"node_id": node_id, "node_type": node_type})
+    from services.employees.team_runtime import attach_employee_job, employee_job_parameters, employee_lead_prompt, employee_review_input
+    await attach_employee_job(database, context, employee_review_input(context))
+    connection_database = database
+    if context.get("employee_job_id"):
+        context["parameter_snapshot"] = await employee_job_parameters(database, context)
+        from services.agent_bindings import ParameterSnapshotDatabase
+        connection_database = ParameterSnapshotDatabase(database, context["parameter_snapshot"])
+        if not context.get("parent_node_id") and node_id in context["parameter_snapshot"]:
+            # NodeExecutor may have resolved a review prompt before its task
+            # identified the job. Rebuild it against this job's frozen source.
+            from services.parameter_resolver import ParameterResolver
+            async def captured_output(session_id, source_id, output_name):
+                return None
+            resolver = ParameterResolver(connection_database, captured_output)
+            frozen = await resolver.resolve(context["parameter_snapshot"][node_id], node_id,
+                context.get("nodes") or [], context.get("edges") or [], context.get("session_id", "default"),
+                run_outputs=context.get("outputs") or {})
+            parameters = {**parameters, **frozen}
+        parameters = {**parameters, "prompt": await employee_lead_prompt(database, context, parameters.get("prompt", ""))}
+
     memory_data, skill_data, tool_data, input_data, task_data = await collect_agent_connections(
         node_id,
         context,
-        database,
+        connection_database,
         log_prefix=log_prefix,
     )
 
     # Step 1: task-context injection. Tools are kept — the injected
     # guidance requires the Task Manager tool to act on the completion.
     if task_data:
+        await attach_employee_job(database, context, task_data)
+        from services.plugin.edge_walker import bind_employee_job_source
+        await bind_employee_job_source(node_id, context, database, tool_data)
         task_context = format_task_context(task_data)
         original_prompt = parameters.get("prompt", "")
         parameters = {**parameters, "prompt": f"{task_context}\n\n{original_prompt}"}
@@ -94,7 +118,7 @@ async def prepare_agent_call(
 
     # Step 3: team-lead delegation-tool injection.
     if node_type in TEAM_LEAD_TYPES:
-        teammates = await collect_teammate_connections(node_id, context, database)
+        teammates = await collect_teammate_connections(node_id, context, connection_database)
         if teammates:
             tool_data = tool_data or []
             for tm in teammates:

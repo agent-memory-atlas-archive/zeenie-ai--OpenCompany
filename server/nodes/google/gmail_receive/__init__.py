@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import time
 from datetime import datetime
-from typing import Any, Dict, Literal, Optional, Set
+from typing import Any, Dict, Optional, Set
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -48,6 +48,8 @@ class GmailReceiveOutput(BaseModel):
     to: Optional[str] = None
     subject: Optional[str] = None
     body: Optional[str] = None
+    body_text: Optional[str] = None
+    body_mime_type: Optional[str] = None
     snippet: Optional[str] = None
     date: Optional[str] = None
     labels: Optional[list] = None

@@ -329,6 +329,8 @@ async def collect_agent_connections(
         )
         logger.info("%s Auto-bound durable Task Manager for team lead %s", log_prefix, node_id)
 
+    await bind_employee_job_source(node_id, context, database, tool_data)
+
     logger.info(
         f"{log_prefix} Collected: {len(skill_data)} skills, {len(tool_data)} tools, "
         f"context={'yes' if context_data else 'no'}, "
@@ -341,6 +343,17 @@ async def collect_agent_connections(
         logger.info(f"{log_prefix} Tool: type={td.get('node_type')}, node_id={td.get('node_id')}")
 
     return context_data, skill_data, tool_data, input_data, task_data
+
+
+async def bind_employee_job_source(node_id, context, database, tool_data):
+    """Add the intrinsic capability only after validating the actual caller."""
+    if not context.get("employee_job_id") or any(entry.get("node_type") == "employeeJobSource" for entry in tool_data):
+        return
+    from services.employees.job_source import authorize_employee_job_source
+    await authorize_employee_job_source(database, {**context, "parent_node_id": node_id})
+    tool_data.append({"node_id": f"builtin_employee_job_source_{node_id}",
+        "node_type": "employeeJobSource", "parameters": {},
+        "label": "Employee Job Source", "builtin": True})
 
 
 async def _build_memory_entry(

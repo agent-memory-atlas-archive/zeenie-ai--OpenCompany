@@ -14,10 +14,98 @@ from typing import Any
 
 from sqlmodel import select
 from models.employees import EmployeeJob
+from models.database import AgentTeam, TeamTask
 
 
 def _now():
     return datetime.now(timezone.utc)
+
+
+NO_ASSIGNMENTS_CODE = "lead_no_assignments"
+NO_ASSIGNMENTS_MESSAGE = "The lead completed without assigning work to a teammate."
+
+
+def no_assignments_failed(job: EmployeeJob) -> bool:
+    return job.state == "failed" and (job.delivery.get("failure") or {}).get("code") == NO_ASSIGNMENTS_CODE
+
+
+def protected_job_outcome(job: EmployeeJob) -> bool:
+    """A finalizer must never replace an approval or a possible external send."""
+    return job.state in {"cancelled", "delivered", "delivering", "delivery_queued", "delivery_needs_review"} or bool(
+        job.delivery.get("inflight") or job.delivery.get("completed") or job.delivery.get("resolution_pending")
+    )
+
+
+async def job_has_approval(session: Any, job: EmployeeJob) -> bool:
+    from models.approvals import ApprovalRequest
+    return (await session.execute(select(ApprovalRequest.id).where(
+        ApprovalRequest.workflow_id == job.workflow_id, ApprovalRequest.execution_id == job.id,
+    ).limit(1))).first() is not None
+
+
+async def managed_job_for_team(session: Any, team_id: str, payload: dict | None = None) -> EmployeeJob | None:
+    """Select only the job bound to this exact durable team, never latest."""
+    payload = payload or {}
+    job = (await session.execute(select(EmployeeJob).where(EmployeeJob.team_id == team_id))).scalar_one_or_none()
+    if job and any(payload.get(key) and str(payload[key]) != str(value) for key, value in (
+        ("employee_job_id", job.id), ("workflow_id", job.workflow_id), ("node_id", job.lead_node_id),
+    )):
+        raise ValueError("The employee job does not belong to this lead and team")
+    return job
+
+
+async def check_lead_assignments(database: Any, payload: dict) -> dict:
+    """Fail closed on database errors; queued assignments already count as progress."""
+    team_id = str(payload["team_id"])
+    async with database.reserved_session() as session:
+        job = await managed_job_for_team(session, team_id, payload)
+        if not job:
+            return {"team_id": team_id, "managed": False}
+        result = {"team_id": team_id, "managed": True, "job_id": job.id, "status": "active", "state": job.state}
+        if no_assignments_failed(job) or protected_job_outcome(job) or await job_has_approval(session, job):
+            return {**result, "protected": True, "status": "failed" if no_assignments_failed(job) else "active"}
+        assigned = (await session.execute(select(TeamTask.id).where(TeamTask.team_id == team_id).limit(1))).first()
+        if not assigned:
+            team = await session.get(AgentTeam, team_id)
+            if team and team.status == "completed":
+                team.status, team.completed_at = "active", None
+                await session.commit()
+            count = max(int(payload.get("correction_count") or 0), int((job.delivery.get("failure") or {}).get("correction_count") or 0))
+            return {**result, "requires_delegation": True, "correction_count": count}
+        return result
+
+
+async def fail_no_assignments(database: Any, payload: dict) -> dict:
+    """Serialize failure with task insertion and preserve every prior send intent."""
+    changed = False
+    async with database.reserved_session() as session:
+        job = await session.get(EmployeeJob, str(payload.get("employee_job_id") or ""))
+        if not job and payload.get("team_id"):
+            job = await managed_job_for_team(session, str(payload["team_id"]), payload)
+        if not job:
+            return {"saved": False, "reason": "job_not_found"}
+        if any(payload.get(key) and str(payload[key]) != str(value) for key, value in (
+            ("workflow_id", job.workflow_id), ("node_id", job.lead_node_id), ("team_id", job.team_id),
+        )):
+            raise ValueError("The employee job does not belong to this lead and team")
+        if no_assignments_failed(job) or protected_job_outcome(job) or await job_has_approval(session, job):
+            return {"saved": False, "job_id": job.id, "state": job.state, "reason": "protected_outcome"}
+        assigned = (await session.execute(select(TeamTask.id).where(TeamTask.team_id == job.team_id).limit(1))).first() if job.team_id else None
+        if assigned:
+            return {"saved": False, "job_id": job.id, "state": job.state, "reason": "assignments_exist"}
+        job.state = "failed"
+        job.delivery = {**job.delivery, "failure": {"code": NO_ASSIGNMENTS_CODE, "message": NO_ASSIGNMENTS_MESSAGE,
+            "correction_count": int(payload.get("correction_count") or 0)}}
+        job.updated_at = _now()
+        team = await session.get(AgentTeam, job.team_id) if job.team_id else None
+        if team:
+            team.status, team.completed_at = "failed", _now()
+        await session.commit()
+        changed = True
+    if changed:
+        from services.employees.events import employee_changed_now
+        employee_changed_now(job.workflow_id)
+    return {"saved": changed, "job_id": job.id, "state": job.state}
 
 
 async def employee_job_mission(database: Any, *, workflow_id: str, lead_node_id: str, execution_id: str) -> str | None:
@@ -49,7 +137,14 @@ async def create_job(database: Any, ctx: Any, *, mission: str, lead_node_id: str
     allowed_destinations = set(plan.get("delivery_node_ids", []) + plan.get("talk_delivery_node_ids", [])) if captured_plan else set((employee.node_roles or {}).values())
     if not delivery_node_ids or any(node not in allowed_destinations for node in delivery_node_ids):
         raise ValueError("The job destination is not approved")
-    identifier = _identity(ctx, mission)
+    email_input = ctx.raw.get("email_input")
+    original_mission = email_input.get("original_mission", mission) if isinstance(email_input, dict) else mission
+    if ctx.node_type == "employeeJob":
+        original_mission = original_mission.strip()
+    if len(mission) > 20000:
+        from services.employees.email_input import EmployeeEmailInputLimit
+        raise EmployeeEmailInputLimit()
+    identifier = _identity(ctx, original_mission)
     # Persist the original graph/parameters rather than consulting mutable
     # recipients or templates when the review completes later.
     nodes = ctx.nodes or (graph.data or {}).get("nodes", [])
@@ -64,6 +159,14 @@ async def create_job(database: Any, ctx: Any, *, mission: str, lead_node_id: str
               "data_scope_id": ctx.raw.get("data_scope_id"), "graphVersion": (graph.data or {}).get("graphVersion", 2), "team_plan": plan}
     source.update({key: ctx.raw[key] for key in ("execution_control_version", "controller_workflow_id", "pi_harness_version",
                   "pi_local_control_version", "pi_local_control_state", "pi_local_control_revision") if key in ctx.raw})
+    if isinstance(email_input, dict):
+        source["email_input"] = dict(email_input)
+    if ctx.node_type == "employeeJob" and not dispatch:
+        source["intake_node_id"] = ctx.node_id
+    from services.employees.team_runtime import temporal_job_runtime
+    runtime = temporal_job_runtime(ctx.raw)
+    if runtime:
+        source["runtime"] = runtime
     async with database.reserved_session() as session:
         row = await session.get(EmployeeJob, identifier)
         if row is not None:
@@ -77,16 +180,20 @@ async def create_job(database: Any, ctx: Any, *, mission: str, lead_node_id: str
         return row
 
 
-async def bind_job_team(database: Any, *, workflow_id: str, lead_node_id: str, execution_id: str, team_id: str) -> None:
+async def bind_job_team(database: Any, *, workflow_id: str, lead_node_id: str, execution_id: str, team_id: str, employee_job_id: str | None = None) -> None:
     async with database.reserved_session() as session:
+        criteria = EmployeeJob.id == employee_job_id if employee_job_id else EmployeeJob.origin_execution_id == execution_id
         found = await session.execute(select(EmployeeJob).where(EmployeeJob.workflow_id == workflow_id,
-            EmployeeJob.lead_node_id == lead_node_id, EmployeeJob.origin_execution_id == execution_id))
+            EmployeeJob.lead_node_id == lead_node_id, criteria))
         job = found.scalar_one_or_none()
         if job:
+            team = await session.get(AgentTeam, team_id)
+            if team and (team.workflow_id != workflow_id or team.team_lead_node_id != lead_node_id):
+                raise ValueError("The team does not belong to this employee lead")
             if job.team_id and job.team_id != team_id:
                 raise RuntimeError("The job already belongs to another team")
             job.team_id = team_id
-            if job.state not in {"delivered", "delivering", "cancelled", "delivery_queued"}:
+            if not no_assignments_failed(job) and not protected_job_outcome(job) and not await job_has_approval(session, job):
                 job.state = "working"
             job.updated_at = _now()
             await session.commit()
@@ -153,6 +260,8 @@ async def deliver_job(database: Any, ctx: Any, *, lead_node_id: str) -> dict:
         job = found.scalar_one_or_none()
         if not job:
             return {"delivered": False, "state": "waiting"}
+        if no_assignments_failed(job):
+            return {"delivered": False, "state": "failed", "job_id": job.id, "failure": job.delivery["failure"]}
         if job.state == "delivered":
             return {"delivered": True, "state": "delivered", "job_id": job.id}
         lease = job.delivery.get("lease_until")
@@ -166,15 +275,33 @@ async def deliver_job(database: Any, ctx: Any, *, lead_node_id: str) -> dict:
             return {"delivered": False, "state": "delivery_needs_review", "job_id": job.id}
         if job.state == "cancelled":
             return {"delivered": False, "state": "cancelled", "job_id": job.id}
+        if job.state == "delivery_needs_review":
+            return {"delivered": False, "state": job.state, "job_id": job.id}
         # Task submissions are not reviewed work. Requiring at least one
         # accepted task also prevents an un-delegated acknowledgement leaking.
-        tasks = await database.get_team_tasks(job.team_id) if job.team_id else []
-        if tasks and any(task.get("status") in {"failed", "cancelled"} for task in tasks):
-            job.state = "failed" if any(task.get("status") == "failed" for task in tasks) else "cancelled"
+        tasks = list((await session.execute(select(TeamTask).where(TeamTask.team_id == job.team_id))).scalars()) if job.team_id else []
+        if tasks and any(task.status in {"failed", "cancelled"} for task in tasks):
+            if protected_job_outcome(job) or await job_has_approval(session, job):
+                return {"delivered": False, "state": job.state, "job_id": job.id}
+            job.state = "failed" if any(task.status == "failed" for task in tasks) else "cancelled"
             job.updated_at = _now()
             await session.commit()
             return {"delivered": False, "state": job.state, "job_id": job.id}
-        if not tasks or any(task.get("status") != "accepted" for task in tasks):
+        if not tasks:
+            if protected_job_outcome(job) or await job_has_approval(session, job):
+                return {"delivered": False, "state": job.state, "job_id": job.id}
+            job.state = "failed"
+            job.delivery = {**job.delivery, "failure": {"code": NO_ASSIGNMENTS_CODE, "message": NO_ASSIGNMENTS_MESSAGE,
+                "correction_count": int(ctx.raw.get("correction_count") or 0)}}
+            job.updated_at = _now()
+            team = await session.get(AgentTeam, job.team_id) if job.team_id else None
+            if team:
+                team.status, team.completed_at = "failed", _now()
+            await session.commit()
+            from services.employees.events import employee_changed_now
+            employee_changed_now(job.workflow_id)
+            return {"delivered": False, "state": "failed", "job_id": job.id, "failure": job.delivery["failure"]}
+        if any(task.status != "accepted" for task in tasks):
             return {"delivered": False, "state": "working", "job_id": job.id}
         response = str(lead_output.get("response") or "").strip()
         if not response or response == "NO_REPLY":
@@ -283,4 +410,6 @@ async def job_progress(database: Any, workflow_id: str) -> dict | None:
                 "running": "The team is starting your request.", "working": "The team is working on your request and checking the result.",
                 "delivering": "Their checked result is ready to send.", "failed": "The team could not finish this request. Ask them to try again.",
                 "cancelled": "This request was stopped.", "delivery_needs_review": "The send was interrupted. Check whether it arrived before trying again."}
+    if no_assignments_failed(job):
+        messages["failed"] = "The lead did not assign work to a teammate, so this request could not finish."
     return {"request_id": job.id, "state": state, "message": messages.get(state, "The team is checking your request.")}

@@ -160,7 +160,9 @@ class NodeExecutor:
 
             # Load, validate, enhance parameters
             params = await self._prepare_parameters(node_id, node_type, parameters, session_id, tool_args=tool_args,
-                parameter_snapshot=context.get("parameter_snapshot"), principal=str(context.get("user_id") or "owner"))
+                parameter_snapshot=context.get("parameter_snapshot"), principal=str(context.get("user_id") or "owner"),
+                context=context, resolve_params_fn=resolve_params_fn)
+            email_templates_resolved = context.pop("_employee_email_templates_resolved", None) == node_id
 
             # Resolve templates if resolver provided
             nodes = context.get("nodes")
@@ -169,7 +171,7 @@ class NodeExecutor:
                 f"[NodeExecutor] Template resolution check: resolve_fn={resolve_params_fn is not None}, nodes={len(nodes) if nodes else 'None'}, edges={len(edges) if edges else 'None'}"
             )
 
-            if resolve_params_fn and nodes is not None and edges is not None:
+            if resolve_params_fn and nodes is not None and edges is not None and not email_templates_resolved:
                 logger.debug(f"[NodeExecutor] Before resolution: params={list(params.keys())}")
                 # ``context["outputs"]`` holds what this run's upstream nodes
                 # produced. Resolving from it rather than only from the shared
@@ -250,6 +252,8 @@ class NodeExecutor:
         tool_args: Optional[Dict[str, Any]] = None,
         parameter_snapshot: Optional[Dict[str, Dict[str, Any]]] = None,
         principal: str = "owner",
+        context: Optional[Dict[str, Any]] = None,
+        resolve_params_fn: Optional[Callable] = None,
     ) -> Dict:
         """Load from DB, validate, inject API keys."""
         # Merge with DB parameters (DB provides defaults, frontend can override)
@@ -262,6 +266,17 @@ class NodeExecutor:
         # the field falls back to its default rather than to the model's value.
         if tool_args:
             merged = restore_locked_fields(get_node_class(node_type), merged, tool_args, db_params)
+
+        # Managed Gmail intake must shrink its body substitutions before the
+        # employeeJob Params boundary, using one frozen set of template values.
+        # The complete original stays in trusted handler context for job capture.
+        if node_type == "employeeJob" and context is not None:
+            from services.employees.email_input import project_managed_gmail_parameters
+            merged, projected_context, handled = await project_managed_gmail_parameters(
+                self.database, node_id, merged, {**context, "node_type": node_type}, resolve_params_fn)
+            if handled:
+                context.update(projected_context)
+                context["_employee_email_templates_resolved"] = node_id
 
         # Validate via plugin Params (snake_case, plugin-only path).
         node_cls = get_node_class(node_type)

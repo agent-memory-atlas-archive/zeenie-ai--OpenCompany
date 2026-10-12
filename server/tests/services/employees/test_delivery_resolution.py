@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from models.employees import EmployeeJob
+from models.database import TeamTask
 from services.employees.delivery_resolution import continue_delivery, dispatch_resolution, recover_delivery_resolutions, resolve_delivery
 from services.employees.jobs import deliver_job
 from services.plugin import NodeContext
@@ -38,6 +39,7 @@ async def install(database, *, tail=True, approval=True):
             "lease_until": (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat(), "outputs": {"gate": {"approved": approval}}})
     async with database.reserved_session() as session:
         session.add(job)
+        session.add(TeamTask(id="task", team_id="team", title="Reviewed work", created_by="lead", status="accepted"))
         await session.commit()
     return job
 

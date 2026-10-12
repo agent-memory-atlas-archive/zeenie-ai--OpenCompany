@@ -3,6 +3,155 @@ from __future__ import annotations
 from typing import Any, Optional
 
 
+def employee_review_input(context: dict) -> dict | None:
+    """Read a single current-run task event before consulting saved parameters."""
+    from services.plugin.edge_walker import extract_task_event_payload
+    trigger_ids = {node.get("id") for node in context.get("nodes", []) if node.get("type") == "taskTrigger"}
+    outputs = {**(context.get("inputs") or {}), **(context.get("outputs") or {})}
+    events = [event for node_id, output in outputs.items() if node_id in trigger_ids
+              and (event := extract_task_event_payload(output))]
+    if len({str(event["task_id"]) for event in events}) > 1:
+        raise ValueError("The employee review task is ambiguous")
+    return events[0] if events else None
+
+
+async def attach_employee_job(database: Any, context: dict, review: dict | None = None):
+    """Attach exact intake/task evidence; a shared generation is not a job ID."""
+    from models.employees import EmployeeJob
+    from models.database import TeamTask
+    from sqlmodel import select
+    workflow_id, caller = context.get("workflow_id"), context.get("node_id")
+    identifier = context.get("employee_job_id")
+    outputs = {**(context.get("inputs") or {}), **(context.get("outputs") or {})}
+    intake_ids = {node.get("id") for node in context.get("nodes", []) if node.get("type") == "employeeJob"}
+    candidates = {str(value["job_id"]) for key, value in outputs.items()
+                  if key in intake_ids and isinstance(value, dict) and value.get("job_id")}
+    if not identifier and not review and not candidates:
+        return None
+    async with database.get_session() as session:
+        if identifier:
+            job = await session.get(EmployeeJob, str(identifier))
+        elif review:
+            job = (await session.execute(select(EmployeeJob).where(
+                EmployeeJob.workflow_id == workflow_id, EmployeeJob.team_id == review.get("team_id"),
+                EmployeeJob.lead_node_id == caller))).scalar_one_or_none()
+            if job is None:
+                return None  # Ordinary teams retain their existing task-trigger handling.
+            task = await session.get(TeamTask, str(review.get("task_id") or ""))
+            if not task or task.workflow_id != workflow_id or task.team_id != review.get("team_id"):
+                raise ValueError("The review task does not belong to this workflow and team")
+        else:
+            if len(candidates) > 1:
+                raise ValueError("The lead intake job is ambiguous")
+            job = await session.get(EmployeeJob, next(iter(candidates))) if candidates else None
+            if job and (job.origin_execution_id != context.get("execution_id") or job.lead_node_id != caller):
+                raise ValueError("The intake job does not belong to this lead execution")
+        if job is None:
+            if identifier:
+                raise ValueError("The admitted employee job is unavailable")
+            return None
+        if job.workflow_id != workflow_id:
+            raise ValueError("The employee job does not belong to this workflow")
+        if review and identifier:
+            task = await session.get(TeamTask, str(review.get("task_id") or ""))
+            if not task or task.workflow_id != workflow_id or task.team_id != job.team_id or job.team_id != review.get("team_id"):
+                raise ValueError("The review task does not belong to this employee job")
+        if caller != job.lead_node_id:
+            from services.employees.job_source import authorize_employee_job_source
+            await authorize_employee_job_source(database, {**context, "employee_job_id": job.id,
+                "parent_node_id": caller})
+        context["employee_job_id"] = job.id
+        if caller == job.lead_node_id:
+            context["_employee_job_team_id"] = job.team_id
+            if job.team_id:
+                from models.database import AgentTeam
+                team = await session.get(AgentTeam, job.team_id)
+                if team:
+                    context["team_execution_id"] = team.execution_id
+        # Captured email data wins over mutable session storage; current-run
+        # task/intake outputs remain authoritative for their own node IDs.
+        captured = dict((job.source or {}).get("outputs") or {})
+        intake_id = (job.source or {}).get("intake_node_id")
+        if not intake_id and (job.source or {}).get("team_plan", {}).get("version") != 2:
+            snapshot = (job.source or {}).get("parameters") or {}
+            possible = [node.get("id") for node in (job.source or {}).get("nodes", [])
+                if node.get("type") == "employeeJob"
+                and (snapshot.get(node.get("id")) or {}).get("operation") == "intake"
+                and (snapshot.get(node.get("id")) or {}).get("lead_node_id") == job.lead_node_id]
+            if len(possible) > 1:
+                raise ValueError("The captured employee intake is ambiguous")
+            intake_id = possible[0] if possible else None
+        if intake_id:
+            from services.employees.email_input import project_stored_mission
+            captured[intake_id] = {"job_id": job.id, "mission": project_stored_mission(job.mission, job.source or {}), "state": job.state}
+        context["outputs"] = {**captured, **outputs}
+        return job
+
+
+async def employee_lead_prompt(database: Any, context: dict, prompt: str) -> str:
+    """Preserve custom v1 lead instructions and project historical bodies on read."""
+    job = await attach_employee_job(database, context)
+    if not job or job.lead_node_id != context.get("node_id") or context.get("parent_node_id"):
+        return prompt
+    if job.origin_execution_id != context.get("execution_id"):
+        return prompt
+    from services.employees.email_input import project_stored_mission
+    source = job.source or {}
+    plan = source.get("team_plan") or {}
+    if plan.get("version") == 2:
+        return project_stored_mission(job.mission, source)
+    if len(prompt) <= 20000:
+        return prompt
+    original = (source.get("email_input") or {}).get("original_mission", job.mission)
+    admitted_mission = project_stored_mission(job.mission, source)
+    if original and admitted_mission in prompt:
+        prompt = prompt.replace(admitted_mission, original)
+    return project_stored_mission(prompt, source)
+
+
+def temporal_job_runtime(context: dict) -> dict:
+    """Validate workflow metadata against the actual activity, never tool arguments."""
+    from temporalio import activity
+    if not activity.in_activity():
+        return {}
+    info = activity.info()
+    runtime = context.get("_employee_runtime") or {}
+    if runtime:
+        if (runtime.get("namespace") != info.workflow_namespace
+            or runtime.get("lead_workflow_id") != info.workflow_id
+            or runtime.get("lead_initial_run_id") != info.workflow_run_id):
+            raise ValueError("Employee runtime identity does not match its activity execution")
+        # The immediate parent is the graph/job execution that started this lead.
+        return {"version": 1, "namespace": info.workflow_namespace,
+            "context_execution_id": context.get("execution_id"),
+            "root_workflow_id": runtime.get("parent_workflow_id") or info.workflow_id,
+            "root_run_id": runtime.get("parent_run_id") or info.workflow_run_id,
+            **{key: runtime[key] for key in ("lead_workflow_id", "lead_initial_run_id", "lead_first_execution_run_id") if runtime.get(key)}}
+    return {"version": 1, "namespace": info.workflow_namespace,
+        "context_execution_id": context.get("execution_id"),
+        "root_workflow_id": info.workflow_id, "root_run_id": info.workflow_run_id}
+
+
+async def capture_employee_runtime(database: Any, context: dict) -> None:
+    if not context.get("employee_job_id") or context.get("parent_node_id"):
+        return
+    runtime = temporal_job_runtime(context)
+    if not runtime:
+        return
+    from models.employees import EmployeeJob
+    async with database.reserved_session() as session:
+        job = await session.get(EmployeeJob, str(context["employee_job_id"]))
+        if not job or job.workflow_id != context.get("workflow_id") or job.lead_node_id != context.get("node_id"):
+            raise ValueError("Runtime identity does not belong to the admitted lead")
+        if job.origin_execution_id != context.get("execution_id"):
+            return  # Review runs must not replace initial lead evidence.
+        existing = (job.source or {}).get("runtime") or {}
+        if existing.get("lead_workflow_id"):
+            return  # Preserve the initial run and first-execution identity across CAN.
+        job.source = {**job.source, "runtime": {**existing, **runtime}}
+        await session.commit()
+
+
 def team_runtime_error(*, settings: Any = None, temporal_client: Any = None, worker_manager: Any = None) -> Optional[str]:
     if settings is None or temporal_client is None:
         from core.container import container
@@ -41,7 +190,8 @@ async def employee_job_mission(database: Any, context: dict) -> Optional[str]:
         return None
     if job.origin_execution_id != context.get("execution_id"):
         return None
-    return job.mission
+    from services.employees.email_input import project_stored_mission
+    return project_stored_mission(job.mission, getattr(job, "source", None) or {})
 
 
 async def employee_job_parameters(database: Any, context: dict) -> dict:
@@ -91,13 +241,7 @@ async def admit_employee_runtime_job(database, context, plan, mission, review=No
     if not plan or context.get("node_id") != plan.get("lead_node_id"):
         return
     if review:
-        from models.employees import EmployeeJob
-        from sqlmodel import select
-        async with database.get_session() as session:
-            found = await session.execute(select(EmployeeJob).where(EmployeeJob.workflow_id == context["workflow_id"], EmployeeJob.lead_node_id == context["node_id"], EmployeeJob.team_id == review.get("team_id")))
-            job = found.scalar_one_or_none()
-        if job:
-            context["employee_job_id"] = job.id
+        await attach_employee_job(database, context, review)
         return
     if context.get("employee_job_id") or context.get("parent_node_id"):
         return

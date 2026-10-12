@@ -265,11 +265,19 @@ class AgentTeamService:
 
     async def finish_durable_team(self, *, workflow_id: str, team_lead_node_id: str, execution_id: Optional[str]) -> Dict[str, Any]:
         team = await self.resolve_lead_scope(workflow_id=workflow_id, team_lead_node_id=team_lead_node_id, execution_id=execution_id)
-        tasks = await self.database.get_team_tasks(team["id"])
-        unresolved = [t for t in tasks if t["status"] not in {"accepted", "cancelled"}]
-        if unresolved:
-            raise ValueError("Team has unresolved tasks")
-        await self.database.update_team_status(team["id"], "completed")
+        from models.database import AgentTeam, TeamTask
+        from sqlmodel import select
+        from services.employees.jobs import managed_job_for_team, no_assignments_failed
+        async with self.database.reserved_session() as session:
+            job = await managed_job_for_team(session, team["id"], {"workflow_id": workflow_id, "node_id": team_lead_node_id})
+            tasks = list((await session.execute(select(TeamTask).where(TeamTask.team_id == team["id"]))).scalars())
+            if job and (not tasks or no_assignments_failed(job)):
+                raise ValueError("Assign work to a connected teammate before finishing this employee team")
+            if any(t.status not in {"accepted", "cancelled"} for t in tasks):
+                raise ValueError("Team has unresolved tasks")
+            row = await session.get(AgentTeam, team["id"])
+            row.status, row.completed_at = "completed", datetime.now(timezone.utc)
+            await session.commit()
         return await self.database.get_team_stats(team["id"])
 
     # -------------------------------------------------------------------------

@@ -1,35 +1,18 @@
 """Real SQLite tests for reviewed, origin-bound employee delivery."""
 from __future__ import annotations
 import asyncio
-import importlib.util
-import sys
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from datetime import datetime, timedelta, timezone
-from uuid import uuid4
 import pytest
 from models.employees import EmployeeJob
+from models.database import TeamTask
 from services.employees.jobs import deliver_job, bind_job_team
 from services.plugin import NodeContext
 
 @pytest.fixture
-async def database():
-    name = "tests._job_db_" + uuid4().hex
-    spec = importlib.util.spec_from_file_location(name, Path(__file__).resolve().parents[3] / "core/database.py")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    db_path = Path.cwd() / (".job-test-" + uuid4().hex + ".db")
-    db = module.Database(SimpleNamespace(database_url=f"sqlite+aiosqlite:///{db_path.as_posix()}", database_echo=False, database_pool_size=5, database_max_overflow=5))
-    await db.startup()
-    try:
-        yield db
-    finally:
-        await db.shutdown()
-        sys.modules.pop(name, None)
-        for path in (db_path, Path(str(db_path) + "-wal"), Path(str(db_path) + "-shm")):
-            path.unlink(missing_ok=True)
+async def database(real_database):
+    yield real_database
 
 @pytest.fixture
 async def runtime(database, monkeypatch):
@@ -50,6 +33,7 @@ async def install(database, *, sink="telegramSend", inflight=None, expired=True)
     job = EmployeeJob(id="job", workflow_id="7", origin_execution_id="origin", lead_node_id="lead", team_id="team", state="working", source=source, delivery=delivery, mission="Mission")
     async with database.reserved_session() as session:
         session.add(job)
+        session.add(TeamTask(id="task", team_id="team", title="Work", created_by="lead", status="accepted"))
         await session.commit()
     return job
 
@@ -85,7 +69,9 @@ async def test_v2_job_keeps_admitted_plan_after_saved_metadata_rollback(database
 @pytest.mark.parametrize("status", ["queued", "running", "submitted", "skipped"])
 async def test_unreviewed_or_skipped_tasks_never_publish(database, runtime, status):
     await install(database)
-    runtime.tasks.return_value = [{"status": status}]
+    async with database.reserved_session() as session:
+        (await session.get(TeamTask, "task")).status = status
+        await session.commit()
     result = await deliver_job(database, context("Assignment acknowledged"), lead_node_id="lead")
     assert result["delivered"] is False
     runtime.execute.assert_not_awaited()
@@ -93,7 +79,9 @@ async def test_unreviewed_or_skipped_tasks_never_publish(database, runtime, stat
 @pytest.mark.parametrize("status", ["failed", "cancelled"])
 async def test_terminal_task_failure_does_not_publish(database, runtime, status):
     await install(database)
-    runtime.tasks.return_value = [{"status": status}]
+    async with database.reserved_session() as session:
+        (await session.get(TeamTask, "task")).status = status
+        await session.commit()
     result = await deliver_job(database, context(), lead_node_id="lead")
     assert result["state"] == status
     runtime.execute.assert_not_awaited()
