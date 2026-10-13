@@ -242,6 +242,28 @@ async def test_valid_workflow_returns_empty_report(monkeypatch):
     assert report == {"errors": [], "warnings": []}
 
 
+@pytest.mark.parametrize("browsers", [[], ["browser"], ["browser", "browser-2"]])
+async def test_a_browser_ai_agent_needs_exactly_one_browser_tool(browsers):
+    """A plugin's own wiring rule (BaseNode.validate_graph) blocks Start and
+    import: a Browser AI Agent without exactly one Browser tool fails as soon
+    as it runs."""
+    import nodes  # noqa: F401 -- populate plugin registry
+    from services.browser_agent_recipe import BROWSER_TOOL_REQUIRED
+    from services.workflow_validator import validate_workflow
+
+    report = await validate_workflow(
+        nodes=[{"id": "agent", "type": "browser_agent", "data": {}},
+               *({"id": browser, "type": "browser", "data": {}} for browser in browsers)],
+        edges=[{"id": f"e-{browser}", "source": browser, "target": "agent",
+                "sourceHandle": "output-tool", "targetHandle": "input-tools"} for browser in browsers],
+        auth_service=_fake_auth(),
+    )
+    issues = [issue for issue in report["errors"] if issue["code"] == "BROWSER_TOOL_REQUIRED"]
+    expected = [] if len(browsers) == 1 else [
+        {"code": "BROWSER_TOOL_REQUIRED", "node_id": "agent", "message": BROWSER_TOOL_REQUIRED}]
+    assert issues == expected
+
+
 async def test_parameters_by_id_overrides_node_data(monkeypatch):
     """When parameters_by_id is supplied, it wins over node.data.parameters.
     Used by the WS execute handler (hydrating from DB) and the

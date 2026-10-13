@@ -17,7 +17,7 @@ A call that comes back to run because the owner pressed Send carries
 ``approval_execution`` (services/approvals/execution.py): it runs only when
 its row is the one being sent, and is never held again.
 
-**Agents outside AgentWorkflow** (rlm, claude_code, vertex, or every agent
+**Agents outside AgentWorkflow** (rlm, claude_code, or every agent
 with AgentWorkflow off) reach plugins through ``services/handlers/tools.py``,
 which calls :func:`check_in_process`. Such a call cannot wait as a draft, so
 while the workflow asks first a call that sends is refused (a restricted

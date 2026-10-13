@@ -82,7 +82,7 @@
   <rect class="box p-purple" x="605" y="200" width="500" height="76" rx="6"/>
   <text class="h2" x="855" y="224" text-anchor="middle">execute_agent / execute_chat_agent</text>
   <text class="sub" x="855" y="244" text-anchor="middle">aiAgent, chatAgent, specialized agents, team leads</text>
-  <text class="small" x="855" y="262" text-anchor="middle">claude_code / codex / rlm / vertex run through the CLI context bridge instead</text>
+  <text class="small" x="855" y="262" text-anchor="middle">claude_code / codex / rlm run through the CLI context bridge instead</text>
 
   <path class="conn" d="M 855 276 L 855 312" marker-end="url(#arrow)"/>
   <text class="label" x="865" y="298">prepare</text>

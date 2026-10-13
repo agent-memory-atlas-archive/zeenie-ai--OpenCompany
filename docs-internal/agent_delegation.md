@@ -62,7 +62,7 @@ Manager tasks remain live.
 
 The stronger guarantee is limited to version 1 Temporal generations. It does
 not turn process-local `asyncio.Task` delegation inside an opaque node into
-independent Temporal roots. Claude Code, RLM, and Vertex managed nodes remain
+independent Temporal roots. Claude Code and RLM nodes remain
 whole-Activity boundaries; their internal calls may continue until that
 Activity settles. Unlimited LLM retries can delay complete Stop acknowledgement,
 and ambiguous external effects remain subject to tool retries/idempotency.
@@ -136,7 +136,7 @@ for tool_info in tool_data:
 
 For agent node types, the method:
 
-1. Resolves the tool name via `_resolve_default_tool_name_description(node_type)` — a closure inside `_build_tool_from_node()` that reads the plugin class's `tool_name` ClassVar (each agent plugin declares `tool_name = "delegate_to_<x>"`). There is no central `DEFAULT_TOOL_NAMES` dict; the name comes from the plugin class via `services.node_registry.get_node_class`. The delegation branch is gated by `_get_tool_schema()`'s `_AGENT_DELEGATION_TYPES` tuple (local to that method in `services/ai.py`) — **18 agents**: the 15 standard delegatable agents (`aiAgent`, `chatAgent`, `android_agent`, `coding_agent`, `web_agent`, `task_agent`, `social_agent`, `travel_agent`, `tool_agent`, `productivity_agent`, `payments_agent`, `consumer_agent`, `autonomous_agent`, `orchestrator_agent`, `ai_employee`), the two bypass-loop agents `rlm_agent` and `claude_code_agent`, and the bridged cloud agent `vertex_managed_agent`. (the `AI_AGENT_TYPES` frozenset in `server/constants.py` mirrors this same 18-entry set; `codex_agent` is not currently in it. The `tool_name = f"delegate_to_{cls.type}"` default is stamped by `BaseNode.__init_subclass__` in `services/plugin/base.py`, so only `aiAgent`, `chatAgent` and `vertex_managed_agent` declare it explicitly.)
+1. Resolves the tool name via `_resolve_default_tool_name_description(node_type)` — a closure inside `_build_tool_from_node()` that reads the plugin class's `tool_name` ClassVar (each agent plugin declares `tool_name = "delegate_to_<x>"`). There is no central `DEFAULT_TOOL_NAMES` dict; the name comes from the plugin class via `services.node_registry.get_node_class`. The delegation branch is gated by `_get_tool_schema()`'s `_AGENT_DELEGATION_TYPES` tuple in `services/ai.py`, which mirrors the authoritative `AI_AGENT_TYPES` frozenset in `server/constants.py`. The `tool_name = f"delegate_to_{cls.type}"` default is stamped by `BaseNode.__init_subclass__` in `services/plugin/base.py`; `aiAgent` and `chatAgent` declare their names explicitly.
 
 2. Creates a `DelegateToAgentSchema` Pydantic model in `_get_tool_schema()` with two fields (`task` -> the child's mission directive / system message, `context` -> the child's input data / prompt):
    ```python
@@ -215,7 +215,7 @@ if node_type in AI_AGENT_TYPES:
     return await _execute_delegated_agent(tool_args, config)
 ```
 
-`AI_AGENT_TYPES` is the single source of truth: the 15 standard delegatable agents plus `rlm_agent`, `claude_code_agent`, and `vertex_managed_agent` (18 total).
+`AI_AGENT_TYPES` in `server/constants.py` is the single source of truth for standard delegatable agents and the CLI/REPL agents that bypass the standard loop.
 
 ---
 
@@ -461,17 +461,17 @@ The parent LLM receives this immediate response from the tool call:
 
 The parent does NOT wait for the child's result. The child's output is broadcast to the UI via WebSocket (`broadcaster.update_node_status`).
 
-### Blocking Delegation for Bridged Cloud Agents (delegation_wait_seconds)
+### Optional Blocking Delegation (delegation_wait_seconds)
 
-Fire-and-forget assumes the parent loop can poll cheaply — a local LLM turn costs milliseconds. A bridged cloud agent (`vertex_managed_agent`) pays a full Interactions API round trip per poll, so it opts into a blocking wait instead:
+Callers may opt into a bounded wait for a delegated child result:
 
-- The bridge sets `config["delegation_wait_seconds"]` (node param, default 600s, clamped to the remaining Temporal activity budget) on the dispatch config for agent-type tools only.
+- The caller sets `config["delegation_wait_seconds"]` on the dispatch config for agent-type tools.
 - `_execute_delegated_agent` then awaits the spawned child via `wait_for_delegation` (`asyncio.wait_for(asyncio.shield(task))` — a timeout cancels the WAITER, never the child) and returns the child's REAL result as the function result, shaped by `_delegation_result_reply`.
 - The reply carries `delegation_lifecycle: True`; `execute_tool` pops it and skips its terminal `success` broadcast (the child's `run_child_agent` already owns the terminal status — an awaited `error` result must not be stomped by a `success` glow).
-- On timeout the child keeps running in the background and the parent receives the standard `status: "delegated"` ack; the vertex bridge declares `check_delegated_tasks` alongside any `delegate_to_*` tool (mirroring the native auto-injection) so the cloud agent can retrieve the result on a later turn. An identical re-call after a timeout hits the `_active_delegations` dedupe and awaits the existing in-flight task instead of duplicating work.
+- On timeout the child keeps running in the background and the parent receives the standard `status: "delegated"` ack. The parent can retrieve the result through `check_delegated_tasks` on a later turn. An identical re-call after a timeout hits the `_active_delegations` dedupe and awaits the existing in-flight task instead of duplicating work.
 - Absent `delegation_wait_seconds` (all native agents), behavior is byte-identical fire-and-forget.
 
-Contract locked by `TestDelegationWait` (`tests/nodes/test_ai_tools.py`) and the vertex bridge tests (`tests/nodes/test_vertex_agents.py`).
+Contract locked by `TestDelegationWait` (`tests/nodes/test_ai_tools.py`).
 
 ### Result Retrieval (check_delegated_tasks Tool)
 

@@ -7,8 +7,9 @@
  * custom (MCP) providers, after a confirmation; for the rest (a paired
  * phone, an email account) it opens the panel, which owns those steps. A
  * card glows when it turns connected. Connection-success feedback belongs
- * to the host. Add opens the custom connector form (AddConnectorForm); a
- * saved connector opens on its own page once the catalogue holds it.
+ * to the host. Add opens the custom connector form (AddConnectorForm), as
+ * does the MCP server card's page (panels/McpAddPanel); a saved connector
+ * opens on its own page once the catalogue holds it.
  */
 
 import { useMemo, useState } from 'react';
@@ -192,7 +193,18 @@ function CredentialsBrowserContent({
         onItemAdded={onItemAdded && ((item) => onItemAdded(item.id))}
         primaryAction={
           customConnectors
-            ? { label: 'Add', form: (close) => <AddConnectorForm close={close} onAdded={(ref) => void openAdded(ref)} /> }
+            ? {
+                label: 'Add',
+                form: (close) => (
+                  <AddConnectorForm
+                    close={close}
+                    onAdded={(ref) => {
+                      close();
+                      void openAdded(ref);
+                    }}
+                  />
+                ),
+              }
             : undefined
         }
       />

@@ -1,6 +1,6 @@
 """Contract for the specialized-provider conversation bridge.
 
-Specialized providers (claude_code, codex, rlm, vertex) do not run through
+Specialized providers (claude_code, codex, rlm) do not run through
 the native agent loop, so the bridge gives them the same continuity
 contract: load the stored conversation at run start, render it into the
 prompt, save the exchange back per turn.

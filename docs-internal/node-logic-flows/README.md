@@ -237,9 +237,6 @@ that a retired node remains registered.
 - [Task Management Agent (`task_agent`)](./specialized_agents/task_agent.md)
 - [Tool Agent (`tool_agent`)](./specialized_agents/tool_agent.md)
 - [Travel Agent (`travel_agent`)](./specialized_agents/travel_agent.md)
-- [Vertex Agent Admin (`vertex_agent_admin`)](./specialized_agents/vertex_agent_admin.md)
-- [Vertex Agent (`vertex_managed_agent`)](./specialized_agents/vertex_managed_agent.md)
-- [Cloud Tool (`vertexCloudTool`)](./specialized_agents/vertexCloudTool.md)
 - [Web Control Agent (`web_agent`)](./specialized_agents/web_agent.md)
 
 ### stripe

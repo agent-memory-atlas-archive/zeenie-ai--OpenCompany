@@ -233,22 +233,6 @@ async def test_rlm_source_task_manager_call_reaches_real_pi_admission(runtime):
 
 
 @pytest.mark.asyncio
-async def test_vertex_task_manager_call_reaches_real_pi_admission(runtime, monkeypatch):
-    from nodes.agent.vertex_managed_agent import VertexManagedAgentNode
-    from services.plugin import NodeContext
-    monkeypatch.setattr("nodes.agent.vertex_managed_agent._ops.record_tool_output", AsyncMock())
-    scope = {key: value for key, value in runtime.scope.items() if key not in {"tool_call_id", "operation_id"}}
-    ctx = NodeContext.from_legacy("parent", "vertex_managed_agent", scope)
-    answer = await VertexManagedAgentNode._execute_bridged_call(
-        {"name": "task_manager", "call_id": "vertex-call", "arguments": assignment()},
-        {"task_manager": {"node_id": "manager", "node_type": "taskManager", "parameters": {}}}, ctx)
-    assert answer["result"]["delegation"]["status"] == "delegated"
-    request = runtime.client.start_workflow.await_args.args[1]
-    assert request["lifecycle"]["trace_id"] == "vertex-call"
-    assert request["child_context"]["user_id"] == "alice"
-
-
-@pytest.mark.asyncio
 async def test_native_ai_service_task_manager_uses_shared_recorded_call_identity(runtime, monkeypatch):
     from services import ai as module
     from services.ai import AIService

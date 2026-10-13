@@ -375,6 +375,10 @@ class BrowserNode(ToolNode):
     hide_output_handle = False
     ui_hints = {"isBrowserPanel": True, "isConfigNode": False}
     annotations = {"destructive": True, "readonly": False, "open_world": True}
+    # The task's claim token and frozen binding and settings
+    # (services/browser_owners.py); a call that has none belongs to no task.
+    context_keys = ("_browser_task_id", "_browser_owner", "parameter_snapshot",
+                    "native_workspace_version", "browser_runtime_version", "browser_routing_version")
     task_queue = TaskQueue.BROWSER
     # A page can do anything its logins allow; while the owner asks first
     # it only reads, and hands changes to them (request_user).
@@ -450,7 +454,7 @@ class BrowserNode(ToolNode):
         runtime = get_browser_runtime()
         profile = await _profile_for(ctx, cfg)
         owner = ctx.user_id or "owner"
-        task_id = str(ctx.raw.get("_browser_task_id") or ctx.execution_id or "")
+        task_id = ctx.raw.get("_browser_task_id")
         from services.browser_owners import assert_owner, bind_profile, _persistent
         from services.plugin.deps import get_database
         if ctx.raw.get("_browser_owner") or _persistent(get_database()):

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -159,68 +158,3 @@ async def test_codex_node_routes_observable_context_without_resume(harness):
     assert kwargs.get("connected_memory") is None
     assert result["result"].get("session_id") is None
     assert result["result"]["tasks"][0]["session_id"] is None
-
-
-@pytest.mark.asyncio
-async def test_vertex_records_context_turn_and_redacts_ids_from_output(harness):
-    nodes, edges = _context_graph("vertex-1", "vertex_managed_agent")
-    bridge = MagicMock()
-    bridge.record_turn = AsyncMock()
-    bridge.augment_prompt = MagicMock(
-        side_effect=lambda prompt: f"prior\n{prompt}"
-    )
-    interaction = SimpleNamespace(
-        id="ix-next",
-        status="completed",
-        environment_id="env-next",
-        output_text="answer",
-        steps=[],
-        usage=None,
-    )
-
-    with (
-        patched_container(auth_api_keys={}),
-        patched_broadcaster() as broadcaster,
-        patch(
-            "services.cli_agent.context_bridge."
-            "SpecializedAgentContextBridge.resolve",
-            AsyncMock(return_value=bridge),
-        ),
-        patch(
-            "nodes.agent.vertex_managed_agent.build_genai_client",
-            return_value=MagicMock(),
-        ),
-        patch(
-            "nodes.agent.vertex_managed_agent.stream_interaction",
-            AsyncMock(return_value=interaction),
-        ) as stream,
-    ):
-        broadcaster.broadcast_agent_progress = AsyncMock()
-        broadcaster.broadcast = AsyncMock()
-        result = await harness.execute(
-            "vertex_managed_agent",
-            {
-                "prompt": "continue",
-                "project_id": "project",
-                "visualize_cloud_tools": False,
-            },
-            node_id="vertex-1",
-            context=harness.build_context(
-                nodes=nodes,
-                edges=edges,
-                extra={"generation": 1},
-            ),
-        )
-
-    harness.assert_envelope(result, success=True)
-    _, kwargs = stream.call_args
-    # Context-bound runs never chain remote interactions: continuity comes
-    # from the stored conversation rendered into the prompt.
-    assert "previous_interaction_id" not in kwargs
-    assert kwargs["environment"] == "remote"
-    assert kwargs["input"] == "prior\ncontinue"
-    assert result["result"]["interaction_id"] is None
-    assert result["result"]["environment_id"] is None
-    # The exchange is recorded with the ORIGINAL prompt, never the
-    # augmented one, so a later save cannot nest the transcript.
-    bridge.record_turn.assert_awaited_once_with("continue", "answer")

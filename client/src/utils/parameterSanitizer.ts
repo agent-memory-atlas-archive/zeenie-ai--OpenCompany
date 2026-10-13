@@ -78,9 +78,9 @@ const SENSITIVE_SUBSTRINGS = [
 // separates the two with no overlap.
 //
 // There is deliberately no `key` suffix rule. It reads plausible and it is
-// wrong: `vertexCloudTool.cloud_tool_key` is the stable identifier of a
-// cloud-side tool (`type:...` / `fn:...`), so stripping it would silently
-// destroy that node on export. Credential-shaped `*_key` names are already
+// wrong: fields such as `cloud_tool_key` can be stable identifiers rather
+// than credentials, so stripping them would lose configuration on export.
+// Credential-shaped `*_key` names are already
 // covered by the `api_key` / `private_key` substrings above. Verified against
 // every Params field on all registered plugins -- do not add `key` here
 // without re-running that check.
@@ -120,7 +120,7 @@ const RUNTIME_KEYS = normalizedSet([
   'memory_jsonl',
   // simpleMemory: the Claude Code session UUID from the last successful run.
   'last_session_id',
-  // vertexManagedAgent: handles into a cloud-side conversation and its
+  // Legacy Vertex handles into a cloud-side conversation and its
   // environment. Exporting them hands the recipient a pointer into the
   // author's own Vertex session.
   'vertex_interaction_id',

@@ -236,6 +236,13 @@ class BaseNode:
     ) -> Dict[str, Any]:
         return {"reset": False}
 
+    # Wiring this node needs to run, checked before Start and import
+    # (services/workflow_validator.py). Returns validator errors,
+    # ``{"code", "node_id", "message"}``; none by default.
+    @classmethod
+    def validate_graph(cls, node_id: str, graph: Dict[str, Any]) -> Sequence[Dict[str, Any]]:
+        return ()
+
     # ---- declaration (override in subclass) -------------------------------
     type: ClassVar[str] = ""
     version: ClassVar[int] = 1
@@ -281,6 +288,12 @@ class BaseNode:
     # forward the parent workflow's canvas into the per-tool activity
     # context). Currently only :class:`AgentBuilderNode` opts in.
     needs_canvas: ClassVar[bool] = False
+
+    # Server-owned execution scope this plugin reads from ``ctx.raw``, such
+    # as the Browser's claim token. Both tool adapters (``as_activity`` and
+    # the in-process ``_dispatch_tool``) copy these keys from the run's
+    # context; a model's arguments never supply them.
+    context_keys: ClassVar[Sequence[str]] = ()
 
     # Wave 12 D5: LLM-visible name + description for plugins surfaced as
     # AI tools (ToolNode subclasses, ActionNodes marked usable_as_tool=True,
@@ -496,9 +509,8 @@ class BaseNode:
         # This is the ONLY honest signal for it. ``componentKind`` is a
         # rendering key -- socialSend/socialReceive declare "agent" purely to
         # get the multi-handle layout while being plain ActionNodes -- and
-        # ``group`` disagrees the other way (vertex_agent_admin is group
-        # "agent" but a REST-API square). The declared timeout is exactly the
-        # 19 genuinely long-running nodes, with no heuristic.
+        # ``group`` only identifies a palette category. The declared timeout
+        # describes how long a node can run without a category heuristic.
         #
         # Rides uiHints deliberately: ``node_spec.get_node_spec`` copies a
         # fixed tuple of top-level keys, so a new top-level field would need a
@@ -1293,6 +1305,8 @@ class BaseNode:
                     # what it shows goes (show_ui, services/chat/parts.py).
                     "chat_stream",
                     "chat_run_id",
+                    # The scope this plugin reads itself (context_keys).
+                    *cls.context_keys,
                 ):
                     if key in context:
                         extras[key] = context[key]

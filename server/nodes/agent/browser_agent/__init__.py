@@ -3,7 +3,9 @@ from typing import Any, Optional
 
 from pydantic import Field
 
-from services.browser_agent_recipe import BROWSER_AGENT_ROLE, browser_tool_id
+from services.browser_agent_recipe import (
+    BROWSER_AGENT_ROLE, BROWSER_TOOL_REQUIRED, browser_tool_id, connected_browser_tools,
+)
 from services.plugin import NodeContext, Operation
 from .._specialized import SpecializedAgentBase, SpecializedAgentParams
 
@@ -44,13 +46,22 @@ class BrowserAgentNode(SpecializedAgentBase):
             await cleanup_browser_task(database, binding, task_id)
 
     @classmethod
+    def validate_graph(cls, node_id: str, graph: dict) -> list[dict]:
+        if len(connected_browser_tools(graph, node_id)) == 1:
+            return []
+        return [{"code": "BROWSER_TOOL_REQUIRED", "node_id": node_id, "message": BROWSER_TOOL_REQUIRED}]
+
+    @classmethod
     async def reset_execution_state(cls, *, node_id: str, workflow_id: str, execution_id: str,
                                     generation: int, graph: dict, database: Any) -> dict:
         from services.browser_owners import routing_for_node, cleanup_browser_task
 
-        if not execution_id:
+        # Without exactly one Browser tool execute_op refused before claiming,
+        # so there is nothing to release and Reset must not fail on the graph.
+        tools = connected_browser_tools(graph, node_id)
+        if not execution_id or len(tools) != 1:
             return {"reset": False}
-        tool = browser_tool_id(graph, node_id)
+        tool = next(iter(tools))
         principal = str(graph.get("owner_id") or "owner")
         binding = await routing_for_node(database, workflow_id, tool, principal)
         return await cleanup_browser_task(database, binding, f"{execution_id}:{node_id}")

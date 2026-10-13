@@ -93,10 +93,10 @@ const QUEUE_MAX_SIZE = WS_RECONNECT.MAX_ENQUEUED_MESSAGES;
  * How long to let an `execute_node` request stay in flight.
  *
  * Read from the node's own spec rather than a local list. The two hardcoded
- * arrays this replaced had drifted to 5-of-10 triggers and 16-of-21 agents,
- * so eight node types — emailReceive, googleGmailReceive, stripeReceive,
- * taskTrigger, twitterReceive, claude_code_agent, codex_agent,
- * vertex_managed_agent — hit the 30 s default and produced a phantom
+ * arrays this replaced had drifted from the backend trigger and agent lists,
+ * so types such as emailReceive, googleGmailReceive, stripeReceive,
+ * taskTrigger, twitterReceive, claude_code_agent, and codex_agent
+ * hit the 30 s default and produced a phantom
  * "Request timeout: execute_node" entry while the backend kept running.
  *
  * Spec unknown (cold cache, or the revision-bust window in nodeSpec.ts)

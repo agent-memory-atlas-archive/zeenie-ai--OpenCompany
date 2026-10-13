@@ -42,7 +42,6 @@ server/skills/
 ├── terminal/                 # Shell skills (shell, bash, powershell, wsl, process-manager)
 ├── travel_agent/             # geocoding-skill, nearby-places-skill
 ├── vercel/                   # vercel-skill (Vercel CLI)
-├── vertex_agent/             # vertex-agent-skill, vertex-agent-admin-skill
 └── web_agent/                # Web automation skills
       browser-skill, http-request-skill, apify-skill,
       crawlee-scraper-skill, tikhub-skill, proxy-config-skill, duckduckgo-search-skill,

@@ -25,6 +25,7 @@ const PANEL_LOADERS: Record<PanelKind, () => Promise<{ default: React.ComponentT
   email: () => import('./panels/EmailPanel'),
   browserProfiles: () => import('./panels/BrowserProfilesPanel'),
   mcp: () => import('./panels/McpConnectorPanel'),
+  mcpAdd: () => import('./panels/McpAddPanel'),
 };
 
 // Memoize the lazy wrappers at module scope so switching providers of
@@ -38,6 +39,7 @@ const LAZY_PANELS: Record<PanelKind, React.LazyExoticComponent<React.ComponentTy
   email: React.lazy(PANEL_LOADERS.email),
   browserProfiles: React.lazy(PANEL_LOADERS.browserProfiles),
   mcp: React.lazy(PANEL_LOADERS.mcp),
+  mcpAdd: React.lazy(PANEL_LOADERS.mcpAdd),
 };
 
 export interface CredentialPanelProps {
@@ -47,6 +49,8 @@ export interface CredentialPanelProps {
   showTechnicalSections?: boolean;
   /** Leave this provider's page: the panel removed the provider itself. */
   onLeave?: () => void;
+  /** Show another provider's page: one the panel just added. */
+  onOpen?: (providerId: string) => void;
 }
 
 interface Props extends Omit<CredentialPanelProps, 'config'> {
@@ -66,7 +70,7 @@ const EmptyState: React.FC<{ icon: React.ReactNode; message: string }> = ({ icon
   </div>
 );
 
-const PanelRenderer: React.FC<Props> = ({ config, visible, showTechnicalSections = false, onLeave }) => {
+const PanelRenderer: React.FC<Props> = ({ config, visible, showTechnicalSections = false, onLeave, onOpen }) => {
   const Lazy = useMemo(() => {
     if (!config) return null;
     return LAZY_PANELS[config.kind] ?? null;
@@ -97,7 +101,7 @@ const PanelRenderer: React.FC<Props> = ({ config, visible, showTechnicalSections
     <Suspense fallback={<PanelFallback />}>
       {/* Provider identity resets transient errors/reveal state. Mode changes
           keep the same panel mounted and preserve the active connection draft. */}
-      <Lazy key={config.id} config={config} visible={visible} showTechnicalSections={showTechnicalSections} onLeave={onLeave} />
+      <Lazy key={config.id} config={config} visible={visible} showTechnicalSections={showTechnicalSections} onLeave={onLeave} onOpen={onOpen} />
     </Suspense>
   );
 };

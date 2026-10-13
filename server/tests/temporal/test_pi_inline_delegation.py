@@ -56,7 +56,7 @@ async def runtime(monkeypatch):
     monkeypatch.setattr("services.plugin.deps.get_database", lambda: database)
     config = {"node_type": "coding_agent", "node_id": "coding", "parent_node_id": "parent", "workflow_id": "wf",
         "execution_id": "execution", "root_execution_id": "root", "tool_call_id": "recorded-call", "pi_harness_version": 1,
-        "user_id": "alice", "database": database, "nodes": [{"id": "parent", "type": "vertex_managed_agent"}, {"id": "coding", "type": "coding_agent"}],
+        "user_id": "alice", "database": database, "nodes": [{"id": "parent", "type": "rlm_agent"}, {"id": "coding", "type": "coding_agent"}],
         "edges": [{"source": "coding", "target": "parent", "targetHandle": "input-tools"}], "workspace_dir": "forged",
         "execution_control_version": 1, "controller_workflow_id": "controller", "generation": 3,
         "execution_control_root_run_id": "parent-root", "execution_control_state": "paused", "execution_control_revision": 4}

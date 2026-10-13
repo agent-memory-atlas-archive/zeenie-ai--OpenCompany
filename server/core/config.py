@@ -359,8 +359,9 @@ class Settings(BaseSettings):
 
     # OpenCompany Gateway (hosted LiteLLM, gateway/): with a gateway key in
     # Connectors, LLM calls for a provider this install has no key of its
-    # own for go through the gateway on the person's allowance.
-    gateway_enabled: bool = Field(default=False, validation_alias="OPENCOMPANY_GATEWAY_ENABLED")
+    # own for go through the gateway on the person's allowance. On by
+    # default; false hides the card and turns the routing off.
+    gateway_enabled: bool = Field(default=True, validation_alias="OPENCOMPANY_GATEWAY_ENABLED")
     gateway_url: str = Field(default="https://api.gw.opencompany.sh", validation_alias="OPENCOMPANY_GATEWAY_URL")
 
     # Residential Proxy Configuration

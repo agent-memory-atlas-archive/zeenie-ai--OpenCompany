@@ -16,6 +16,8 @@
  *                         `ICON_LIBRARIES` below). `<brand>` is a
  *                         case-insensitive lookup. `.Color` variant
  *                         preferred, `.Avatar` fallback.
+ *   `opencompany:mark`  → the app's own mark (components/brand), for
+ *                         the connectors OpenCompany provides itself.
  *   `data:...`          → data-URI passthrough (inline SVG / base64).
  *   `http(s)://...`     → remote URL passthrough.
  *   `/...`              → absolute local URL passthrough.
@@ -30,6 +32,7 @@ import * as React from 'react';
 import * as Lucide from 'lucide-react';
 
 import { API_CONFIG } from '../../config/api';
+import { MARK_PATH, MARK_VIEWBOX } from '../../components/brand/geometry';
 // Deep imports of just the brand icons we expose via `lobehub:<brand>`.
 // A namespace import (`import * as Lobehub`) would re-evaluate the package
 // index, which re-exports antd-using feature modules (Editor / Dashboard /
@@ -56,6 +59,7 @@ import GoogleCloud from '@lobehub/icons/es/GoogleCloud';
 import XAI from '@lobehub/icons/es/XAI';
 import ElevenLabs from '@lobehub/icons/es/ElevenLabs';
 import DeepL from '@lobehub/icons/es/DeepL';
+import MCP from '@lobehub/icons/es/MCP';
 
 type RawSvg = string;
 
@@ -168,7 +172,17 @@ const LOBEHUB_BRANDS: Readonly<Record<string, any>> = {
   xai: XAI,
   elevenlabs: ElevenLabs,
   deepl: DeepL,
+  mcp: MCP,
 };
+
+// The app's own mark (components/brand/geometry.ts) as `opencompany:mark`:
+// one path in the text colour, like the lucide glyphs.
+const OpenCompanyMark: LibraryIcon = ({ className }) =>
+  React.createElement(
+    'svg',
+    { viewBox: MARK_VIEWBOX, fill: 'currentColor', className, 'aria-hidden': true, focusable: 'false' },
+    React.createElement('path', { d: MARK_PATH }),
+  );
 
 const ICON_LIBRARIES: Readonly<Record<string, LibraryResolver>> = {
   lobehub: (brand) => {
@@ -199,6 +213,9 @@ const ICON_LIBRARIES: Readonly<Record<string, LibraryResolver>> = {
     if (entry && typeof entry === 'object' && '$$typeof' in entry) return entry;
     return null;
   },
+  // Not a package: the app's own brand, for the connectors OpenCompany
+  // provides itself (the Gateway card).
+  opencompany: (name) => (name.toLowerCase() === 'mark' ? OpenCompanyMark : null),
   // Add `simpleicons` / other NPM icon packages here as needed:
   // simpleicons: (brand) => import('simple-icons').si[brand]?.svg ...
 };

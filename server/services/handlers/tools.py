@@ -250,6 +250,8 @@ async def _dispatch_tool(tool_name: str, tool_args: Dict[str, Any], config: Dict
         if checked.tool_args is not None:
             tool_args = checked.tool_args
 
+        # The scope this plugin reads itself (BaseNode.context_keys).
+        context.update({key: config[key] for key in plugin_cls.context_keys if key in config})
         instance = plugin_cls()
         ctx = NodeContext.from_legacy(
             node_id=config.get("node_id", f"tool_{node_type}"),
@@ -405,12 +407,9 @@ async def _execute_delegated_agent(
     # Get parent node ID for duplicate tracking
     parent_node_id = config.get("parent_node_id", "")
 
-    # Opt-in blocking wait (delegation_wait_seconds in config): bridged
-    # cloud agents (vertex_managed_agent) cannot poll cheaply — a
-    # check_delegated_tasks round trip costs a full Interactions API turn
-    # — so they await the child inline and fall back to the polling
-    # contract only on timeout. Absent key = fire-and-forget (native
-    # agent loop, unchanged).
+    # Opt-in blocking wait (delegation_wait_seconds in config): callers
+    # await the child inline and fall back to polling on timeout.
+    # Without the setting, delegation runs in the background.
     wait_seconds = float(config.get("delegation_wait_seconds") or 0)
 
     # Generate hash of task to detect duplicate delegation attempts

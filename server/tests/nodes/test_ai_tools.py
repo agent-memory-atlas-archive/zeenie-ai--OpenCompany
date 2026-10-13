@@ -606,7 +606,7 @@ class TestDelegationWait:
             "node_id": "child-1",
             "node_type": "aiAgent",
             "workflow_id": "wf-1",
-            "parent_node_id": "vertex-1",
+            "parent_node_id": "parent-1",
             "parameters": {"label": "child_agent"},
             "ai_service": MagicMock(),
             "database": database,

@@ -7,13 +7,17 @@
  *   - unknown lucide names return null instead of an unrenderable value
  *   - lobehub regression: `lobehub:Claude` still wires to the branded
  *     library export
+ *   - `opencompany:mark` draws the app's own mark
  *   - asset:* / data: / http: / emoji passthrough still behaves
  */
 
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
+import * as React from 'react';
+import { render } from '@testing-library/react';
 import { describe, it, expect } from 'vitest';
+import { MARK_PATH } from '../../components/brand/geometry';
 import { resolveLibraryIcon, resolveIcon } from './index';
 
 /** Every `meta.json` under server/nodes, found without a glob dependency. */
@@ -51,6 +55,16 @@ describe('resolveLibraryIcon', () => {
   it('still resolves lobehub brand icons (regression)', () => {
     const Icon = resolveLibraryIcon('lobehub:Claude');
     expect(Icon).not.toBeNull();
+  });
+
+  it('draws the OpenCompany mark in the text colour for opencompany:mark only', () => {
+    const Icon = resolveLibraryIcon('opencompany:mark');
+    expect(Icon).not.toBeNull();
+    const { container } = render(React.createElement(Icon!, { className: 'h-full w-full' }));
+    const svg = container.querySelector('svg');
+    expect(svg?.getAttribute('fill')).toBe('currentColor');
+    expect(svg?.querySelector('path')?.getAttribute('d')).toBe(MARK_PATH);
+    expect(resolveLibraryIcon('opencompany:logo')).toBeNull();
   });
 
   /**

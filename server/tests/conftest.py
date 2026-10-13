@@ -5,6 +5,7 @@ before any handler/service is loaded so node tests don't pay the cost of
 real DI or Temporal runtimes during collection.
 """
 
+import os
 import sys
 import types
 from pathlib import Path
@@ -20,6 +21,13 @@ pytest_plugins = ("tests.database_fixtures",)
 SERVER_DIR = Path(__file__).parent.parent
 if str(SERVER_DIR) not in sys.path:
     sys.path.insert(0, str(SERVER_DIR))
+
+# The OpenCompany Gateway is on by default (core/config.py). Under test it is
+# off, as on an install with no gateway key: once the real core.container is
+# imported (middleware.auth does), its router would read the credentials
+# database, which most tests never set up. Gateway tests build their router
+# with explicit settings.
+os.environ["OPENCOMPANY_GATEWAY_ENABLED"] = "false"
 
 
 def _make_package(name: str) -> types.ModuleType:

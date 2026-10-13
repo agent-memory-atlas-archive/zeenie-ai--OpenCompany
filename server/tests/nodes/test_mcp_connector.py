@@ -213,6 +213,17 @@ def test_a_key_in_the_urls_path_is_never_kept_in_plain_text():
     assert "tok-123" not in json.dumps(meta) and "q-456" not in json.dumps(meta)
 
 
+async def test_the_mcp_server_card_is_where_one_is_added_and_is_never_connected(auth):
+    from services.credential_registry import get_credential_registry, provider_connection_state
+
+    [card] = [provider for provider in get_credential_registry().get_catalogue()["providers"] if provider["id"] == "mcp"]
+    assert (card["name"], card["kind"], card["consumer_category"], card["icon_ref"]) == ("MCP server", "mcpAdd", "custom", "lobehub:mcp")
+    assert card["fields"] == []
+    # Saved connectors are their own cards; this one only adds them.
+    state = await provider_connection_state(card, auth)
+    assert (state["stored"], state["connected"]) == (False, False)
+
+
 def test_a_slug_starts_with_a_letter_as_a_tool_name_must():
     assert new_slug("Orders", URL) == "orders"
     assert new_slug("", URL) == "mcp-127-0-0-1"

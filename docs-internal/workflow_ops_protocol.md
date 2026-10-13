@@ -165,7 +165,6 @@ failures (toast, log, retry, etc.).
 | Agent Builder runtime tools | `apply_graph_additions`, then the persisted `workflow_ops_apply` push (mid-execution, from the agent's tool call) | `server/nodes/tool/agent_builder/__init__.py` |
 | Turn on Talk (any employee on Home, hired or built in Dev mode) | `apply_graph_additions`, then the persisted push | `server/services/employees/handlers.py` |
 | Upgrading an employee an older builder made (on Apply, Turn on Talk, Start) | `apply_graph_additions` with `removed_edges`, then the persisted push | `server/services/employees/upgrade.py` |
-| Vertex managed agent cloud-tool nodes | whole-graph `database.save_workflow`, then a push that is NOT persisted (the editor saves the parameter rows) | `server/nodes/agent/vertex_managed_agent/_ops.py` |
 
 ## Two delivery modes
 

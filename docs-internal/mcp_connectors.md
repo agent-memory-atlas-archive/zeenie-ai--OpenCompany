@@ -1,8 +1,9 @@
 # MCP Connectors
 
 The owner connects OpenCompany to an outside MCP server from Connectors →
-**Add**: its URL, a name, and how it signs in. Each saved connector is its own
-card on the Connectors page, and its tools are what that server offers.
+**Add**, or from the **MCP server** card (Custom category), whose page is the
+same form: its URL, a name, and how it signs in. Each saved connector is its
+own card on the Connectors page, and its tools are what that server offers.
 
 Here OpenCompany is the MCP **client**. The opposite direction, where CLI
 agents call into OpenCompany's own MCP server (`/mcp/ide`), is a separate
@@ -22,6 +23,7 @@ thing: see [CLI Agent Framework](./cli_agent_framework.md).
 | The outbound address rules, shared with the Browser node | `server/services/netpolicy.py` |
 | The cards' shared fields, and the `custom` categories | `server/config/credential_providers.json` (`_mcp_connector`) |
 | The Add form | `client/src/components/credentials/AddConnectorForm.tsx` |
+| The MCP server card's page (the same form) | `client/src/components/credentials/panels/McpAddPanel.tsx` |
 | A connector's page | `client/src/components/credentials/panels/McpConnectorPanel.tsx` |
 | The card's wire type | `ServerMcpConnector` in `client/src/hooks/useCatalogueQuery.ts` |
 
@@ -115,6 +117,15 @@ card per saved connector from the `_mcp_connector` template
   their settings, the waiting change, and when the tools were read.
 
 No secret is ever on the card.
+
+The **MCP server** card is where one is added: a static provider, `mcp` in
+`credential_providers.json`, with `kind` `mcpAdd`, `consumer_category`
+`custom`, the MCP logo (`lobehub:mcp`), and no fields. It is never connected
+itself (no rule makes it `stored`). Its page (`panels/McpAddPanel.tsx`) is the
+custom connector form. A saved connector's page then opens through the
+panel's `onOpen`: ProviderPage refetches the catalogue first, then the
+credentials dialog shows it. Cancel, or an OAuth sign-in that goes on in its
+own tab, goes back to the list.
 
 ## Commands
 

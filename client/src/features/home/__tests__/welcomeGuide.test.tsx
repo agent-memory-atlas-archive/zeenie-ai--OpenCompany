@@ -119,7 +119,7 @@ describe('WelcomeGuide opening', () => {
   it('starts on Welcome when the saved step is not one of its steps', async () => {
     settingsRow = { onboarding_completed: false, onboarding_step: 7 };
     renderGuide();
-    expect(await screen.findByRole('heading', { name: 'Your AI team, hired in plain words.' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Your AI employees, hired in plain words.' })).toBeInTheDocument();
   });
 
   it('never opens by itself for an owner who finished it', async () => {

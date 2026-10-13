@@ -186,7 +186,7 @@ The watchdog excludes stopped
 generations from age expiry; successful Resume persists `last_resumed_at` in
 existing control metadata to give a fresh timeout window. Direct Workspace
 tasks and separately approved delivery continuations remain independent.
-Claude Code, RLM and Vertex managed agents drain at their whole Activity boundary.
+Claude Code and RLM agents drain at their whole Activity boundary.
 
 Real SDK integration tests use stub Activities and replay captured new and
 legacy histories. They exercise parallel drain, attached children, late roots,

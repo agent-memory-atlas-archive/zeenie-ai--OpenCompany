@@ -1,7 +1,7 @@
 """Plain conversation bridge for specialized agent runtimes.
 
 Canvas Context nodes carry policy and topology only. Specialized providers
-(claude_code, codex, rlm, vertex) do not run through the native agent loop,
+(claude_code, codex, rlm) do not run through the native agent loop,
 so this module gives them the same continuity contract the loop has: load
 the stored conversation for ``(workflow_id, generation, agent_node_id)`` at
 run start, render it into the prompt, and save the exchange back per turn.

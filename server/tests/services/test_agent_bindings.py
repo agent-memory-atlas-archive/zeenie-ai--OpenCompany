@@ -161,6 +161,7 @@ async def test_native_tool_dispatch_preserves_server_execution_scope(monkeypatch
     captured = {}
     class Tool:
         credentials = ()
+        context_keys = ()
         async def execute_as_tool(self, args, params, context):
             captured.update(context.raw)
             return {"success": True}

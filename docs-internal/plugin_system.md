@@ -79,6 +79,8 @@ class SpecializedAgentBase(ActionNode, abstract=True):
 | `Output` | Pydantic `BaseModel` — runtime output shape. |
 | `usable_as_tool` | `ActionNode` flag — mints a ToolNode adapter for AI invocation. Combined with `component_kind != "model"`, makes the plugin visible to `agentBuilder.add_tool` (catalogue + rebind paths). **Side effect:** setting it auto-sets `hide_input_handle` / `hide_output_handle` to `True` unless the class declares them (`BaseNode.__init_subclass__` in [base.py](../server/services/plugin/base.py), which does the same for `component_kind == "tool"`), and `_metadata_dict` adds an `output-tool` handle. The frontend (`SquareNode`) reads the hide flags only when a spec declares no handles; a spec with handles renders exactly what it declares. So a dual-purpose node that must stay wirable on the canvas declares `input-main` / `output-main` in `handles`; setting the flags `False` alone does not add them. |
 | `needs_canvas` | `ClassVar[bool]` — when `True`, the F4.B `AgentWorkflow` tool-dispatch forwards the parent workflow's `nodes`/`edges` into the per-tool activity payload. Today only `AgentBuilderNode` opts in: `add_tool` compares the run's canvas with the saved graph, so a tool saved earlier but missing from the running snapshot is handed back to be bound. Its calling agent comes from `invoking_agent_node_id` / `parent_node_id`, not from edges. |
+| `context_keys` | `ClassVar[Sequence[str]]` — server-owned execution scope the node reads from `ctx.raw`, such as the Browser's claim token (`_browser_task_id`), its binding (`_browser_owner`), `parameter_snapshot` and the browser version flags. Both tool adapters, `as_activity` and the in-process `_dispatch_tool`, copy these keys from the run's context; a model's arguments never supply them. Without the declaration both adapters rebuilt the node's context from their own key lists, dropped the Browser's token, and the node refused its own task (BrowserBusy). |
+| `validate_graph(node_id, graph)` | Classmethod returning validator errors (`{"code", "node_id", "message"}`) for the wiring the node needs to run; none by default. `validate_workflow` collects them for every node, so Start and import refuse the workflow; save does not (it keeps only Context topology errors). The Browser AI Agent reports `BROWSER_TOOL_REQUIRED` unless exactly one Browser node is on its `input-tools`. |
 | `chat_step` / `chat_step_hidden` | How a call of this tool reads as a working step in the chat while it answers the owner ("Searched the web"; default "Used <display name>"); `chat_step_hidden = True` shows none (the clock, the checklist). A tool may put a short line in its result as `_step_detail`, shown under the step and removed before the model reads the result. See [Chat Protocol](./chat_protocol.md#streaming-steps-and-stop). |
 | `answers_chat_run` | `ClassVar[bool]` — the node posts a chat run's answer (Reply in Chat). The agent wired straight into such a node streams its text into the chat. |
 | `approval` | `ApprovalSpec` (`services/plugin/approval.py`) for a tool that reaches someone outside: which operations send (`operations`, `when`), who it goes to, the body and subject the owner may edit, the card's other lines, `refuse_while_asking` (Stripe) or `restrict_while_asking` (the browser, read-only). While the workflow asks first, an agent's call that sends is held as a draft for the owner instead of running. See [Chat Protocol, Approvals](./chat_protocol.md#approvals). |
@@ -560,11 +562,11 @@ Activities use their frozen owner's physical queue regardless of the worker
 pool switch; generic orchestration workers exclude them. The authoritative
 native type set is `AGENT_WORKFLOW_TYPES` in `services/temporal/workflow.py`.
 
-**Agents that stay as single activities**: `rlm_agent`,
-`claude_code_agent`, and `vertex_managed_agent`. Their internal session state
-(RLM REPL, Claude CLI `--resume` with stable `cwd`, or Vertex interaction and
-environment chaining) remains inside one Activity. Cooperative Stop drains
-that whole Activity; it cannot stop between tools hidden inside that session.
+**Agents that stay as single activities**: `rlm_agent` and
+`claude_code_agent`. Their internal session state
+(RLM REPL or Claude CLI `--resume` with stable `cwd`) remains inside one
+Activity. Cooperative Stop drains that whole Activity; it cannot stop between
+tools hidden inside that session.
 
 Queue distribution (live count via
 `distinct_task_queues()` and `len(_NODE_CLASS_REGISTRY)`):
@@ -775,13 +777,12 @@ server/
 ├── nodes/                        # One self-contained folder per plugin (Wave 11.H)
 │   ├── __init__.py              # pkgutil.walk_packages discovery
 │   ├── groups.py                # Palette group metadata
-│   ├── agent/                   # AI agents — 22 folders (aiAgent, chatAgent, 13 SpecializedAgentBase
-│   │   │                        # subclasses, rlm / claude_code / codex, vertex_* variants)
+│   ├── agent/                   # AI agents (aiAgent, chatAgent, SpecializedAgentBase
+│   │   │                        # subclasses, rlm / claude_code / codex variants)
 │   │   ├── _handles.py          # Shared handle topology helpers
 │   │   ├── _inline.py           # prepare_agent_call()
 │   │   ├── _provider.py         # ProviderRef: the loader-driven provider field every agent shares
 │   │   ├── _specialized.py      # SpecializedAgentBase
-│   │   ├── _vertex.py           # Shared Vertex Agent Engine helpers
 │   │   └── <agent>/__init__.py  # one folder per agent
 │   ├── model/                   # AI chat models (one per provider except xAI, plus openaiCompatibleChatModel for named endpoints)
 │   │   ├── _base.py             # ChatModelBase + ChatModelParams/Output

@@ -23,8 +23,11 @@ const FIELD = 'h-9.5 rounded-lg bg-bg-app text-row font-normal md:text-row dark:
 const FAILED = "Couldn't add that connector. Try again.";
 
 export interface AddConnectorFormProps {
+  /** Cancel, or an OAuth sign-in that goes on in its own tab. */
   close: () => void;
-  /** The connector was saved; `ref` is its card's id (`mcp:<slug>`). */
+  /** The connector was saved; `ref` is its card's id (`mcp:<slug>`). The
+   *  host moves on from the form (the list closes it, the MCP server card's
+   *  page opens the connector's). */
   onAdded: (ref: string) => void;
 }
 
@@ -61,8 +64,8 @@ export function AddConnectorForm({ close, onAdded }: AddConnectorFormProps) {
         CREDENTIAL_PROBE_REQUEST_TIMEOUT,
       );
       if (result.success === false || !result.ref) throw new Error(result.error || FAILED);
-      close();
       if (result.sign_in_url) {
+        close();
         window.open(result.sign_in_url, '_blank', 'noopener,noreferrer');
         toast.info('Sign in on the page that opened. The connector shows here once you have.');
         return;
