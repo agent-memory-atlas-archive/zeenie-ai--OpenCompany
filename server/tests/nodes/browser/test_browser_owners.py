@@ -407,6 +407,18 @@ async def test_inprocess_delegated_claim_survives_stale_reset_and_cleans_up_with
             await child
 
 
+@pytest.mark.parametrize("browsers", [[], ["browser", "browser-2"]])
+async def test_reset_of_browser_agent_without_exactly_one_browser_tool_is_a_noop(database, browsers):
+    from nodes.agent.browser_agent import BrowserAgentNode
+
+    db, _ = database
+    graph = {"owner_id": "owner",
+             "nodes": [{"id": "agent", "type": "browser_agent"}, *({"id": b, "type": "browser"} for b in browsers)],
+             "edges": [{"source": b, "target": "agent", "targetHandle": "input-tools"} for b in browsers]}
+    assert await BrowserAgentNode.reset_execution_state(node_id="agent", workflow_id="wf",
+        execution_id="2:execution:5", generation=5, graph=graph, database=db) == {"reset": False}
+
+
 async def test_ambiguous_active_browser_bindings_fail_closed(database):
     db, _ = database
     db.get_node_parameters = AsyncMock(return_value={})

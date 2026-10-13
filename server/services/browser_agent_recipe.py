@@ -17,11 +17,15 @@ BROWSER_AGENT_ROLE = (
 )
 
 
-def browser_tool_id(graph: Mapping[str, Any], agent_id: str) -> str:
+def connected_browser_tools(graph: Mapping[str, Any], agent_id: str) -> set[str]:
     nodes = {node["id"]: node for node in graph.get("nodes", []) if node.get("id")}
-    tools = {edge.get("source") for edge in graph.get("edges", [])
-             if edge.get("target") == agent_id and edge.get("targetHandle") == "input-tools"
-             and nodes.get(edge.get("source"), {}).get("type") == "browser"}
+    return {edge.get("source") for edge in graph.get("edges", [])
+            if edge.get("target") == agent_id and edge.get("targetHandle") == "input-tools"
+            and nodes.get(edge.get("source"), {}).get("type") == "browser"}
+
+
+def browser_tool_id(graph: Mapping[str, Any], agent_id: str) -> str:
+    tools = connected_browser_tools(graph, agent_id)
     if len(tools) != 1:
         raise NodeUserError("Browser AI Agent needs exactly one connected, saved Browser tool.")
     return str(next(iter(tools)))
