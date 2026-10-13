@@ -100,9 +100,12 @@ def test_llm_defaults_serves_exactly_the_priced_providers():
     }
 
 
-async def test_gateway_covers_trusts_only_a_real_router():
-    # tests/conftest.py stubs core.container with a MagicMock, whose router
-    # would claim to cover every provider.
+async def test_gateway_covers_trusts_only_a_real_router(monkeypatch):
+    # Under test the container can be a MagicMock (tests/conftest.py), whose
+    # router would claim to cover every provider.
+    from core.container import container
+
+    monkeypatch.setattr(container, "gateway_router", MagicMock(), raising=False)
     assert await gateway_covers("openai") is False
 
 

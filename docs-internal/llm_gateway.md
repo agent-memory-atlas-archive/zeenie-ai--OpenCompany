@@ -6,11 +6,11 @@ OpenCompany's hosted LLM gateway is the stock open-source LiteLLM Proxy, deploye
 
 ## OpenCompany's side
 
-**Turning it on.**
-- `OPENCOMPANY_GATEWAY_ENABLED=true` (`gateway_enabled`, default off) lists the **Gateway** card, by OpenCompany, under AI models in Connectors. It is gated by `requires_setting` in `server/config/credential_providers.json`, honoured by `CredentialRegistry.get_all_providers`.
+**On by default.**
+- `OPENCOMPANY_GATEWAY_ENABLED` (`gateway_enabled`, default `true`) lists the **Gateway** card, by OpenCompany, under AI models in Connectors. It is gated by `requires_setting` in `server/config/credential_providers.json`, honoured by `CredentialRegistry.get_all_providers`.
 - **Where it appears:** in normal mode, the Get Started guide's Connect an AI model step and Connectors; in dev mode, API Credentials. Both shells use the same `CredentialsBrowser`.
 - `OPENCOMPANY_GATEWAY_URL` (`gateway_url`) points at the gateway.
-- Off, behaviour is exactly as before.
+- `false` hides the card and turns the routing off, so behaviour is exactly as without the gateway.
 - **No 1Password:** the router reads the key on every call, which a 1Password lookup can't serve. So the card offers no 1Password source (`catalogue_extras`), and distributed mode keeps the gateway off.
 
 **The key.** One gateway key per install, saved like any API key (`OpenCompanyGatewayCredential`, `services/gateway/credential.py`, default `validate`). Its probe calls the gateway's `/user/info` with the key: 401 means a wrong key; 403 means an LLM-API key, and the person is told to create a Default one. The card's `ws.status` hook (`gateway_status`, `services/gateway/handlers.py`) returns the allowance as one line, which the API-key panel shows under the key (`statusSummary` in `useCredentialPanel`).
