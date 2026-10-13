@@ -91,6 +91,7 @@ class TestSameSiteNoneValidator:
         base = {
             "host": "127.0.0.1",
             "port": 3010,
+            "debug": False,
             "jwt_secret_key": "x" * 32,
             "secret_key": "y" * 32,
             "cors_origins": ["http://localhost:3001"],

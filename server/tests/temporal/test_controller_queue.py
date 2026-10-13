@@ -6,9 +6,9 @@ from unittest.mock import MagicMock
 import pytest
 from services.temporal.controller_queue import event_batches, spill_controller_events, read_controller_events
 from services.temporal.workflow_control_workflow import WorkflowControlWorkflow
-from tests.services.employees.test_jobs import database as database
 
-async def test_durable_spill_is_idempotent_and_review_scan_reaches_buried_task(database, monkeypatch):
+async def test_durable_spill_is_idempotent_and_review_scan_reaches_buried_task(real_database, monkeypatch):
+    database = real_database
     monkeypatch.setattr("core.container.container", SimpleNamespace(database=lambda: database))
     ordinary = [["mail", {"id": str(i), "type": "mail"}] for i in range(150)]
     payload = {"controller_id": "controller", "events": ordinary + [["review", {"id": "review", "type": "task"}]]}
@@ -31,7 +31,8 @@ def test_batches_are_bounded_by_bytes_not_only_event_count():
     assert [item[1]["id"] for chunk in chunks for item in chunk] == [str(i) for i in range(12)]
 
 
-async def test_large_accepted_event_survives_chunked_rollover_once(database, wf, monkeypatch):
+async def test_large_accepted_event_survives_chunked_rollover_once(real_database, wf, monkeypatch):
+    database = real_database
     monkeypatch.setattr("core.container.container", SimpleNamespace(database=lambda: database))
     controller = WorkflowControlWorkflow()
     item = ["mail", {"id": "large", "body": "x" * 1_700_000}]

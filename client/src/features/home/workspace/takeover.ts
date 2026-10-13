@@ -67,6 +67,7 @@ export function useTakeOver(employee: EmployeeSummary, surface: () => SurfaceCon
       if (mine.stopped) await resumeWorkflow(employee.workflow_id, employee.control.revision);
       pillToast(`Handed back to ${employee.name}`);
     } catch (error) {
+      if (error instanceof Error && error.message === 'workflow_control_superseded') return;
       pillToast(controlErrorMessage(error), { tone: 'error' });
     } finally {
       setTakeover(employee.workflow_id, null);

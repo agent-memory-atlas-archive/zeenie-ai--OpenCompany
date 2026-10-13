@@ -7,12 +7,14 @@ processor chain — they don't get the level tag, don't get
 ``contextvars`` (``workflow_id`` / ``node_id``), don't go to the
 RotatingFileHandler, and don't surface in the WebSocket Terminal panel.
 
-Three sanctioned exemptions, each documented in its own module:
+Sanctioned exemptions include, each documented in its own module:
 
 1. ``main._startup_log`` — pre-logger boot-progress markers.
 2. ``core.container._clog`` — same role for DI-container bootstrap.
 3. ``nodes.code.python_executor.captured_print`` — the sandboxed
    ``print`` builtin we hand to user code (the user's print, not ours).
+4. ``services.employees.reconcile_jobs._run_cli`` — content-free NDJSON
+   command output consumed by maintenance scripts, rather than runtime logs.
 
 Anything else must go through ``logger = get_logger(__name__)``. This
 test parses every backend ``.py`` file under ``server/`` (excluding the
@@ -55,6 +57,9 @@ _SANCTIONED: List[Tuple[str, str]] = [
     ("nodes/browser/_pin.py", "main"),
     # JSON wire replies to the parent process, not application log messages.
     ("nodes/mobile/runtime/device_server.py", "main"),
+    # One-shot maintenance CLI: stdout is its content-free NDJSON report,
+    # consumed by operators/scripts, rather than application log messages.
+    ("services/employees/reconcile_jobs.py", "_run_cli"),
 ]
 
 

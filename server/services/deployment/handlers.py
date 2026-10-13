@@ -78,10 +78,13 @@ _deployment_tasks: Dict[str, asyncio.Task] = {}
 # A socket only waits on these tasks. Disconnecting a waiter must not undo a
 # durable Stop, and status polling must never start a second checkpoint drain.
 _control_transition_tasks: Dict[tuple[str, int], asyncio.Task] = {}
+_boot_reconciliation_tasks: Dict[tuple[str, int], asyncio.Task] = {}
 _control_completion_locks: weakref.WeakValueDictionary = weakref.WeakValueDictionary()
 # Counts and Queries are UI observations, never checkpoint acknowledgements.
 # An unavailable worker must not keep Reset behind an admission broadcast.
 _CONTROL_OBSERVATION_TIMEOUT_SECONDS = 1.0
+_BOOT_REARM_TIMEOUT_SECONDS = 30.0
+_BOOT_RETRY_SECONDS = 1.0
 
 
 def _control_completion_lock(workflow_id: str) -> asyncio.Lock:
@@ -118,6 +121,13 @@ def _supersede_versioned_transitions(control) -> None:
         if control_id == control.id and revision < control.revision and not task.done():
             # Cancel local polling only. Reset's termination sweep is the
             # authoritative cancellation of Temporal executions.
+            task.cancel()
+    _cancel_boot_reconciliation(control)
+
+
+def _cancel_boot_reconciliation(control) -> None:
+    for (control_id, generation), task in list(_boot_reconciliation_tasks.items()):
+        if control_id == control.id and generation == control.generation and not task.done():
             task.cancel()
 
 
@@ -1484,7 +1494,7 @@ async def mark_clean_shutdown() -> None:
     """Stamp the clean-shutdown marker (lifespan teardown hook)."""
     from core.container import container
 
-    tasks = list(_control_transition_tasks.values())
+    tasks = [*_control_transition_tasks.values(), *_boot_reconciliation_tasks.values()]
     for task in tasks:
         task.cancel()
     if tasks:
@@ -1584,6 +1594,13 @@ async def reconcile_active_controls_on_boot() -> int:
     processed = 0
     for control in controls:
         try:
+            if _versioned_control(control) and control.status in {"pausing", "resuming"}:
+                # A checkpoint can remain open on admitted work for months.
+                # Its eventual completion must still restore local collectors,
+                # without blocking this boot pass or other generations.
+                _schedule_boot_reconciliation(service, control, recovery_pause=recovery_pause)
+                processed += 1
+                continue
             control, controller_status = await _reconcile_control(service, control)
             if control.status == "starting":
                 control = await _converge_interrupted_start(
@@ -1604,6 +1621,85 @@ async def reconcile_active_controls_on_boot() -> int:
                 error=str(exc),
             )
     return processed
+
+
+def _schedule_boot_reconciliation(service: WorkflowControlService, control, *, recovery_pause: bool) -> asyncio.Task:
+    key = (control.id, int(control.generation))
+    existing = _boot_reconciliation_tasks.get(key)
+    if existing is not None and not existing.done():
+        return existing
+    task = asyncio.create_task(_restore_after_boot_transition(service, control, recovery_pause=recovery_pause),
+                               name=f"workflow-boot:{control.id}:{control.generation}")
+    _boot_reconciliation_tasks[key] = task
+
+    def completed(done: asyncio.Task) -> None:
+        if _boot_reconciliation_tasks.get(key) is done:
+            _boot_reconciliation_tasks.pop(key, None)
+        if not done.cancelled() and (exc := done.exception()) is not None:
+            logger.warning("Boot workflow restoration failed", workflow_id=control.workflow_id,
+                           generation=control.generation, error=str(exc))
+
+    task.add_done_callback(completed)
+    return task
+
+
+async def _restore_after_boot_transition(service: WorkflowControlService, control, *, recovery_pause: bool) -> None:
+    """Restore a pending generation's local half after its durable drain.
+
+    Transient Update/setup failures retry independently of status requests.
+    Reset shares only the bounded setup critical section, never the
+    checkpoint wait. Re-reading the owning generation prevents an old boot
+    continuation from deploying the next Start's graph or changing its gate.
+    """
+    identity = (control.id, control.generation)
+    while True:
+        try:
+            current = await service.database.get_latest_workflow_control(control.workflow_id)
+            if (current is None or (current.id, current.generation) != identity
+                    or current.status not in {"pausing", "resuming", "paused", "running"}):
+                return
+            if current.status in {"pausing", "resuming"}:
+                await asyncio.shield(_schedule_versioned_transition(service, current))
+                latest = await service.database.get_latest_workflow_control(control.workflow_id)
+                if latest is not None and (latest.id, latest.generation) == identity and latest.status in {"pausing", "resuming"}:
+                    await asyncio.sleep(_BOOT_RETRY_SECONDS)
+                continue
+            if recovery_pause and current.status == "running":
+                # A Resume interrupted by a crash follows the same recovery
+                # policy as an already-running row. Fence it before rebuilding
+                # collectors, then let its acknowledged pause settle normally.
+                await _pause_for_recovery(service, current, reason="unclean_shutdown")
+                await asyncio.sleep(_BOOT_RETRY_SECONDS)
+                continue
+
+            async with _control_completion_lock(control.workflow_id):
+                latest = await service.database.get_latest_workflow_control(control.workflow_id)
+                if (latest is None or (latest.id, latest.generation) != identity
+                        or latest.status not in {"paused", "running"}):
+                    continue
+                if latest.revision != current.revision or latest.status != current.status:
+                    continue
+                try:
+                    async def restore_local():
+                        await _rearm_generation(latest)
+                        if latest.status == "running":
+                            # A failed/timed-out attempt kept its local gate
+                            # closed. Release it after setup is known complete.
+                            from core.container import container
+                            await container.workflow_service().resume_deployment(control.workflow_id)
+                    await asyncio.wait_for(restore_local(), timeout=_BOOT_REARM_TIMEOUT_SECONDS)
+                except Exception:
+                    _close_local_admission(control.workflow_id)
+                    raise
+                return
+        except asyncio.CancelledError:
+            # Reset owns the subsequent local teardown and execution sweep.
+            # Shutdown likewise leaves the durable intent for the next boot.
+            raise
+        except Exception as exc:
+            logger.warning("Boot workflow restoration remains pending", workflow_id=control.workflow_id,
+                           generation=control.generation, error_type=type(exc).__name__, error=str(exc))
+            await asyncio.sleep(_BOOT_RETRY_SECONDS)
 
 
 async def _converge_interrupted_start(
@@ -1679,6 +1775,15 @@ async def _rearm_generation(control) -> None:
 
     workflow_service = container.workflow_service()
     if workflow_service.is_workflow_deployed(control.workflow_id):
+        if control.workflow_id in _deployment_tasks:
+            # A previous bounded rearm may still be waiting on its shielded
+            # setup task. The manager installs local state before collectors
+            # finish starting, so "deployed" alone is not a setup receipt.
+            setup = await _await_deployment_setup(control.workflow_id)
+            if not setup.get("success"):
+                raise RuntimeError(str(setup.get("error", "deployment_setup_failed")))
+            if control.status == "paused":
+                await _restore_rearmed_pause(control)
         return
     snapshot = control.graph_snapshot or {}
     nodes = snapshot.get("nodes") or []
@@ -1718,32 +1823,31 @@ async def _rearm_generation(control) -> None:
     if not setup.get("success"):
         raise RuntimeError(str(setup.get("error", "deployment_setup_failed")))
     if control.status == "paused":
-        # Restore the paused posture on the freshly re-armed local half.
-        workflow_service.pause_deployment(control.workflow_id)
-        await workflow_service.update_trigger_pause_status(
-            control.workflow_id,
-            paused=True,
-        )
-        await _set_cron_pause(control.workflow_id, paused=True, strict=False)
-        # The deploy handler just broadcast executing=true / status=running
-        # on the wire; counter-broadcast the paused posture so a connected
-        # client doesn't watch the workflow flip to running and never back.
-        from services.status_broadcaster import get_status_broadcaster
-
-        broadcaster = get_status_broadcaster()
-        await broadcaster.update_workflow_status(
-            executing=False, current_node=None, progress=0,
-            workflow_id=control.workflow_id,
-        )
-        await broadcaster.update_deployment_status(
-            is_running=True, status="paused", active_runs=0,
-            workflow_id=control.workflow_id,
-        )
+        await _restore_rearmed_pause(control)
     logger.info(
         "Re-armed durable generation after restart",
         workflow_id=control.workflow_id,
         generation=control.generation,
         status=control.status,
+    )
+
+
+async def _restore_rearmed_pause(control) -> None:
+    from core.container import container
+    from services.status_broadcaster import get_status_broadcaster
+
+    workflow_service = container.workflow_service()
+    workflow_service.pause_deployment(control.workflow_id)
+    await workflow_service.update_trigger_pause_status(control.workflow_id, paused=True)
+    await _set_cron_pause(control.workflow_id, paused=True, strict=False)
+    # Setup emits running status; publish the durable paused posture once its
+    # receipt arrives, including when an earlier rearm waiter timed out.
+    broadcaster = get_status_broadcaster()
+    await broadcaster.update_workflow_status(
+        executing=False, current_node=None, progress=0, workflow_id=control.workflow_id,
+    )
+    await broadcaster.update_deployment_status(
+        is_running=True, status="paused", active_runs=0, workflow_id=control.workflow_id,
     )
 
 
@@ -2408,6 +2512,12 @@ async def handle_reset_workflow(data: Dict[str, Any], websocket: WebSocket) -> D
 
     # The completed-generation branch above only resets direct Workspace
     # tasks. Generation-wide cleanup below must not sweep a later Start.
+    if data.get("expected_root_execution_id"):
+        # A generation-scoped Reset can preempt a blocked boot setup waiter
+        # before acquiring the completion lock. The root identity was checked
+        # above and is rechecked by the owning-row CAS below; revision-only
+        # callers retain their strict conflict contract and bounded lock wait.
+        _cancel_boot_reconciliation(current)
     async with _control_completion_lock(workflow_id):
         # Completion can win while Reset waits for this short lock. Reload
         # before CAS and never let a delayed Reset sweep a later generation.

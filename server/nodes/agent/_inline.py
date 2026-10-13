@@ -41,6 +41,19 @@ logger = get_logger(__name__)
 TEAM_LEAD_TYPES = frozenset({"orchestrator_agent", "ai_employee"})
 
 
+def _employee_review_event(context: Dict[str, Any], event: Dict[str, Any] | None) -> Dict[str, Any] | None:
+    """Ordinary task completions do not identify a durable employee job.
+
+    Older task triggers carry task/status without team identity. Passing them
+    as employee-review evidence would query jobs with a null team and could
+    attach an unrelated unbound job. An explicitly admitted job still receives
+    the original event so malformed review identity fails validation.
+    """
+    if event and (context.get("employee_job_id") or event.get("team_id")):
+        return event
+    return None
+
+
 async def prepare_agent_call(
     *,
     node_id: str,
@@ -65,7 +78,7 @@ async def prepare_agent_call(
 
     context.update({"node_id": node_id, "node_type": node_type})
     from services.employees.team_runtime import attach_employee_job, employee_job_parameters, employee_lead_prompt, employee_review_input
-    await attach_employee_job(database, context, employee_review_input(context))
+    await attach_employee_job(database, context, _employee_review_event(context, employee_review_input(context)))
     connection_database = database
     if context.get("employee_job_id"):
         context["parameter_snapshot"] = await employee_job_parameters(database, context)
@@ -94,7 +107,7 @@ async def prepare_agent_call(
     # Step 1: task-context injection. Tools are kept — the injected
     # guidance requires the Task Manager tool to act on the completion.
     if task_data:
-        await attach_employee_job(database, context, task_data)
+        await attach_employee_job(database, context, _employee_review_event(context, task_data))
         from services.plugin.edge_walker import bind_employee_job_source
         await bind_employee_job_source(node_id, context, database, tool_data)
         task_context = format_task_context(task_data)

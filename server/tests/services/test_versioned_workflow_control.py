@@ -14,12 +14,13 @@ from services.deployment import execution_control
 @pytest_asyncio.fixture(autouse=True)
 async def drain_supervised_transitions():
     yield
-    tasks = list(handlers._control_transition_tasks.values())
+    tasks = [*handlers._control_transition_tasks.values(), *handlers._boot_reconciliation_tasks.values()]
     for task in tasks:
         task.cancel()
     if tasks:
         await asyncio.gather(*tasks, return_exceptions=True)
     handlers._control_transition_tasks.clear()
+    handlers._boot_reconciliation_tasks.clear()
 
 
 def control(state="pausing"):
@@ -507,3 +508,242 @@ async def test_workspace_observation_timeout_omits_unavailable_counts(monkeypatc
     assert "workspace_active_count" not in snapshot
     assert "generation_in_flight_count" not in snapshot
     assert snapshot["in_flight_count"] == 2
+
+
+def boot_plane(monkeypatch, record, *, clean=True, policy="pause", additional=None):
+    from core.container import container
+
+    record.service.database.list_active_workflow_controls = AsyncMock(return_value=[copy(record.row), *(additional or [])])
+    monkeypatch.setattr(container, "database", lambda: record.service.database)
+    monkeypatch.setattr(handlers, "WorkflowControlService", lambda database: record.service)
+    monkeypatch.setattr(handlers, "_consume_shutdown_state", AsyncMock(return_value=clean))
+    monkeypatch.setattr(handlers, "_crash_recovery_policy", lambda: policy)
+    monkeypatch.setattr(handlers, "_BOOT_RETRY_SECONDS", 0.001)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("intent,stable", [("pausing", "paused"), ("resuming", "running")])
+async def test_boot_pending_transition_restores_collectors_without_blocking_other_rows(monkeypatch, intent, stable):
+    record = lifecycle(monkeypatch, intent)
+    healthy = control("running")
+    healthy.id, healthy.workflow_id = "healthy-control", "healthy"
+    boot_plane(monkeypatch, record, additional=[healthy])
+    started, release = asyncio.Event(), asyncio.Event()
+    collectors = {}
+
+    async def transition(*args, **kwargs):
+        started.set()
+        await release.wait()
+        return {"controller_status": {}, "controlled_executions": 3}
+
+    async def rearm(current):
+        collectors[current.workflow_id] = current.status
+
+    monkeypatch.setattr(execution_control, "transition_generation", AsyncMock(side_effect=transition))
+    monkeypatch.setattr(handlers, "_rearm_generation", AsyncMock(side_effect=rearm))
+    assert await asyncio.wait_for(handlers.reconcile_active_controls_on_boot(), 0.2) == 2
+    await asyncio.wait_for(started.wait(), 0.2)
+    assert collectors == {"healthy": "running"}
+    boot_task = handlers._boot_reconciliation_tasks[(record.row.id, record.row.generation)]
+    release.set()
+    await asyncio.wait_for(asyncio.shield(boot_task), 0.5)
+    assert collectors == {"healthy": "running", "canvas": stable}
+    assert record.row.status == stable
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("policy,stable", [("pause", "paused"), ("resume", "running")])
+async def test_boot_interrupted_resume_obeys_unclean_shutdown_policy(monkeypatch, policy, stable):
+    record = lifecycle(monkeypatch, "resuming")
+    boot_plane(monkeypatch, record, clean=False, policy=policy)
+    started, release = asyncio.Event(), asyncio.Event()
+    collectors = []
+
+    async def transition(*args, **kwargs):
+        started.set()
+        await release.wait()
+        return {"controller_status": {}, "controlled_executions": 3}
+
+    async def rearm(current):
+        collectors.append(current.status)
+
+    monkeypatch.setattr(execution_control, "transition_generation", AsyncMock(side_effect=transition))
+    monkeypatch.setattr(handlers, "_rearm_generation", AsyncMock(side_effect=rearm))
+    assert await handlers.reconcile_active_controls_on_boot() == 1
+    await asyncio.wait_for(started.wait(), 0.2)
+    boot_task = handlers._boot_reconciliation_tasks[(record.row.id, record.row.generation)]
+    release.set()
+    await asyncio.wait_for(asyncio.shield(boot_task), 0.5)
+    assert collectors == [stable]
+    assert record.row.status == stable
+    if policy == "pause":
+        assert record.row.pause_reason == "recovery"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("new_generation", [False, True])
+async def test_boot_continuation_cannot_rearm_reset_or_a_later_start(monkeypatch, new_generation):
+    record = lifecycle(monkeypatch, "pausing")
+    boot_plane(monkeypatch, record)
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def transition(*args, **kwargs):
+        started.set()
+        await release.wait()
+        return {"controller_status": {}, "controlled_executions": 3}
+
+    monkeypatch.setattr(execution_control, "transition_generation", AsyncMock(side_effect=transition))
+    rearm = AsyncMock()
+    monkeypatch.setattr(handlers, "_rearm_generation", rearm)
+    await handlers.reconcile_active_controls_on_boot()
+    await asyncio.wait_for(started.wait(), 0.2)
+    boot_task = handlers._boot_reconciliation_tasks[(record.row.id, record.row.generation)]
+    record.row = copy(record.row)
+    record.row.revision = 5
+    if new_generation:
+        record.row.id, record.row.generation, record.row.root_execution_id = "next-control", 2, "next-root"
+        record.row.status = "running"
+    else:
+        record.row.status = "reset"
+    release.set()
+    await asyncio.wait_for(asyncio.shield(boot_task), 0.5)
+    rearm.assert_not_awaited()
+    assert record.broadcasts == []
+
+
+@pytest.mark.asyncio
+async def test_boot_rearm_failure_keeps_admission_closed_and_retries_collectors(monkeypatch):
+    record = lifecycle(monkeypatch, "pausing")
+    boot_plane(monkeypatch, record)
+    started, release = asyncio.Event(), asyncio.Event()
+    effects = []
+
+    async def transition(*args, **kwargs):
+        started.set()
+        await release.wait()
+        return {"controller_status": {}, "controlled_executions": 3}
+
+    async def rearm(current):
+        effects.append("rearm")
+        if len(effects) == 1:
+            raise RuntimeError("collector startup failed")
+        effects.append("restored")
+
+    monkeypatch.setattr(execution_control, "transition_generation", AsyncMock(side_effect=transition))
+    monkeypatch.setattr(handlers, "_rearm_generation", AsyncMock(side_effect=rearm))
+    await handlers.reconcile_active_controls_on_boot()
+    await asyncio.wait_for(started.wait(), 0.2)
+    boot_task = handlers._boot_reconciliation_tasks[(record.row.id, record.row.generation)]
+    release.set()
+    await asyncio.wait_for(asyncio.shield(boot_task), 0.5)
+    assert effects == ["rearm", "rearm", "restored"]
+    assert record.row.status == "paused"
+    record.runtime.resume_deployment.assert_not_awaited()
+    handlers.handle_cancel_deployment.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_boot_rearm_wait_is_bounded_and_reset_can_take_over(monkeypatch):
+    record = lifecycle(monkeypatch, "pausing")
+    boot_plane(monkeypatch, record)
+    monkeypatch.setattr(handlers, "_BOOT_REARM_TIMEOUT_SECONDS", 0.02)
+    restoring, retired = asyncio.Event(), asyncio.Event()
+
+    async def rearm(current):
+        restoring.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            retired.set()
+
+    monkeypatch.setattr(execution_control, "transition_generation",
+                        AsyncMock(return_value={"controller_status": {}, "controlled_executions": 3}))
+    monkeypatch.setattr(handlers, "_rearm_generation", rearm)
+    await handlers.reconcile_active_controls_on_boot()
+    await asyncio.wait_for(restoring.wait(), 0.2)
+    boot_task = handlers._boot_reconciliation_tasks[(record.row.id, record.row.generation)]
+    reset = await asyncio.wait_for(handlers.handle_reset_workflow({
+        "workflow_id": "canvas", "expected_revision": 4,
+    }, None), 0.5)
+    assert reset["success"] and record.row.status == "reset"
+    assert retired.is_set()
+    await asyncio.gather(boot_task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_generation_scoped_reset_preempts_a_blocked_boot_setup_immediately(monkeypatch):
+    record = lifecycle(monkeypatch, "pausing")
+    boot_plane(monkeypatch, record)
+    restoring, retired = asyncio.Event(), asyncio.Event()
+
+    async def rearm(current):
+        restoring.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            retired.set()
+
+    monkeypatch.setattr(execution_control, "transition_generation",
+                        AsyncMock(return_value={"controller_status": {}, "controlled_executions": 3}))
+    monkeypatch.setattr(handlers, "_rearm_generation", rearm)
+    await handlers.reconcile_active_controls_on_boot()
+    await asyncio.wait_for(restoring.wait(), 0.2)
+    boot_task = handlers._boot_reconciliation_tasks[(record.row.id, record.row.generation)]
+    reset = await asyncio.wait_for(handlers.handle_reset_workflow({
+        "workflow_id": "canvas", "expected_root_execution_id": "generation-root",
+    }, None), 0.2)
+    assert reset["success"] and record.row.status == "reset"
+    assert retired.is_set()
+    await asyncio.gather(boot_task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_boot_retry_awaits_existing_setup_receipt_instead_of_claiming_it_restored(monkeypatch):
+    record = lifecycle(monkeypatch, "pausing")
+    record.row.graph_snapshot = {"nodes": [{"id": "trigger", "type": "webhookTrigger"}], "edges": []}
+    boot_plane(monkeypatch, record)
+    monkeypatch.setattr(handlers, "_BOOT_REARM_TIMEOUT_SECONDS", 0.02)
+    deployed = False
+    setup_started, release_setup, gated = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    previous_setup = handlers._deployment_tasks.pop("canvas", None)
+
+    async def setup():
+        setup_started.set()
+        await release_setup.wait()
+        return {"success": True}
+
+    async def deploy(*args, **kwargs):
+        nonlocal deployed
+        deployed = True
+        handlers._deployment_tasks["canvas"] = asyncio.create_task(setup())
+        return {"success": True}
+
+    def pause(_workflow_id):
+        if deployed:
+            gated.set()
+
+    record.runtime.is_workflow_deployed = lambda _: deployed
+    record.runtime.pause_deployment = pause
+    monkeypatch.setattr(handlers, "handle_deploy_workflow", AsyncMock(side_effect=deploy))
+    monkeypatch.setattr(execution_control, "transition_generation",
+                        AsyncMock(return_value={"controller_status": {}, "controlled_executions": 3}))
+    try:
+        await handlers.reconcile_active_controls_on_boot()
+        boot_task = handlers._boot_reconciliation_tasks[(record.row.id, record.row.generation)]
+        await asyncio.wait_for(setup_started.wait(), 0.2)
+        await asyncio.wait_for(gated.wait(), 0.2)
+        setup_task = handlers._deployment_tasks["canvas"]
+        assert not setup_task.done() and not boot_task.done()
+        handlers.handle_cancel_deployment.assert_not_awaited()
+        release_setup.set()
+        await asyncio.wait_for(asyncio.shield(boot_task), 0.5)
+        handlers.handle_deploy_workflow.assert_awaited_once()
+        assert setup_task.done() and record.row.status == "paused"
+        record.runtime.update_trigger_pause_status.assert_awaited_with("canvas", paused=True)
+    finally:
+        setup_task = handlers._deployment_tasks.pop("canvas", None)
+        if setup_task is not None and not setup_task.done():
+            setup_task.cancel()
+            await asyncio.gather(setup_task, return_exceptions=True)
+        if previous_setup is not None:
+            handlers._deployment_tasks["canvas"] = previous_setup

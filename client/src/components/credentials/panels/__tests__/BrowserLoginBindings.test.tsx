@@ -30,8 +30,12 @@ beforeEach(() => {
 });
 
 async function fillReferences(user: ReturnType<typeof userEvent.setup>) {
-  await user.type(screen.getByLabelText('Username 1Password reference'), username);
-  await user.type(screen.getByLabelText('Password 1Password reference'), password);
+  // References are copied from 1Password. Paste exercises the input handlers
+  // without simulating more than a hundred individual keystrokes per form.
+  await user.click(screen.getByLabelText('Username 1Password reference'));
+  await user.paste(username);
+  await user.click(screen.getByLabelText('Password 1Password reference'));
+  await user.paste(password);
 }
 
 describe('BrowserLoginBindings', () => {

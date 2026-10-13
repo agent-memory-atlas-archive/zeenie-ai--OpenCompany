@@ -4,6 +4,9 @@ This module never starts workflows, calls models, or delivers results. CLI
 inspection is read-only by default and does not run application startup or
 database migrations. Temporal visibility is used only to locate histories;
 the histories and exact run-chain identities provide the proof.
+
+The one-shot CLI writes content-free NDJSON decisions to stdout for operators
+and scripts. Those reports are command output, separate from application logs.
 """
 from __future__ import annotations
 
