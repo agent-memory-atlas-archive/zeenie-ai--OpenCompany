@@ -560,11 +560,11 @@ Activities use their frozen owner's physical queue regardless of the worker
 pool switch; generic orchestration workers exclude them. The authoritative
 native type set is `AGENT_WORKFLOW_TYPES` in `services/temporal/workflow.py`.
 
-**Agents that stay as single activities**: `rlm_agent`,
-`claude_code_agent`, and `vertex_managed_agent`. Their internal session state
-(RLM REPL, Claude CLI `--resume` with stable `cwd`, or Vertex interaction and
-environment chaining) remains inside one Activity. Cooperative Stop drains
-that whole Activity; it cannot stop between tools hidden inside that session.
+**Agents that stay as single activities**: `rlm_agent` and
+`claude_code_agent`. Their internal session state
+(RLM REPL or Claude CLI `--resume` with stable `cwd`) remains inside one
+Activity. Cooperative Stop drains that whole Activity; it cannot stop between
+tools hidden inside that session.
 
 Queue distribution (live count via
 `distinct_task_queues()` and `len(_NODE_CLASS_REGISTRY)`):
@@ -775,13 +775,12 @@ server/
 ├── nodes/                        # One self-contained folder per plugin (Wave 11.H)
 │   ├── __init__.py              # pkgutil.walk_packages discovery
 │   ├── groups.py                # Palette group metadata
-│   ├── agent/                   # AI agents — 22 folders (aiAgent, chatAgent, 13 SpecializedAgentBase
-│   │   │                        # subclasses, rlm / claude_code / codex, vertex_* variants)
+│   ├── agent/                   # AI agents (aiAgent, chatAgent, SpecializedAgentBase
+│   │   │                        # subclasses, rlm / claude_code / codex variants)
 │   │   ├── _handles.py          # Shared handle topology helpers
 │   │   ├── _inline.py           # prepare_agent_call()
 │   │   ├── _provider.py         # ProviderRef: the loader-driven provider field every agent shares
 │   │   ├── _specialized.py      # SpecializedAgentBase
-│   │   ├── _vertex.py           # Shared Vertex Agent Engine helpers
 │   │   └── <agent>/__init__.py  # one folder per agent
 │   ├── model/                   # AI chat models (one per provider except xAI, plus openaiCompatibleChatModel for named endpoints)
 │   │   ├── _base.py             # ChatModelBase + ChatModelParams/Output

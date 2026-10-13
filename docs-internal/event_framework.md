@@ -342,8 +342,7 @@ whose frame is the event's flat data,
 `persisted: true` marks a batch the server already saved
 (`services/workflow_storage/mutate.apply_graph_additions`: Turn on Talk, the
 Agent Builder); its ops carry the server's ids and full parameter rows, and
-editors adopt them without saving. (The Vertex managed agent's cloud-tool
-nodes still send their own frame of the same shape, never persisted.) See
+editors adopt them without saving. See
 [workflow_ops_protocol.md](./workflow_ops_protocol.md#persisted-batches).
 
 Rule of thumb: **if no `register_canary_trigger_type` call names your event

@@ -330,7 +330,7 @@ Shared by every CLI provider plugin. Imports nothing from `nodes/`.
 | `factory.py` | Three registries (`register_provider`, `register_session_pool`, `register_skill_materialiser`) + lookups + `create_cli_provider(name)`. |
 | `lockfile.py` | VSCode-style IDE lockfile read/write/sweep. |
 | `mcp_server.py` | FastMCP sub-app mounted at `/mcp/ide` (JSON-RPC endpoint `/mcp/ide/mcp`) with bearer-token middleware + the infrastructure tools (`getWorkspaceFiles`, `listSkills`, `getSkill`, `readSkillResource`, `searchSkillResource`, `getCredential`, `broadcastLog`) + `rebind_batch` for warm-reuse context updates. |
-| `context_bridge.py` | `SpecializedAgentContextBridge` — RFC-0002 Context continuity for specialized providers (`resolve` / `augment_prompt` / `record_turn`); shared with RLM and Vertex. |
+| `context_bridge.py` | `SpecializedAgentContextBridge` — RFC-0002 Context continuity for specialized providers (`resolve` / `augment_prompt` / `record_turn`); shared with RLM. |
 | `workflow_tools.py` | Per-batch MCP tool exposure (`mcp__opencompany__<node_type>`) + handler scope check + `tools/list_changed` notify. |
 | `session.py` | `AICliSession(BaseProcessSupervisor)` — PTY + JSONL path. Not used for claude; `run_batch` uses it for a provider with no session pool (Codex), but `_do_start` raises for every provider except claude, so those runs fail. |
 | `service.py` | `AICliService.run_batch()` — dispatcher; every claude task goes to the pool via `factory.get_session_pool(provider_name)` (warm keyed session when bound, ephemeral per-task session otherwise). |

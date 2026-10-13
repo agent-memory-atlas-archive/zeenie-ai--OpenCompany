@@ -19,7 +19,7 @@ from constants import (
 from pydantic import ValidationError
 from services.node_registry import get_node_class
 from services.parameter_resolver import template_view
-from services.plugin.base import locked_tool_fields, restore_locked_fields, saved_settings
+from services.plugin.base import NodeUserError, locked_tool_fields, restore_locked_fields, saved_settings
 # Wave 11.D.13 sunset: every handler that was imported here is now
 # either (a) called lazily from a plugin's execute_op / execute method,
 # or (b) retired entirely. The dispatcher itself only needs the
@@ -358,13 +358,19 @@ class NodeExecutor:
         # plugin's register_node side effect and have already been
         # handled above. Anything that falls through here is a
         # workflow node type the backend genuinely doesn't know about.
+        error = NodeUserError(
+            f"Node type '{node_type}' is not installed. Remove or replace this node before running the workflow.",
+            requires_user_action=True,
+        )
         return {
-            "success": True,
-            "node_id": node_id,
-            "node_type": node_type,
-            "result": {"message": f"Node {node_id} executed", "parameters": params},
-            "execution_time": time.time() - context.get("start_time", time.time()),
-            "timestamp": datetime.now().isoformat(),
+            **ExecutionResult(
+                False,
+                node_id,
+                node_type,
+                error=str(error),
+                execution_time=time.time() - context.get("start_time", time.time()),
+            ).to_dict(),
+            **error.as_dict(),
         }
 
     async def _get_connected_outputs(self, context: Dict, node_id: str) -> Dict[str, Any]:

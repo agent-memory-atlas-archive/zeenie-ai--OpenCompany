@@ -194,7 +194,7 @@ Match the palette group. Current folders (see
 
 ```
 agent/       — AI agents (ai_agent, chat_agent + specialized/variant folders incl. 2 team leads,
-               CLI agents (claude_code, codex, rlm) and Vertex agents; SSOT: AI_AGENT_TYPES
+               CLI agents (claude_code, codex, rlm); SSOT: AI_AGENT_TYPES
                in server/constants.py + the folder glob)
 model/       — LLM chat models (openai, anthropic, gemini, …, and openai_compatible for
                a user-named endpoint); also owns the LLM provider dropdown loaders

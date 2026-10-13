@@ -406,7 +406,7 @@ Settings are in `server/config/chat_defaults.json` (`stream`, `steps`, `runs`).
   without a result is answered when the conversation is next loaded (see
   [Agent Context Flow](./agent_context_flow.md)).
 - **Agents that are not AgentWorkflows.** Only the agents in `AGENT_WORKFLOW_TYPES` (`services/temporal/workflow.py`)
-  run as an AgentWorkflow and are prepared by `agent.prepare_payload`. The others (Claude Code, Codex, RLM, Vertex)
+  run as an AgentWorkflow and are prepared by `agent.prepare_payload`. The others (Claude Code, Codex, RLM)
   run as one activity and get no `chat_stream`: nothing they write streams, their tool calls show no steps, they
   cannot show UI, and their answer appears when Reply in Chat saves it. Controlled Stop drains their whole activity
   before suspension. Legacy Stop moves their run to `stopping`, and the watchdog ends it `runs.stop_grace_s` later.
@@ -549,7 +549,7 @@ What an employee sends to someone waits for the owner's OK while its workflow as
   wait is refused (Stripe) or runs restricted (the browser, read-only). With Ask first off the call runs; one made
   answering the owner in the chat leaves a row (`approved_by: auto`) with how it went. An approval gate with the rule off lets its draft through at
   once, recorded the same way.
-- **Agents that are not AgentWorkflows** (Claude Code, Codex, RLM, Vertex; see [Streaming, steps and
+- **Agents that are not AgentWorkflows** (Claude Code, Codex, RLM; see [Streaming, steps and
   Stop](#streaming-steps-and-stop)) call their tools in process (`services/handlers/tools.py` `execute_tool`), where
   `tool_calls.check_in_process` applies the same rule without drafts: with Ask first on, a call that sends is not run
   and the model reads why, the browser runs read-only, and nothing is recorded.

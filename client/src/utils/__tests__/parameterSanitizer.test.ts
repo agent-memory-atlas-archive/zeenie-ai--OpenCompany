@@ -104,8 +104,8 @@ describe('sanitizeParameters', () => {
     });
 
     it('keeps cloud_tool_key, which is an identifier and not a credential', () => {
-      // vertexCloudTool's only identifying config. A plausible-looking
-      // `endsWith("key")` rule would destroy this node on export.
+      // A blanket `endsWith("key")` rule would discard this identifier
+      // when exporting legacy workflow configuration.
       const out = sanitizeParameters({
         cloud_tool_key: 'type:web_search',
         label: 'Web Search',

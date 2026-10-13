@@ -281,7 +281,7 @@ continuation input under the limit, the versioned path raises
 Do not implement a second tool pause flag, blanket heartbeat cursor, or
 rescheduling loop for already-recorded results. External effects before an
 Activity's completion is recorded still depend on the tool's idempotency and
-retry contract. Opaque Claude Code, RLM, and Vertex managed agents have a
+retry contract. Opaque Claude Code and RLM agents have a
 whole-Activity Stop boundary; independently approved sends and Workspace
 tasks retain their own lifecycle. The full topology and messaging protocol
 is in [Workflow control](./temporal-workflow-control.md).

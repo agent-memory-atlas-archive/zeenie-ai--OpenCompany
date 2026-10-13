@@ -51,7 +51,6 @@ AI_AGENT_TYPES: FrozenSet[str] = frozenset(
         "ai_employee",
         "rlm_agent",
         "claude_code_agent",
-        "vertex_managed_agent",
     ]
 )
 

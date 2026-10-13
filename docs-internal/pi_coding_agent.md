@@ -22,7 +22,7 @@ cannot wait for the Pi child: that would occupy an admitted action while the
 child is paused and can deadlock Stop.
 
 Durable AI Agent/team callers dispatch Coding Agent children directly. Inline
-delegation from RLM, Claude Code or Vertex managed runtimes starts a durable
+delegation from RLM or Claude Code runtimes starts a durable
 `PiInlineDelegationWorkflow` and returns the existing task acknowledgement.
 The wrapper owns the attached child, control registration and terminal result
 bookkeeping; callers continue polling through `check_delegated_tasks`.
@@ -158,7 +158,7 @@ Stop/Resume, ordering and exact usage, then replays all twelve histories.
 Frozen pre-cutover histories prove native v1 retries and legacy rollover
 compatibility independently of histories produced by current source.
 
-Public-boundary regressions exercise actual AIService/RLM/Claude/Vertex plugin
+Public-boundary regressions exercise actual AIService/RLM/Claude plugin
 dispatch, Task Manager, EmployeeJob admission, scoped polling, locked schemas
 and approvals. Standalone bootstrap tests run the native compaction Activity
 before any queue polls. Distribution smoke tests launch the archive offline

@@ -19,9 +19,6 @@
     "employeeJob",
     "chatAgent",
     "android_agent",
-    "vertex_managed_agent",
-    "vertex_agent_admin",
-    "vertexCloudTool",
 
     "simpleMemory",
     "dataSource",

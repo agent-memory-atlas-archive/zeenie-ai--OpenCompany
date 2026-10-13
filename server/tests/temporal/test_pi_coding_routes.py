@@ -321,8 +321,8 @@ async def test_rollback_switch_preserves_generation_selected_parent_runtime(mani
     service = _service()
     service.settings.coding_pi_admissions_enabled = False
     service.database.get_latest_workflow_control = AsyncMock(return_value=SimpleNamespace(generation=4, resource_manifest=manifest))
-    await service.execute_node("parent", "vertex_managed_agent", {}, workflow_id="wf",
-        nodes=[{"id": "parent", "type": "vertex_managed_agent"}, {"id": "coding", "type": "coding_agent"}],
+    await service.execute_node("parent", "rlm_agent", {}, workflow_id="wf",
+        nodes=[{"id": "parent", "type": "rlm_agent"}, {"id": "coding", "type": "coding_agent"}],
         edges=[{"source": "coding", "target": "parent", "targetHandle": "input-tools"}], extras={"generation": 4})
     context = service._node_executor.execute.await_args.kwargs["context"]
     assert context.get("pi_harness_version") == manifest.get("pi_harness_version")

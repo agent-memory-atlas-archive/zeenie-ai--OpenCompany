@@ -36,30 +36,6 @@ async def test_apify_activity_passes_trusted_principal_to_private_resolution(mon
     auth.get_api_key.assert_not_awaited()
 
 
-async def test_vertex_admin_resolves_gemini_and_does_not_hide_revocation(monkeypatch):
-    from nodes.agent import vertex_agent_admin as admin
-    auth = runtime_auth(monkeypatch, key="AIza-runtime-key")
-    build = MagicMock(return_value="private-client")
-    monkeypatch.setattr(admin, "build_genai_client", build)
-    ctx = NodeContext(node_id="admin", node_type="vertex_agent_admin", raw={"user_id": "alice"})
-    params = admin.VertexAgentAdminParams(operation="list")
-    assert await admin.VertexAgentAdminNode()._client(params, ctx) == "private-client"
-    auth.resolve_api_key.assert_awaited_once_with("gemini", "default", principal="alice")
-    auth.resolve_api_key.side_effect = CredentialSourceError("resolution_failed", "Approved reference unavailable.")
-    with pytest.raises(CredentialSourceError, match="unavailable"):
-        await admin.VertexAgentAdminNode()._client(params, ctx)
-    assert build.call_count == 1
-    auth.get_api_key.assert_not_awaited()
-
-
-def test_vertex_adc_is_a_local_only_connection(monkeypatch):
-    from nodes.agent import _vertex
-    auth = runtime_auth(monkeypatch)
-    auth.require_local_credentials.side_effect = CredentialSourceError("unsupported_source", "ADC requires local execution.")
-    with pytest.raises(CredentialSourceError, match="local execution"):
-        _vertex.build_genai_client("", "gcp-project")
-
-
 async def test_live_voice_resolution_is_scoped_and_revocation_does_not_use_static_fallback(monkeypatch):
     from nodes.speech import _option_loaders, _unifier
     from services import ws_handler_registry

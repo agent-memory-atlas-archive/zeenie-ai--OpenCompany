@@ -156,8 +156,8 @@ and a toast says so, so the owner can try again.
   creates an Untitled workflow on its own.
 - **A late write cannot restore them.** Saving an existing workflow is an
   update only (`save_workflow(..., require_existing=True)`): an editor's
-  save, a read's migration, or a Vertex agent's cloud tools that land after
-  the delete fail with `workflow_not_found` instead of writing the graph back.
+  save or a read's migration that lands after
+  the delete fails with `workflow_not_found` instead of writing the graph back.
 
 ### The orb
 

@@ -108,7 +108,7 @@ configuration. The in-process executor does not provide Temporal's policies.
 Keep provider/tool I/O in regular Activities. A heartbeat can report liveness
 or a real recovery checkpoint supported by the operation; a status string
 cannot restore an opaque HTTP request, subprocess, or provider session.
-Managed agents such as Claude Code, RLM, and Vertex stop at their whole
+Managed agents such as Claude Code and RLM stop at their whole
 Activity boundary. Stop can remain Stopping while an admitted operation is
 waiting or retrying; the model request policy currently permits unlimited
 retries. See [Temporal Activity failure detection](https://docs.temporal.io/develop/python/failure-detection)

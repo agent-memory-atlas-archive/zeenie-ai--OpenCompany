@@ -602,8 +602,7 @@ base agents (`aiAgent`, `chatAgent`), the specialized agents
 `travel_agent`, `tool_agent`, `productivity_agent`, `payments_agent`,
 `consumer_agent`, `autonomous_agent`), the 2 team leads
 (`orchestrator_agent`, `ai_employee`), the 2 CLI/REPL agents that bypass
-the standard loop (`rlm_agent`, `claude_code_agent`), and
-`vertex_managed_agent` (Vertex-hosted, own dispatch path). `codex_agent` is
+the standard loop (`rlm_agent`, `claude_code_agent`). `codex_agent` is
 a sibling plugin folder on the same CLI-agent path but is not in the
 frozenset.
 
@@ -614,7 +613,7 @@ Two settings flags route agent execution through different Temporal paths (see [
 | Flag | Off | On (default) |
 |---|---|---|
 | `TEMPORAL_PER_TYPE_DISPATCH` | Ordinary nodes use the legacy `execute_node_activity` dispatcher (WS round-trip); enabled agent child-Workflow routing still takes precedence for supported types. | Ordinary nodes use per-type `node.{type}.v{version}` Activities registered by `BaseNode.as_activity()`. Graph dispatch honors plugin retry/queue; Workspace-task patches and version 1 agent-tool dispatch also use plugin timeout/heartbeat. |
-| `TEMPORAL_AGENT_WORKFLOW_ENABLED` | Supported agents run the in-process loop inside a node Activity: per-type when per-type dispatch is on, otherwise the legacy single dispatcher. | Types in `AGENT_WORKFLOW_TYPES` become **child Workflows** (`AgentWorkflow`). LLM steps and ordinary tools are Activities; preparation resolves configuration and explicit refresh binds canvas changes. `rlm_agent`, `claude_code_agent`, and `vertex_managed_agent` remain whole-node Activities. |
+| `TEMPORAL_AGENT_WORKFLOW_ENABLED` | Supported agents run the in-process loop inside a node Activity: per-type when per-type dispatch is on, otherwise the legacy single dispatcher. | Types in `AGENT_WORKFLOW_TYPES` become **child Workflows** (`AgentWorkflow`). LLM steps and ordinary tools are Activities; preparation resolves configuration and explicit refresh binds canvas changes. `rlm_agent` and `claude_code_agent` remain whole-node Activities. |
 
 Both flags default to `true` in `.env.template`; the starter freezes their
 values and the worker-pool routing flag into each execution's input.

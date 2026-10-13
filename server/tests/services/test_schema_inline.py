@@ -1,6 +1,5 @@
 """Unit tests for ``inline_schema_refs`` — the LLM function-calling
-schema flattener used by ``ToolNode.as_tool_schema`` and the Vertex
-managed-agent tool bridge.
+schema flattener used by ``ToolNode.as_tool_schema``.
 
 The contract: declared tool parameter schemas must never contain
 ``$defs`` / ``definitions`` / dangling ``$ref`` — nested models and

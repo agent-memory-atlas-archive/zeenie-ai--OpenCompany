@@ -23,27 +23,6 @@ def scope():
 
 
 @pytest.mark.asyncio
-async def test_vertex_forwards_scope_and_recorded_call_disables_pi_inline_wait(monkeypatch):
-    from nodes.agent.vertex_managed_agent import VertexManagedAgentNode
-    from services.plugin import NodeContext
-    execute = AsyncMock(return_value={"status": "DELEGATED", "task_id": "task"})
-    monkeypatch.setattr("services.handlers.tools.execute_tool", execute)
-    monkeypatch.setattr("services.plugin.deps.get_ai_service", lambda: object())
-    monkeypatch.setattr("services.plugin.deps.get_database", lambda: object())
-    monkeypatch.setattr("nodes.agent.vertex_managed_agent._ops.record_tool_output", AsyncMock())
-    ctx = NodeContext.from_legacy("parent", "vertex_managed_agent", {**scope(), "workflow_id": "wf"})
-    result = await VertexManagedAgentNode._execute_bridged_call(
-        {"name": "delegate", "call_id": "vertex-call", "arguments": {"task": "edit"}},
-        {"delegate": {"node_id": "coding", "node_type": "coding_agent"}}, ctx, delegation_wait_seconds=300)
-    config = execute.await_args.args[2]
-    assert config["tool_call_id"] == "vertex-call"
-    assert config["controller_workflow_id"] == "controller" and config["user_id"] == "alice"
-    assert config["parameter_snapshot"] == scope()["parameter_snapshot"]
-    assert "delegation_wait_seconds" not in config
-    assert result["result"]["status"] == "DELEGATED"
-
-
-@pytest.mark.asyncio
 async def test_claude_mcp_uses_authenticated_request_identity_and_trusted_principal(monkeypatch):
     from services.cli_agent import mcp_server, workflow_tools
     execute = AsyncMock(return_value={"status": "DELEGATED"})

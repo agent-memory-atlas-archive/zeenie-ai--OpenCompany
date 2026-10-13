@@ -125,7 +125,6 @@ flowchart TD
 - Zero enabled entries -> no skill context at all; the agent still runs (see `_pattern.md`).
 - With `skill_folder = "assistant"` the `skill` entry cannot be disabled at runtime even if the editor shows it off — the walker re-enables it.
 - `noop.skills_active` counts any dict entry with a truthy `enabled`, independent of whether the key exists in the registry.
-- `input-skill` handles exist on agents that ignore skill data (e.g. `vertex_managed_agent` discards the tuple slot); the node connects but contributes nothing there.
 - `-personality` keys with custom `instructions` in the config skip the SKILL.md load entirely — the customised text is what gets injected.
 - The wire types `hideInputSection` / `hideOutputSection` mean the panel shows only the editor; there is no way to inspect the expanded entries from the node itself (use the agent's Connected Skills view).
 

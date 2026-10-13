@@ -135,7 +135,7 @@ Nothing here is a black box. What an employee learns lives in its memory, its no
 - **1Password credential bindings** for supported API keys and configured website logins. Local access uses desktop authorization; distributed deployments use scoped service accounts. Website passwords are filled privately while browser observations are paused. MFA and multi-step login use human takeover. [Credential setup and compatibility](docs-internal/onepassword_credentials.md).
 - **Speech and translation**, so employees can listen, talk, and work in other languages.
 - **A local Android phone workspace** on Windows x64: set up a persistent emulator, watch it live, use it yourself, or let an AI agent use the **Android** tool. Optional setup requires SDK license acceptance; iOS is not yet supported. [Setup, controls and troubleshooting](docs/mobile-workspace.md).
-- **78 skills** that ship ready to use, and a place to drop your own.
+- **Built-in skills** that ship ready to use, and a place to drop your own.
 - **Built to keep running.** Employees survive restarts and catch up on missed schedules. For newly started Temporal generations, Stop lets current work finish, retains its result, and Resume continues with the next pending action. Home, chat and canvas use the same control. [Stop and Resume behavior](docs-internal/temporal-workflow-control.md). Local credentials remain encrypted on your machine. Multi-machine Browser deployments require PostgreSQL, shared storage, external Temporal and 1Password bindings; an unavailable browser keeps its owner and waits for recovery. [Deployment, migration and release checks](docs-internal/browser_agent_deployment.md).
 - **A canvas you will want to look at**, in a light, dark or mid-century Atomic theme.
 

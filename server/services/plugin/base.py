@@ -496,9 +496,8 @@ class BaseNode:
         # This is the ONLY honest signal for it. ``componentKind`` is a
         # rendering key -- socialSend/socialReceive declare "agent" purely to
         # get the multi-handle layout while being plain ActionNodes -- and
-        # ``group`` disagrees the other way (vertex_agent_admin is group
-        # "agent" but a REST-API square). The declared timeout is exactly the
-        # 19 genuinely long-running nodes, with no heuristic.
+        # ``group`` only identifies a palette category. The declared timeout
+        # describes how long a node can run without a category heuristic.
         #
         # Rides uiHints deliberately: ``node_spec.get_node_spec`` copies a
         # fixed tuple of top-level keys, so a new top-level field would need a
