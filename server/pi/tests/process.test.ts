@@ -6,7 +6,8 @@ import {ScopedProtocolBlobs} from "../src/transport.ts";
 import {INLINE_LIMIT_BYTES,MAX_FRAME_BYTES} from "../src/types.ts";
 import {mkdtemp,realpath,rm} from "node:fs/promises";
 import {tmpdir} from "node:os";
-import {message,run,toolResult,call} from "./fixtures.ts";
+import {message,run} from "./fixtures.ts";
+import {captureProcess,smokeHost} from "./process-helpers.ts";
 
 const source=join(dirname(fileURLToPath(import.meta.url)),"..","src","index.ts");
 const fixtures=join(dirname(fileURLToPath(import.meta.url)),"runtime-fixtures");
@@ -50,24 +51,21 @@ test("bootstrap protocol failures still emit a bounded terminal error",async()=>
     expect(await stderr).toBe("");
   } finally {if(child.exitCode===null){child.kill();await child.exited;}}
 },15000);
-export async function smokeHost(entrypoint:string,env:Record<string,string|undefined>={}):Promise<void> {
-  const child=Bun.spawn([process.execPath,entrypoint],{stdin:"pipe",stdout:"pipe",stderr:"pipe",env:{...process.env,...env}});
-  child.stdin.write(encodeFrame(run()));
-  let buffer="";let ended=false;const observed:string[]=[];
-  for await(const chunk of child.stdout) {
-    buffer+=new TextDecoder().decode(chunk);
-    let lf:number;
-    while((lf=buffer.indexOf("\n"))>=0) {
-      const event=JSON.parse(buffer.slice(0,lf));buffer=buffer.slice(lf+1);observed.push(event.type);
-      if(event.type==="operation") child.stdin.write(encodeFrame({type:"operation_result",id:event.id,
-        result:event.kind==="model"?{assistant_message:message("assistant","read",[call()])}:{message:toolResult()}}));
-      if(event.type==="turn_checkpoint") {expect(event.snapshot.entries.some((entry:{type:string;message?:{role:string}})=>entry.type==="message" && entry.message?.role==="toolResult")).toBe(true);ended=true;}
-      if(event.type==="error") throw new Error(`${event.code}: ${event.message}`);
-    }
-  }
-  expect(ended).toBe(true);expect(observed).toEqual(["operation","assistant_ready","operation","turn_checkpoint"]);
-  expect(await child.exited).toBe(0);expect(await new Response(child.stderr).text()).toBe("");
-}
+test("subprocess capture drains full stdout and stderr pipes before waiting for exit",async()=>{
+  const size=1024*1024;
+  const child=await captureProcess([process.execPath,"-e",`process.stdout.write("o".repeat(${size}));process.stderr.write("e".repeat(${size}));`],"Verbose archive command",10000);
+  expect(child.exitCode).toBe(0);expect(child.stdout).toBe("o".repeat(size));expect(child.stderr).toBe("e".repeat(size));
+},15000);
+test("subprocess capture reports its phase and reaps a child that exceeds its bound",async()=>{
+  let failure:Error|undefined;
+  try {
+    await captureProcess([process.execPath,"-e","process.stderr.write(`pid=${process.pid}`);setInterval(()=>{},1000);"],"Stalled archive command",2000);
+  } catch(error) {failure=error as Error;}
+  expect(failure?.message).toContain("Stalled archive command exceeded 2000 ms");
+  const pid=Number(failure?.message.match(/pid=(\d+)/)?.[1]);
+  expect(Number.isSafeInteger(pid) && pid>0).toBe(true);
+  expect(()=>process.kill(pid,0)).toThrow();
+},10000);
 test("isolated JSONL host completes and exits without stdin EOF",()=>smokeHost(source),15000);
 test("stdin EOF aborts and reaps a waiting SDK host",async()=>{
   const child=Bun.spawn([process.execPath,source],{stdin:"pipe",stdout:"pipe",stderr:"pipe"});
