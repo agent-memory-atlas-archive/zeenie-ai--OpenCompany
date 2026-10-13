@@ -95,6 +95,38 @@ export interface GlobalModelState {
   global_model: string | null;
 }
 
+function normalizeGlobalModelState(response: unknown): GlobalModelState {
+  if (!response || typeof response !== 'object' || Array.isArray(response)) {
+    throw new Error('Invalid validated AI providers response');
+  }
+  const state = response as Record<string, unknown>;
+  // Correlated WebSocket handler errors resolve as responses, rather than
+  // rejecting the request. They have no provider list to render.
+  if (state.success === false || !Array.isArray(state.providers)) {
+    throw new Error(typeof state.error === 'string' ? state.error : 'Invalid validated AI providers response');
+  }
+  const modelList = (value: unknown): string[] => Array.isArray(value)
+    ? value.filter((model): model is string => typeof model === 'string' && model.length > 0)
+    : [];
+  return {
+    providers: state.providers.flatMap((value): ValidatedProvider[] => {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
+      const provider = value as Record<string, unknown>;
+      if (typeof provider.provider !== 'string' || !provider.provider) return [];
+      return [{
+        provider: provider.provider,
+        display_name: typeof provider.display_name === 'string' && provider.display_name
+          ? provider.display_name : provider.provider,
+        models: modelList(provider.models),
+        popular_models: modelList(provider.popular_models),
+        default_model: typeof provider.default_model === 'string' ? provider.default_model : null,
+      }];
+    }),
+    global_provider: typeof state.global_provider === 'string' ? state.global_provider : null,
+    global_model: typeof state.global_model === 'string' ? state.global_model : null,
+  };
+}
+
 export interface UseApiKeysResult {
   // Validate and store API key
   validateApiKey: (provider: string, apiKey: string) => Promise<ApiKeyValidationResult>;
@@ -474,8 +506,8 @@ export const useApiKeys = (): UseApiKeysResult => {
     const fallback: GlobalModelState = { providers: [], global_provider: null, global_model: null };
     if (!isConnected) return fallback;
     try {
-      const response = await sendRequest<GlobalModelState>('get_validated_ai_providers', {});
-      return response || fallback;
+      const response = await sendRequest<unknown>('get_validated_ai_providers', {});
+      return normalizeGlobalModelState(response);
     } catch (error) {
       console.warn('Error fetching validated AI providers:', error);
       return fallback;

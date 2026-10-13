@@ -11,7 +11,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 
-import { useApiKeys } from '../useApiKeys';
+import { useApiKeys, type GlobalModelState } from '../useApiKeys';
 import {
   makeProviderDefaults,
   makeModelConstraints,
@@ -405,6 +405,66 @@ describe('useApiKeys.getValidatedAiProviders / saveGlobalModel', () => {
       {},
     );
     expect(got.global_provider).toBe('openai');
+  });
+
+  it.each([
+    { type: 'get_validated_ai_providers_result', success: false, error: 'Lookup failed' },
+    {},
+    null,
+    { providers: null },
+    { providers: {} },
+  ])('returns an empty model state for an invalid provider response: %j', async (response) => {
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      wsMock.sendRequest.mockResolvedValue(response);
+      const { result } = renderHook(() => useApiKeys());
+      const state = await result.current.getValidatedAiProviders();
+      expect(state).toEqual({ providers: [], global_provider: null, global_model: null });
+      expect(warning).toHaveBeenCalledWith('Error fetching validated AI providers:', expect.any(Error));
+    } finally {
+      warning.mockRestore();
+    }
+  });
+
+  it('keeps usable providers and supplies arrays for missing model lists', async () => {
+    wsMock.sendRequest.mockResolvedValue({
+      providers: [
+        null,
+        {},
+        { provider: '' },
+        { provider: 'openai', models: ['gpt-4', null, 42, ''] },
+        { provider: 'anthropic', display_name: 'Anthropic', popular_models: ['claude-sonnet'], models: null },
+        {
+          provider: 'openai_compatible:local', display_name: 'Local endpoint',
+          models: ['custom-model'], popular_models: [], default_model: 'custom-model',
+        },
+      ],
+      global_provider: 'openai_compatible:local',
+      global_model: 'custom-model',
+    });
+    const { result } = renderHook(() => useApiKeys());
+    const state = await result.current.getValidatedAiProviders();
+    expect(state).toEqual({
+      providers: [
+        { provider: 'openai', display_name: 'openai', models: ['gpt-4'], popular_models: [], default_model: null },
+        { provider: 'anthropic', display_name: 'Anthropic', models: [], popular_models: ['claude-sonnet'], default_model: null },
+        {
+          provider: 'openai_compatible:local', display_name: 'Local endpoint',
+          models: ['custom-model'], popular_models: [], default_model: 'custom-model',
+        },
+      ],
+      global_provider: 'openai_compatible:local',
+      global_model: 'custom-model',
+    } satisfies GlobalModelState);
+  });
+
+  it('returns an empty state while disconnected without requesting providers', async () => {
+    wsMock.isConnected = false;
+    const { result } = renderHook(() => useApiKeys());
+    expect(await result.current.getValidatedAiProviders()).toEqual({
+      providers: [], global_provider: null, global_model: null,
+    });
+    expect(wsMock.sendRequest).not.toHaveBeenCalled();
   });
 
   it('saveGlobalModel uses save_global_model', async () => {
