@@ -15,7 +15,7 @@ export function WelcomeStep() {
       <div data-stagger className="flex flex-col gap-2.5 pr-10">
         <MicroLabel className="text-node-agent-ink">{name ? `Welcome, ${name}` : 'Welcome'}</MicroLabel>
         <h2 className="m-0 text-headline leading-hero font-semibold tracking-hero text-balance text-fg-default">
-          Your AI team, hired in plain words.
+          Your AI employees, hired in plain words.
         </h2>
       </div>
       <WelcomeDemo name={name} />
