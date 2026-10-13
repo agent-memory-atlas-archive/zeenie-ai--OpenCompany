@@ -250,6 +250,8 @@ async def _dispatch_tool(tool_name: str, tool_args: Dict[str, Any], config: Dict
         if checked.tool_args is not None:
             tool_args = checked.tool_args
 
+        # The scope this plugin reads itself (BaseNode.context_keys).
+        context.update({key: config[key] for key in plugin_cls.context_keys if key in config})
         instance = plugin_cls()
         ctx = NodeContext.from_legacy(
             node_id=config.get("node_id", f"tool_{node_type}"),

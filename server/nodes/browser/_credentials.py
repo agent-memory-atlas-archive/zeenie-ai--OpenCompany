@@ -81,7 +81,7 @@ async def fill_credentials(ctx: Any, runtime: Any, call: Any, *, timeout: float)
     from services.plugin.deps import get_database
 
     controller = runtime.controller
-    task_id = str(ctx.raw.get("_browser_task_id") or ctx.execution_id or "")
+    task_id = ctx.raw.get("_browser_task_id")
     if controller.task_id is not None and controller.task_id != task_id:
         return {"success": False, "error_type": "BrowserBusy", "error": "This profile belongs to another task."}
     page = None

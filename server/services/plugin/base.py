@@ -282,6 +282,12 @@ class BaseNode:
     # context). Currently only :class:`AgentBuilderNode` opts in.
     needs_canvas: ClassVar[bool] = False
 
+    # Server-owned execution scope this plugin reads from ``ctx.raw``, such
+    # as the Browser's claim token. Both tool adapters (``as_activity`` and
+    # the in-process ``_dispatch_tool``) copy these keys from the run's
+    # context; a model's arguments never supply them.
+    context_keys: ClassVar[Sequence[str]] = ()
+
     # Wave 12 D5: LLM-visible name + description for plugins surfaced as
     # AI tools (ToolNode subclasses, ActionNodes marked usable_as_tool=True,
     # SpecializedAgentBase subclasses).
@@ -1292,6 +1298,8 @@ class BaseNode:
                     # what it shows goes (show_ui, services/chat/parts.py).
                     "chat_stream",
                     "chat_run_id",
+                    # The scope this plugin reads itself (context_keys).
+                    *cls.context_keys,
                 ):
                     if key in context:
                         extras[key] = context[key]

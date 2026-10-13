@@ -419,6 +419,32 @@ async def test_reset_of_browser_agent_without_exactly_one_browser_tool_is_a_noop
         execution_id="2:execution:5", generation=5, graph=graph, database=db) == {"reset": False}
 
 
+async def test_the_browser_checks_its_claim_with_the_task_token_not_the_run_id(database):
+    from nodes.browser.browser import BrowserNode, BrowserParams
+    from services.plugin.context import NodeContext
+
+    db, controller = database
+    binding = await owners.bind_profile(db, "profile", "owner")
+    await owners.claim_browser_task(db, binding, "owner", "agent-workflow")
+
+    class PastOwnership(Exception):
+        pass
+
+    runtime = SimpleNamespace(controller_for=lambda _: controller, controller=lambda _: controller,
+                              base_policy=Mock(side_effect=PastOwnership))
+
+    def call(**scope):
+        return NodeContext.from_legacy("browser", "browser", {"workflow_id": "wf", "user_id": "owner",
+            "execution_id": "wf:execution:3", "_browser_owner": binding, **scope})
+
+    with patch("services.plugin.deps.get_database", return_value=db), \
+            patch("nodes.browser._runtime.get_browser_runtime", return_value=runtime):
+        with pytest.raises(PastOwnership):
+            await BrowserNode().dispatch(call(_browser_task_id="agent-workflow"), BrowserParams(operation="snapshot"))
+        with pytest.raises(NodeUserError, match="BrowserBusy"):
+            await BrowserNode().dispatch(call(), BrowserParams(operation="snapshot"))
+
+
 async def test_ambiguous_active_browser_bindings_fail_closed(database):
     db, _ = database
     db.get_node_parameters = AsyncMock(return_value={})
