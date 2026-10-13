@@ -168,6 +168,16 @@ and manual-help routing use that frozen profile while the task is active,
 even after profile edits or an owner restart. Current resource authorization
 still applies; matching-token release clears the association.
 
+Every browser call hands the Browser node that token (`_browser_task_id`) and
+binding (`_browser_owner`) through the node's declared `context_keys`, which
+both `BaseNode.as_activity` and the in-process `_dispatch_tool` forward. A
+call without a token belongs to no task and passes only while the profile is
+unclaimed; the node never substitutes the run's execution id, which belongs
+to the team lead and never matches a claim. Start and import refuse a Browser
+AI Agent without exactly one connected Browser tool (`BROWSER_TOOL_REQUIRED`),
+and Reset of a generation recorded without one skips the agent's cleanup
+instead of failing: nothing could have been claimed through it.
+
 An offline owner's queued Activity remains on that owner's queue without
 consuming retries or starting another model turn. The UI reports
 **Browser unavailable — waiting for its owner.** Attempt/heartbeat timeouts
