@@ -65,16 +65,21 @@ _SEED_TRANSCRIPT_MAX_BYTES = 1_000_000
 
 
 def _tool_activity_policy(cls: Any) -> Dict[str, Any]:
-    """Freeze declaration values in history rather than consult code on replay."""
+    """Freeze declaration values in history rather than consult code on replay.
+
+    A tool with no plugin class (the Skill tool) keeps the base timeouts and
+    retries but records no queue: its ``agent.*`` activity runs on the
+    agent's own queue, where it is registered, not on a plugin pool queue.
+    """
     from services.plugin.base import BaseNode
 
-    cls = cls or BaseNode
-    retry = cls.retry_policy
-    heartbeat = cls.heartbeat_timeout
+    declared = cls or BaseNode
+    retry = declared.retry_policy
+    heartbeat = declared.heartbeat_timeout
     return {
-        "start_to_close_seconds": cls.start_to_close_timeout.total_seconds(),
+        "start_to_close_seconds": declared.start_to_close_timeout.total_seconds(),
         "heartbeat_seconds": heartbeat.total_seconds() if heartbeat else None,
-        "task_queue": cls.task_queue,
+        "task_queue": cls.task_queue if cls else None,
         "retry_policy": {
             "initial_interval_seconds": retry.initial_interval.total_seconds(),
             "backoff_coefficient": retry.backoff_coefficient,
