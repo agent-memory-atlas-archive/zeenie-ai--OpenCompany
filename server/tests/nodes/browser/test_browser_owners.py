@@ -16,6 +16,26 @@ from services.plugin.base import NodeUserError
 from nodes.browser._session import ProfileController
 
 
+async def native_reset_client(scope, *, status=None, workflow_type="AgentWorkflow"):
+    from temporalio.api.enums.v1 import EventType
+    from temporalio.api.history.v1 import HistoryEvent, WorkflowExecutionStartedEventAttributes
+    from temporalio.api.common.v1 import Payloads
+    from temporalio.client import WorkflowExecutionStatus
+    from temporalio.converter import DataConverter
+
+    converter = DataConverter.default
+    opening = HistoryEvent(event_id=1, event_type=EventType.EVENT_TYPE_WORKFLOW_EXECUTION_STARTED,
+        workflow_execution_started_event_attributes=WorkflowExecutionStartedEventAttributes(
+            input=Payloads(payloads=await converter.encode([scope]))))
+    async def history(**kwargs):
+        assert kwargs == {"page_size": 1}
+        yield opening
+    handle = SimpleNamespace(describe=AsyncMock(return_value=SimpleNamespace(
+        workflow_type=workflow_type, run_id="terminated-run",
+        status=status or WorkflowExecutionStatus.TERMINATED)), fetch_history_events=history)
+    return SimpleNamespace(get_workflow_handle=Mock(return_value=handle), data_converter=converter)
+
+
 @pytest.fixture
 async def database():
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
@@ -48,6 +68,177 @@ async def test_task_claim_blocks_other_tasks_and_cleanup_is_token_matched(databa
     assert (await owners.release_browser_task(db, binding, "first"))["released"] is True
     await owners.claim_browser_task(db, binding, "owner", "second")
     assert controller.task_id == "second"
+
+
+@pytest.mark.parametrize("workflow_type", ["AgentWorkflow", "MachinaWorkflow"])
+async def test_generation_reset_retires_terminated_native_claim_and_interrupts_stuck_step(database, workflow_type):
+    from services.browser_reset import cleanup_generation_browser_tasks
+    from nodes.browser.browser import BrowserNode
+
+    db, controller = database
+    binding = {**await owners.bind_profile(db, "profile", "owner"), "workflow_id": "wf", "node_id": "browser"}
+    task_id = "native-agent-workflow"
+    await owners.claim_browser_task(db, binding, "owner", task_id)
+    session = SimpleNamespace(profile_id="profile", session_id="session")
+    runtime = SimpleNamespace(controller=lambda _: controller, find_session=lambda *_: session,
+        running=lambda _: running)
+    interrupted = asyncio.Event()
+    async def interrupt():
+        interrupted.set()
+    cli = SimpleNamespace(interrupt=AsyncMock(side_effect=interrupt), suspend_for_credentials=AsyncMock(return_value=True))
+    running = SimpleNamespace(cli=cli)
+    async def stuck_step():
+        async with controller._op_lock:
+            await interrupted.wait()
+    step = asyncio.create_task(stuck_step())
+    await asyncio.sleep(0)
+    client = await native_reset_client({"workflow_id": "wf", "generation": 7}, workflow_type=workflow_type)
+    control = SimpleNamespace(workflow_id="wf", generation=7, graph_snapshot={"nodes": []})
+    with patch("nodes.browser._runtime.get_browser_runtime", return_value=runtime), \
+            patch("nodes.browser._runtime.peek_browser_runtime", return_value=runtime):
+        assert await BrowserNode.reset_execution_state(node_id="browser", workflow_id="wf",
+            execution_id="deployment", generation=7, graph={}, database=db) == {"reset": False, "managed_by_agent": True}
+        assert await cleanup_generation_browser_tasks(db, client, control) == 1
+        assert await cleanup_generation_browser_tasks(db, client, control) == 0
+    await step
+    cli.interrupt.assert_awaited_once()
+    cli.suspend_for_credentials.assert_awaited_once()
+    client.get_workflow_handle.assert_any_call(task_id, run_id="terminated-run")
+    assert controller.task_id is None and controller.needs_observation
+    async with db.get_session() as db_session:
+        assert (await db_session.get(BrowserProfileOwner, "profile")).task_id is None
+
+
+@pytest.mark.parametrize("scope", [
+    {"workflow_id": "wf", "generation": 0},  # Independent Workspace task.
+    {"workflow_id": "wf", "generation": 8},
+    {"workflow_id": "other", "generation": 7},
+    {"workflow_id": "wf", "generation": 7, "_browser_task_id": "unrelated-token"},
+])
+async def test_generation_reset_preserves_claims_outside_recorded_scope(database, scope):
+    from services.browser_reset import cleanup_generation_browser_tasks
+
+    db, controller = database
+    binding = {**await owners.bind_profile(db, "profile", "owner"), "workflow_id": "wf"}
+    await owners.claim_browser_task(db, binding, "owner", "task")
+    client = await native_reset_client(scope)
+    with patch.object(owners, "cleanup_browser_task", AsyncMock()) as cleanup:
+        assert await cleanup_generation_browser_tasks(db, client, SimpleNamespace(workflow_id="wf", generation=7)) == 0
+    cleanup.assert_not_awaited()
+    assert controller.task_id == "task"
+
+
+async def test_generation_reset_keeps_claim_when_native_execution_remains_running(database):
+    from services.browser_reset import cleanup_generation_browser_tasks
+    from temporalio.client import WorkflowExecutionStatus
+
+    db, controller = database
+    binding = {**await owners.bind_profile(db, "profile", "owner"), "workflow_id": "wf"}
+    await owners.claim_browser_task(db, binding, "owner", "task")
+    client = await native_reset_client({"workflow_id": "wf", "generation": 7}, status=WorkflowExecutionStatus.RUNNING)
+    with patch.object(owners, "cleanup_browser_task", AsyncMock()) as cleanup, \
+            pytest.raises(RuntimeError, match="still_running"):
+        await cleanup_generation_browser_tasks(db, client, SimpleNamespace(workflow_id="wf", generation=7))
+    cleanup.assert_not_awaited()
+    assert controller.task_id == "task"
+
+
+@pytest.mark.parametrize("receipt", [{"released": False}, {"released": True}])
+async def test_generation_reset_requires_durable_owner_cleanup_receipt(database, receipt):
+    from services.browser_reset import cleanup_generation_browser_tasks
+
+    db, controller = database
+    binding = {**await owners.bind_profile(db, "profile", "owner"), "workflow_id": "wf"}
+    await owners.claim_browser_task(db, binding, "owner", "task")
+    client = await native_reset_client({"workflow_id": "wf", "generation": 7})
+    with patch.object(owners, "cleanup_browser_task", AsyncMock(return_value=receipt)), \
+            pytest.raises(RuntimeError, match="unacknowledged"):
+        await cleanup_generation_browser_tasks(db, client, SimpleNamespace(workflow_id="wf", generation=7))
+    assert controller.task_id == "task"
+
+
+async def test_reset_owner_cleanup_never_interrupts_replacement_task(database):
+    db, controller = database
+    binding = {**await owners.bind_profile(db, "profile", "owner"), "workflow_id": "wf"}
+    await owners.claim_browser_task(db, binding, "owner", "replacement")
+    cli = SimpleNamespace(interrupt=AsyncMock(), suspend_for_credentials=AsyncMock(return_value=True))
+    runtime = SimpleNamespace(controller=lambda _: controller, running=lambda _: SimpleNamespace(cli=cli))
+    with patch("nodes.browser._runtime.get_browser_runtime", return_value=runtime):
+        assert await owners.cleanup_browser_task(db, binding, "terminated-task", reset=True) == {"released": False}
+    cli.interrupt.assert_not_awaited()
+    assert controller.task_id == "replacement"
+
+
+async def test_reset_owner_cleanup_waits_for_shielded_browser_start(database):
+    db, controller = database
+    binding = {**await owners.bind_profile(db, "profile", "owner"), "workflow_id": "wf"}
+    await owners.claim_browser_task(db, binding, "owner", "task")
+    starting = asyncio.get_running_loop().create_future()
+    cli = SimpleNamespace(interrupt=AsyncMock(), suspend_for_credentials=AsyncMock(return_value=True))
+    runtime = SimpleNamespace(controller=lambda _: controller, _starting={"profile": starting},
+        running=lambda _: SimpleNamespace(cli=cli) if starting.done() else None)
+    with patch("nodes.browser._runtime.get_browser_runtime", return_value=runtime):
+        cleanup = asyncio.create_task(owners.cleanup_browser_task(db, binding, "task", reset=True))
+        await asyncio.sleep(0.01)
+        assert not cleanup.done() and controller.task_id == "task"
+        starting.set_result(None)
+        assert await cleanup == {"released": True}
+    cli.interrupt.assert_awaited_once()
+    cli.suspend_for_credentials.assert_awaited_once()
+
+
+async def test_remote_reset_cleanup_forwards_exact_task_and_reset_intent(database):
+    db, _ = database
+    binding = await owners.bind_profile(db, "profile", "owner")
+    forward = AsyncMock(return_value={"released": True})
+    with patch.object(owners, "replica_id", return_value="other-replica"), \
+            patch("nodes.browser._routing.forward_command", forward):
+        assert await owners.cleanup_browser_task(db, binding, "native-task", reset=True) == {"released": True}
+    forward.assert_awaited_once_with(binding, "owner", "cleanup_task",
+        {"profile_id": "profile", "task_id": "native-task", "reset": True})
+
+
+async def test_owner_command_preserves_authenticated_reset_cleanup_intent(database):
+    import json
+    from nodes.browser import _routing
+
+    db, _ = database
+    binding = await owners.bind_profile(db, "profile", "owner")
+    body = json.dumps({"command": "cleanup_task", "data": {
+        "profile_id": "profile", "task_id": "native-task", "reset": True}}).encode()
+    request = SimpleNamespace(body=AsyncMock(return_value=body), headers={
+        "X-Browser-Forward": owners.sign_forward("owner", "POST", _routing.COMMAND_PATH, body)})
+    cleanup = AsyncMock(return_value={"released": True})
+    with patch.object(_routing, "get_database", return_value=db), \
+            patch.object(_routing, "command_binding", AsyncMock(return_value=binding)), \
+            patch.object(owners, "cleanup_browser_task", cleanup):
+        assert await _routing.owner_command(request) == {"released": True}
+    cleanup.assert_awaited_once_with(db, {**binding, "principal_id": "owner"}, "native-task", reset=True)
+
+
+async def test_direct_browser_reset_interrupts_unclaimed_terminated_activity_before_releasing_lease(database):
+    from nodes.browser.browser import BrowserNode
+
+    db, controller = database
+    session = SimpleNamespace(profile_id="profile", session_id="session")
+    controller.lease_session = session
+    interrupted = asyncio.Event()
+    cli = SimpleNamespace(interrupt=AsyncMock(side_effect=lambda: interrupted.set()),
+        suspend_for_credentials=AsyncMock(return_value=True))
+    runtime = SimpleNamespace(controller=lambda _: controller, find_session=lambda *_: session,
+        running=lambda _: SimpleNamespace(cli=cli))
+    async def step():
+        async with controller._op_lock:
+            await interrupted.wait()
+    activity = asyncio.create_task(step())
+    await asyncio.sleep(0)
+    with patch("nodes.browser._runtime.peek_browser_runtime", return_value=runtime):
+        assert await BrowserNode.reset_execution_state(node_id="browser", workflow_id="wf",
+            execution_id="deployment", generation=7, graph={}, database=db) == {"reset": True}
+    await activity
+    assert controller.lease_session is None
+    cli.interrupt.assert_awaited_once()
+    cli.suspend_for_credentials.assert_awaited_once()
 
 
 async def test_unavailable_owner_is_never_reassigned(database):

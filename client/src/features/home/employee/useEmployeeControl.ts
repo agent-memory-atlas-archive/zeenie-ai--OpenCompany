@@ -94,6 +94,7 @@ export function useEmployeeControl(employee: EmployeeSummary, onConnect: (provid
       pillToast(`${employee.name} ${CONTROL_DONE[kind]}`);
       if (kind !== 'pause') spikeOrb(SPIKE.start);
     } catch (error) {
+      if (error instanceof Error && error.message === 'workflow_control_superseded') return;
       pillToast(controlErrorMessage(error), { tone: 'error' });
       if (error instanceof Error && error.message === 'control_revision_conflict') invalidateEmployees(queryClient);
       if (error instanceof Error && error.message === 'needs_ai') openConnectAI();

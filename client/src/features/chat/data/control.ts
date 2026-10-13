@@ -20,6 +20,8 @@ export function useResumeChatGeneration(control: WorkflowControlStatus | undefin
       if (current.root_execution_id !== control.root_execution_id) throw new Error('control_generation_conflict');
       return resumeWorkflow(control.workflow_id, current.revision);
     },
-    onError: onFailed,
+    onError: (error) => {
+      if (error.message !== 'workflow_control_superseded') onFailed();
+    },
   });
 }

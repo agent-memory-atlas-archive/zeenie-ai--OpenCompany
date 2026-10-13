@@ -108,7 +108,7 @@ async def owner_command(request: Any) -> dict:
         binding = await command_binding(principal, data)
         if binding is None or binding["owner_id"] != replica_id():
             raise NodeUserError("Browser unavailable — waiting for its owner.")
-        return await cleanup_browser_task(get_database(), {**binding, "principal_id": principal}, str(data.get("task_id") or ""))
+        return await cleanup_browser_task(get_database(), {**binding, "principal_id": principal}, str(data.get("task_id") or ""), reset=data.get("reset") is True)
     if command == "session_file":
         import base64
         from ._cookies import MAX_UPLOAD_BYTES, parse_session_file

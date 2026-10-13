@@ -411,6 +411,17 @@ class BrowserNode(ToolNode):
                 # The owning agent's reset hook carries its exact task token.
                 # A legacy Browser hook must not release an unrelated task.
                 return {"reset": False, "managed_by_agent": True}
+            running = runtime.running(session.profile_id) if hasattr(runtime, "running") else None
+            if running is not None and controller.lease_session is not None and controller.lease_session.session_id == session.session_id:
+                # A direct Browser Activity may outlive its terminated graph
+                # Workflow. Retire its command before dropping the lease.
+                controller.needs_observation = True
+                await running.cli.interrupt()
+                async with controller._op_lock:
+                    if not await running.cli.suspend_for_credentials():
+                        await runtime.stop_profile(session.profile_id, reason="workflow reset")
+                        if running.chrome.is_running():
+                            raise NodeUserError("Browser reset is waiting for its owner to stop the runtime.")
             await controller.release_lease(session.session_id)
         return {"reset": True}
 

@@ -217,6 +217,26 @@ export interface WorkflowControlPendingMutation {
   state: WorkflowControlTransitionState;
 }
 
+/** Reset can recover a Stop whose admitted work has not finished draining. */
+export const isWorkflowResetBlocked = (
+  pending: WorkflowControlPendingMutation | undefined,
+): boolean => Boolean(pending && pending.action !== 'pause');
+
+export class WorkflowControlMutationSupersededError extends Error {
+  constructor() {
+    super('workflow_control_superseded');
+    this.name = 'WorkflowControlMutationSupersededError';
+  }
+}
+
+interface WorkflowControlMutationOwner {
+  pending: WorkflowControlPendingMutation;
+  generation?: number;
+  rootExecutionId?: string | null;
+  superseded: boolean;
+  supersede: () => void;
+}
+
 const WORKFLOW_CONTROL_STATES = new Set<WorkflowControlState>([
   'never_started',
   'ready',
@@ -840,7 +860,7 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [workflowControlStatuses, setWorkflowControlStatuses] = useState<Record<string, WorkflowControlStatus>>({});
   const workflowControlStatusesRef = useRef<Record<string, WorkflowControlStatus>>({});
   const [workflowControlPending, setWorkflowControlPending] = useState<Record<string, WorkflowControlPendingMutation>>({});
-  const workflowControlPendingRef = useRef<Map<string, WorkflowControlPendingMutation>>(new Map());
+  const workflowControlPendingRef = useRef<Map<string, WorkflowControlMutationOwner>>(new Map());
   const [workflowLock, setWorkflowLock] = useState<WorkflowLock>(defaultWorkflowLock);
   // Per-workflow compaction stats: workflow_id -> session_id -> CompactionStats (n8n pattern)
   const [allCompactionStats, setAllCompactionStats] = useState<Record<string, Record<string, CompactionStats>>>({});
@@ -2851,10 +2871,12 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   const requestWorkflowControlStatus = useCallback(async (
     workflowId: string,
+    isCurrent?: () => boolean,
   ): Promise<WorkflowControlStatus> => {
     const response = assertWorkflowControlMutationSucceeded(
       await sendRequest<any>('get_workflow_control_status', { workflow_id: workflowId }),
     );
+    if (isCurrent && !isCurrent()) throw new WorkflowControlMutationSupersededError();
     return applyWorkflowControlStatus(workflowId, response);
   }, [applyWorkflowControlStatus, sendRequest]);
 
@@ -2863,25 +2885,60 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     workflowId: string,
     data: Record<string, any>,
   ): Promise<WorkflowStartResult> => {
-    if (workflowControlPendingRef.current.has(workflowId)) {
+    const existingOwner = workflowControlPendingRef.current.get(workflowId);
+    if (existingOwner && (type !== 'reset_workflow' || isWorkflowResetBlocked(existingOwner.pending))) {
       throw new Error('A workflow lifecycle change is already in progress');
     }
 
-    const pending = WORKFLOW_CONTROL_PENDING_BY_REQUEST[type];
+    const pending = { ...WORKFLOW_CONTROL_PENDING_BY_REQUEST[type] };
     const previousStatus = workflowControlStatusesRef.current[workflowId];
+    const matchesGeneration = (status: WorkflowControlStatus) => (
+      (previousStatus?.generation === undefined || status.generation === previousStatus.generation)
+      && (!previousStatus?.root_execution_id || status.root_execution_id === previousStatus.root_execution_id)
+    );
+    if (existingOwner && previousStatus && (
+      (existingOwner.generation !== undefined && previousStatus.generation !== existingOwner.generation)
+      || (existingOwner.rootExecutionId && previousStatus.root_execution_id !== existingOwner.rootExecutionId)
+    )) {
+      throw new Error('control_generation_conflict');
+    }
+    // Stop has already advanced the revision when its pausing broadcast arrives.
+    // Superseding it uses that same generation's current revision, even if the
+    // caller still has the earlier running snapshot.
+    const mutationData = type === 'reset_workflow' ? {
+      ...data,
+      ...(existingOwner && previousStatus ? { expected_revision: previousStatus.revision } : {}),
+      ...(previousStatus?.root_execution_id ? { expected_root_execution_id: previousStatus.root_execution_id } : {}),
+    } : data;
+    let rejectSuperseded!: (error: Error) => void;
+    const superseded = new Promise<never>((_resolve, reject) => { rejectSuperseded = reject; });
+    const owner: WorkflowControlMutationOwner = {
+      pending,
+      generation: previousStatus?.generation,
+      rootExecutionId: previousStatus?.root_execution_id,
+      superseded: false,
+      supersede: () => {
+        owner.superseded = true;
+        rejectSuperseded(new WorkflowControlMutationSupersededError());
+      },
+    };
+    const isCurrent = () => !owner.superseded;
+    const waitForCurrent = <T,>(request: Promise<T>): Promise<T> => Promise.race([request, superseded]);
+    const readStatus = () => waitForCurrent(requestWorkflowControlStatus(workflowId, isCurrent));
     const resetRequestIds = new Set<string>();
     if (type === 'reset_workflow' && previousStatus?.workspace_resetting
       && typeof previousStatus.workspace_reset_request_id === 'string') {
       // Retrying an interrupted reset can finish the original server request.
       resetRequestIds.add(previousStatus.workspace_reset_request_id);
     }
-    let resetExpectedRevision = Number(data.expected_revision ?? previousStatus?.revision ?? 0);
+    let resetExpectedRevision = Number(mutationData.expected_revision ?? previousStatus?.revision ?? 0);
     const isReconciled = (status: WorkflowControlStatus) => type === 'reset_workflow'
-      ? isWorkflowResetRecoveryConfirmed(status, resetExpectedRevision, resetRequestIds)
+      ? matchesGeneration(status) && isWorkflowResetRecoveryConfirmed(status, resetExpectedRevision, resetRequestIds)
       : isWorkflowControlMutationConfirmed(pending.action, status);
-    workflowControlPendingRef.current.set(workflowId, pending);
+    workflowControlPendingRef.current.set(workflowId, owner);
     setWorkflowControlPending((previous) => ({ ...previous, [workflowId]: pending }));
     useWorkflowControlStore.getState().setPending(workflowId, pending);
+    existingOwner?.supersede();
 
     const sendMutationAttempt = async (
       attemptData: Record<string, any>,
@@ -2891,13 +2948,14 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         resetRequestIds.add(idempotencyKey);
         resetExpectedRevision = Number(attemptData.expected_revision ?? resetExpectedRevision);
       }
-      const response = await sendRequest<any>(type, {
+      const response = await waitForCurrent(sendRequest<any>(type, {
         ...attemptData,
         workflow_id: workflowId,
         // Every bounded attempt has its own idempotency identity. In
         // particular, a conflict retry must not replay the rejected request.
         idempotency_key: idempotencyKey,
-      }, WORKFLOW_CONTROL_REQUEST_TIMEOUT);
+      }, WORKFLOW_CONTROL_REQUEST_TIMEOUT));
+      if (!isCurrent()) throw new WorkflowControlMutationSupersededError();
 
       // A success:false response can still be the newest authoritative
       // snapshot. Merge it before assertion so the UI is correct even if the
@@ -2906,9 +2964,19 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       const acceptedSnapshot = snapshot
         ? applyWorkflowControlStatus(workflowId, snapshot)
         : undefined;
+      // A Reset from another tab can replace this intent without replacing
+      // this tab's pending owner. Retain its authoritative snapshot, but do
+      // not report the superseded Pause/Resume as a successful operation.
+      if (response?.superseded === true) throw new WorkflowControlMutationSupersededError();
       assertWorkflowControlMutationSucceeded(response);
       const acceptedStatus = acceptedSnapshot
         ?? applyWorkflowControlStatus(workflowId, response);
+      if (type === 'reset_workflow' && (!matchesGeneration(acceptedStatus)
+        || !isWorkflowControlMutationConfirmed('reset', acceptedStatus)
+        || acceptedStatus.workspace_resetting === true
+        || acceptedStatus.workspace_available === false)) {
+        throw new Error('workflow_control_transition_pending');
+      }
       if (type !== 'start_workflow') return acceptedStatus;
 
       // Lifecycle status is merged independently, but Start also returns the
@@ -2934,19 +3002,22 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         // toolbar still carries the earlier revision. Confirm the running
         // state without submitting another Start. Never rebase stale intent
         // onto a newer ready generation after Reset.
-        const current = await requestWorkflowControlStatus(workflowId);
+        const current = await readStatus();
         if (isReconciled(current)) return current;
         throw new Error('control_revision_conflict');
       }
-      return await sendMutationAttempt(data);
+      return await sendMutationAttempt(mutationData);
     } catch (error) {
+      if (error instanceof WorkflowControlMutationSupersededError) throw error;
+      if (!isCurrent()) throw new WorkflowControlMutationSupersededError();
       let reconciled: WorkflowControlStatus | undefined;
       try {
-        reconciled = await requestWorkflowControlStatus(workflowId);
+        reconciled = await readStatus();
         if (isReconciled(reconciled)) {
           return reconciled;
         }
       } catch (resyncError) {
+        if (!isCurrent()) throw new WorkflowControlMutationSupersededError();
         console.error('[WebSocket] Failed to resync workflow control status:', resyncError);
       }
 
@@ -2957,18 +3028,20 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       if (
         type === 'reset_workflow'
         && reconciled
+        && matchesGeneration(reconciled)
         && shouldRetryResetWorkflowAfterConflict(error, reconciled)
       ) {
         try {
           return await sendMutationAttempt({
-            ...data,
+            ...mutationData,
             expected_revision: reconciled.revision,
           });
         } catch (retryError) {
+          if (retryError instanceof WorkflowControlMutationSupersededError) throw retryError;
           // Preserve timeout/idempotency recovery for the single retry without
           // issuing a third mutation attempt.
           try {
-            const retryReconciled = await requestWorkflowControlStatus(workflowId);
+            const retryReconciled = await readStatus();
             if (isReconciled(retryReconciled)) {
               return retryReconciled;
             }
@@ -2980,14 +3053,16 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       }
       throw error;
     } finally {
-      workflowControlPendingRef.current.delete(workflowId);
-      useWorkflowControlStore.getState().setPending(workflowId, null);
-      setWorkflowControlPending((previous) => {
-        if (!(workflowId in previous)) return previous;
-        const next = { ...previous };
-        delete next[workflowId];
-        return next;
-      });
+      if (workflowControlPendingRef.current.get(workflowId) === owner) {
+        workflowControlPendingRef.current.delete(workflowId);
+        useWorkflowControlStore.getState().setPending(workflowId, null);
+        setWorkflowControlPending((previous) => {
+          if (previous[workflowId] !== pending) return previous;
+          const next = { ...previous };
+          delete next[workflowId];
+          return next;
+        });
+      }
     }
   }, [applyWorkflowControlStatus, requestWorkflowControlStatus, sendRequest]);
 
@@ -3032,6 +3107,13 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const result = await controlMutation(
       'reset_workflow', workflowId, { expected_revision: expectedRevision },
     );
+    const current = workflowControlStatusesRef.current[workflowId];
+    if (current && (current.generation !== result.generation
+      || current.root_execution_id !== result.root_execution_id
+      || !isWorkflowControlMutationConfirmed('reset', current)
+      || current.workspace_resetting === true)) {
+      throw new WorkflowControlMutationSupersededError();
+    }
     // The broadcast clears every connected tab; repeat locally so the
     // initiating tab is correct even if a proxy suppresses self-echo.
     useNodeStatusStore.getState().clearWorkflow(workflowId);

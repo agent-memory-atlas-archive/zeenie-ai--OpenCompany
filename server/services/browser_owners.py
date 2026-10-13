@@ -324,18 +324,42 @@ async def release_browser_task(database: Any, binding: dict, task_id: str) -> di
     return {"released": True}
 
 
-async def cleanup_browser_task(database: Any, binding: dict, task_id: str) -> dict:
+async def cleanup_browser_task(database: Any, binding: dict, task_id: str, *, reset: bool = False) -> dict:
     if getattr(settings(), "distributed_mode", False) is True and binding["owner_id"] != replica_id():
         from nodes.browser._routing import forward_command
-        return await forward_command(binding, str(binding["principal_id"]), "cleanup_task", {"profile_id": binding["profile_id"], "task_id": task_id})
+        data = {"profile_id": binding["profile_id"], "task_id": task_id}
+        if reset:
+            data["reset"] = True
+        return await forward_command(binding, str(binding["principal_id"]), "cleanup_task", data)
     await assert_runtime_epoch(database)
+    if reset and _persistent(database):
+        async with database.get_session() as session:
+            current = await session.get(BrowserProfileOwner, binding["profile_id"])
+            if current is None or current.task_id != task_id or current.owner_id != replica_id():
+                return {"released": False}
     from nodes.browser._runtime import get_browser_runtime
     runtime = get_browser_runtime()
     controller = runtime.controller(binding["profile_id"])
     if controller is not None and controller.task_id not in {None, task_id}:
         return {"released": False}
+    if reset:
+        # Profile startup is deliberately shared/shielded. A terminated
+        # Activity can stop awaiting it while Chrome is still starting; keep
+        # the claim until that startup settles and its daemon can be retired.
+        starting = getattr(runtime, "_starting", {}).get(binding["profile_id"])
+        if starting is not None and not starting.done():
+            await asyncio.shield(starting)
+        controller = runtime.controller(binding["profile_id"])
+        if controller is not None and controller.task_id not in {None, task_id}:
+            return {"released": False}
     running = runtime.running(binding["profile_id"]) if hasattr(runtime, "running") else None
     if running is not None and controller is not None and controller.task_id == task_id:
+        if reset:
+            # Termination does not execute the agent's cancellation/finally
+            # path. Interrupt its command before waiting for the operation
+            # lock, rather than waiting indefinitely for a stuck CLI reply.
+            controller.needs_observation = True
+            await running.cli.interrupt()
         # Wait for an admitted step to settle before releasing its lifetime claim.
         # Suspension confirms the daemon cannot finish an old command later.
         async with controller._op_lock:

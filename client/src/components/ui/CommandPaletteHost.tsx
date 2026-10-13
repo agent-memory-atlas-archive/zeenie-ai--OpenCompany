@@ -72,6 +72,12 @@ export const buildWorkflowLifecycleCommands = (
     'start' | 'pause' | 'resume' | 'reset' | 'workflowControl' | 'workflowControlPending'
   >,
 ): CommandItem[] => {
+  if (handlers.workflowControlPending?.action === 'pause' && handlers.workflowControl.can_reset) {
+    return [{
+      id: 'run.reset', label: 'Reset Workflow Execution', group: 'Run', icon: RotateCcw,
+      hint: 'terminates active work', onRun: handlers.reset,
+    }];
+  }
   if (handlers.workflowControlPending) {
     return [];
   }

@@ -69,12 +69,21 @@ of falsely publishing a stable state.
 Every accepted control transition emits `workflow_control_status`. Clients
 merge reads, mutation responses, and broadcasts monotonically by generation
 then database revision; an older response cannot move another tab backward.
-Only one lifecycle mutation per workflow may be pending in a browser tab.
+Only one lifecycle mutation per workflow may be pending in a browser tab,
+except that Reset may supersede a pending Stop. The superseded Stop cannot
+clear Reset's pending state or apply a late result. Reset uses the current
+revision within the same owning generation and refuses a different generation.
 Lifecycle requests have a five-minute acknowledgement window, and a timed-out
 request is treated as successful when the immediate authoritative resync
 already reports its requested stable state. Transitional Pause, Resume, and
 Reset states expose an explicit retry rather than trapping the toolbar in a
 permanent spinner.
+
+Version 1 status reads return transitional state promptly. They start or reuse
+one supervised reconciliation task for the control revision instead of waiting
+for its checkpoint. A disconnected socket cancels only its local waiter; the
+supervised transition and durable admission fence remain. Reset retires older
+local checkpoint polling and reports the newer control state to those waiters.
 
 ## Acknowledged Stop for new generations
 
@@ -109,6 +118,13 @@ before awaiting any checkpoint. Checkpoints count admitted business Activities
 through result bookkeeping; maintenance Activities, permit waits, sleeps and
 child-result waits are excluded. Root membership is reconciled until stable.
 Visibility scans remain part of destructive Reset, not Stop acknowledgement.
+
+Generation Reset also retires durable browser ownership held by terminated
+native agents. It verifies each exact task token against the recorded Workflow
+input and generation, then awaits the browser owner's cleanup receipt before
+archiving the generation. Browser operations and shared profile startup are
+settled before releasing ownership. Failed cleanup leaves `resetting` for retry;
+claims belonging to another generation or direct Workspace tasks are preserved.
 
 ### Stop and Resume acknowledgement sequence
 

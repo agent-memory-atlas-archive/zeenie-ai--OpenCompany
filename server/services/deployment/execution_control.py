@@ -18,6 +18,10 @@ from core.logging import get_logger
 logger = get_logger(__name__)
 
 
+class GenerationTransitionSuperseded(RuntimeError):
+    """A newer durable control intent owns this generation."""
+
+
 async def count_generation_actions(client: Any, controller_id: str, status: dict) -> int:
     """A read-only UI count; transition verification uses acknowledgements."""
     queue = [controller_id, *(status.get("live_roots") or {})]
@@ -38,14 +42,20 @@ async def count_generation_actions(client: Any, controller_id: str, status: dict
     return count
 
 
-async def transition_generation(client: Any, control: Any, *, paused: bool, on_admission: Any = None) -> dict:
+async def transition_generation(client: Any, control: Any, *, paused: bool, on_admission: Any = None,
+                                ensure_current: Any = None) -> dict:
     controller = client.get_workflow_handle(control.controller_workflow_id)
     revision = int(control.revision)
     base = {"generation": int(control.generation), "revision": revision,
             "state": "paused" if paused else "running"}
     started = time.monotonic()
 
+    async def current() -> None:
+        if ensure_current is not None:
+            await ensure_current()
+
     async def describe(workflow_id: str, chain: str) -> Any:
+        await current()
         handle = client.get_workflow_handle(workflow_id)
         try:
             desc = await handle.describe()
@@ -66,6 +76,7 @@ async def transition_generation(client: Any, control: Any, *, paused: bool, on_a
         raise RuntimeError("controller_execution_missing")
     controller_chain = controller_description.raw_description.workflow_execution_info.first_run_id
     controller_payload = {**base, "first_execution_run_id": controller_chain, "producers_held": True}
+    await current()
     status = await controller.execute_update("set_control_state", controller_payload,
         id=f"control:{revision}:admission")
     if status.get("participant_revision", status.get("revision")) != revision:
@@ -75,6 +86,7 @@ async def transition_generation(client: Any, control: Any, *, paused: bool, on_a
     order: list[str] = []
     removed: set[tuple[str, str]] = set()
     while True:
+        await current()
         before = await controller.query("status")
         epoch = before["membership_epoch"]
         roots = before.get("live_roots", {})
@@ -92,6 +104,7 @@ async def transition_generation(client: Any, control: Any, *, paused: bool, on_a
             if desc is None:
                 targets.pop(workflow_id, None)
                 if workflow_id in roots and (workflow_id, chain) not in removed:
+                    await current()
                     await controller.execute_update("unregister_execution", {
                         "workflow_id": workflow_id, "first_execution_run_id": chain,
                         "generation": control.generation,
@@ -103,6 +116,7 @@ async def transition_generation(client: Any, control: Any, *, paused: bool, on_a
             if workflow_id != control.controller_workflow_id:
                 payload = {**base, "first_execution_run_id": current_chain, "producers_held": True}
                 try:
+                    await current()
                     ack = await handle.execute_update("set_control_state", payload,
                         id=f"control:{revision}:admission")
                 except RPCError as exc:
@@ -125,12 +139,14 @@ async def transition_generation(client: Any, control: Any, *, paused: bool, on_a
                     revision=revision, latency_seconds=time.monotonic() - started,
                     controlled_executions=len(targets))
         if on_admission is not None:
+            await current()
             await on_admission(await controller.query("status"))
         if paused:
             async def checkpoint(workflow_id: str, chain: str) -> None:
                 if await describe(workflow_id, chain) is None:
                     return
                 try:
+                    await current()
                     result = await client.get_workflow_handle(workflow_id).execute_update(
                         "wait_for_checkpoint", {**base, "first_execution_run_id": chain},
                         id=f"control:{revision}:checkpoint")
@@ -141,7 +157,17 @@ async def transition_generation(client: Any, control: Any, *, paused: bool, on_a
                 if (not result.get("checkpoint") or result.get("state") != base["state"]
                     or result.get("revision", result.get("participant_revision")) != revision):
                     raise RuntimeError("temporal_checkpoint_ack_mismatch")
-            await asyncio.gather(*(checkpoint(wid, chain) for wid, chain in targets.items()))
+            checkpoints = [asyncio.create_task(checkpoint(wid, chain)) for wid, chain in targets.items()]
+            try:
+                await asyncio.gather(*checkpoints)
+            finally:
+                # These tasks only poll Updates; cancelling a caller does not
+                # cancel the admitted Workflow actions or their durable intent.
+                for task in checkpoints:
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(*checkpoints, return_exceptions=True)
+        await current()
         after = await controller.query("status")
         if after["membership_epoch"] != epoch:
             continue
@@ -151,11 +177,13 @@ async def transition_generation(client: Any, control: Any, *, paused: bool, on_a
                     continue
                 chain = targets.get(workflow_id)
                 if chain and await describe(workflow_id, chain) is not None:
+                    await current()
                     ack = await client.get_workflow_handle(workflow_id).execute_update(
                         "set_control_state", {**base, "first_execution_run_id": chain, "producers_held": False},
                         id=f"control:{revision}:release")
                     if ack.get("revision") != revision or ack.get("state") != "running" or ack.get("producers_held"):
                         raise RuntimeError("temporal_control_ack_mismatch")
+            await current()
             status = await controller.execute_update("set_control_state", {
                 **controller_payload, "producers_held": False,
                 "expected_membership_epoch": epoch,

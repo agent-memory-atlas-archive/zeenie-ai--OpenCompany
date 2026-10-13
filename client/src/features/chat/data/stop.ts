@@ -46,7 +46,7 @@ export function useStopChatRun(sessionId: string, onFailed?: () => void, control
       }
     },
     onError: (error) => {
-      if (error.message !== 'not_stoppable') onFailed?.();
+      if (error.message !== 'not_stoppable' && error.message !== 'workflow_control_superseded') onFailed?.();
     },
   });
 }

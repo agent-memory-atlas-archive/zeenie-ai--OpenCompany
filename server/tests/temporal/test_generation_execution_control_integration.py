@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import os
 import subprocess
 import sys
 from datetime import timedelta
@@ -38,6 +39,15 @@ _release: dict[str, asyncio.Event]
 _calls: list[str]
 _contexts: dict[str, dict]
 _deliveries: list[dict]
+
+
+async def _test_environment():
+    # The time-skipping test server is unavailable on Windows. An explicitly
+    # supplied cached CLI gives this same SDK/replay gate a local dev server.
+    cli = os.environ.get("TEMPORAL_TEST_CLI")
+    if cli:
+        return await WorkflowEnvironment.start_local(dev_server_existing_path=cli)
+    return await WorkflowEnvironment.start_time_skipping()
 
 
 @activity.defn(name="execute_node_activity")
@@ -155,7 +165,7 @@ async def _run_gate():
     _calls, _contexts = [], {}
     queue = "generation-control-" + uuid4().hex
     definitions = [MachinaWorkflow, WorkflowControlWorkflow, ControlledChildProbe]
-    async with await WorkflowEnvironment.start_time_skipping() as environment:
+    async with await _test_environment() as environment:
         client = environment.client
         activities = [_execute_node, *ExecutionControlActivities(client).activities()]
         async with Worker(client, task_queue=queue, workflows=definitions, activities=activities, max_cached_workflows=0):
@@ -240,7 +250,7 @@ async def _run_cron_job_gate():
     original_pressure = WorkflowControlWorkflow._history_pressure
     WorkflowControlWorkflow._history_pressure = _cron_job_history_pressure
     try:
-        async with await WorkflowEnvironment.start_time_skipping() as environment:
+        async with await _test_environment() as environment:
             client = environment.client
             activities = [_execute_node, _store_output, _record_completion, _deliver, _fail_job,
                           *ExecutionControlActivities(client).activities()]

@@ -24,6 +24,7 @@ import asyncio
 import json
 import time
 import uuid
+import weakref
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
@@ -73,6 +74,79 @@ class ControllerExecutionMissing(RuntimeError):
 # Per-workflow deployment tasks for proper cancellation (Temporal/n8n pattern).
 # Maps workflow_id -> asyncio.Task for parallel workflow deployments.
 _deployment_tasks: Dict[str, asyncio.Task] = {}
+
+# A socket only waits on these tasks. Disconnecting a waiter must not undo a
+# durable Stop, and status polling must never start a second checkpoint drain.
+_control_transition_tasks: Dict[tuple[str, int], asyncio.Task] = {}
+_control_completion_locks: weakref.WeakValueDictionary = weakref.WeakValueDictionary()
+# Counts and Queries are UI observations, never checkpoint acknowledgements.
+# An unavailable worker must not keep Reset behind an admission broadcast.
+_CONTROL_OBSERVATION_TIMEOUT_SECONDS = 1.0
+
+
+def _control_completion_lock(workflow_id: str) -> asyncio.Lock:
+    lock = _control_completion_locks.get(workflow_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _control_completion_locks[workflow_id] = lock
+    return lock
+
+
+def _schedule_versioned_transition(service: WorkflowControlService, control) -> asyncio.Task:
+    key = (control.id, int(control.revision))
+    task = _control_transition_tasks.get(key)
+    if task is not None and not task.done():
+        return task
+    task = asyncio.create_task(_finish_versioned_transition(service, control),
+                               name=f"workflow-control:{control.id}:{control.revision}")
+    _control_transition_tasks[key] = task
+
+    def completed(done: asyncio.Task) -> None:
+        if _control_transition_tasks.get(key) is done:
+            _control_transition_tasks.pop(key, None)
+        if not done.cancelled() and (exc := done.exception()) is not None:
+            logger.warning("Workflow control reconciliation remains pending",
+                           workflow_id=control.workflow_id, revision=control.revision,
+                           error_type=type(exc).__name__, error=str(exc))
+
+    task.add_done_callback(completed)
+    return task
+
+
+def _supersede_versioned_transitions(control) -> None:
+    for (control_id, revision), task in list(_control_transition_tasks.items()):
+        if control_id == control.id and revision < control.revision and not task.done():
+            # Cancel local polling only. Reset's termination sweep is the
+            # authoritative cancellation of Temporal executions.
+            task.cancel()
+
+
+async def _await_versioned_transition(service: WorkflowControlService, control, *, task=None) -> Dict[str, Any]:
+    intent_revision, intent_status = control.revision, control.status
+    intent_identity = (control.id, control.generation)
+    task = task or _schedule_versioned_transition(service, control)
+    try:
+        current, controller_status = await asyncio.shield(task)
+    except asyncio.CancelledError:
+        # A Reset can retire a scheduled poll before its coroutine starts.
+        # Cancellation of just this socket waiter leaves task alive instead.
+        if not task.cancelled():
+            raise
+        current = await service.database.get_latest_workflow_control(control.workflow_id)
+        if current is None or (current.id, current.generation, current.revision, current.status) == (
+            intent_identity[0], intent_identity[1], intent_revision, intent_status
+        ):
+            raise
+        controller_status = None
+    target_status = "paused" if intent_status == "pausing" else "running"
+    return {
+        "success": True,
+        "superseded": ((current.id, current.generation) != intent_identity
+                       or current.status not in {intent_status, target_status}
+                       or current.revision not in {intent_revision, intent_revision + 1}),
+        "transition_pending": current.status in {"pausing", "resuming"},
+        **await _control_payload(current, controller_status=controller_status),
+    }
 
 
 @ws_handler()
@@ -643,7 +717,7 @@ async def _query_controller_state(control) -> Optional[Dict[str, Any]]:
     if handle is None:
         return None
     try:
-        result = await handle.query("status")
+        result = await asyncio.wait_for(handle.query("status"), timeout=_CONTROL_OBSERVATION_TIMEOUT_SECONDS)
         return result if isinstance(result, dict) else None
     except Exception as exc:
         if _temporal_target_already_gone(exc):
@@ -1037,7 +1111,8 @@ async def _workspace_runtime_status(workflow_id: str) -> Dict[str, Any]:
     if wrapper is None or wrapper.client is None:
         return {"can_reset": True, "workspace_available": False} if nodes else {}
     try:
-        state = await controller_status(workflow_id, client=wrapper.client)
+        state = await asyncio.wait_for(controller_status(workflow_id, client=wrapper.client),
+                                       timeout=_CONTROL_OBSERVATION_TIMEOUT_SECONDS)
     except Exception as exc:
         logger.warning("Workspace task status unavailable", workflow_id=workflow_id, error_type=type(exc).__name__)
         return {"can_reset": True, "workspace_available": False} if nodes else {}
@@ -1098,8 +1173,9 @@ async def _control_payload(
             wrapper = container.temporal_client()
             if wrapper is not None and wrapper.client is not None:
                 try:
-                    payload["generation_in_flight_count"] = await count_generation_actions(
-                        wrapper.client, control.controller_workflow_id, controller_status)
+                    payload["generation_in_flight_count"] = await asyncio.wait_for(count_generation_actions(
+                        wrapper.client, control.controller_workflow_id, controller_status),
+                        timeout=_CONTROL_OBSERVATION_TIMEOUT_SECONDS)
                 except Exception as exc:
                     logger.debug("Generation activity count unavailable", workflow_id=control.workflow_id,
                                  error=str(exc))
@@ -1143,6 +1219,12 @@ async def _reconcile_control(service: WorkflowControlService, control):
     if control.status not in ACTIVE_STATES:
         return control, None
 
+    if _versioned_control(control) and control.status in {"pausing", "resuming"}:
+        # A blocked admitted action can keep a checkpoint Update open for
+        # minutes. Status is a snapshot, never a waiter on that Update.
+        _schedule_versioned_transition(service, control)
+        return control, None
+
     try:
         controller_status = await _query_controller_state(control)
     except ControllerExecutionMissing:
@@ -1154,8 +1236,6 @@ async def _reconcile_control(service: WorkflowControlService, control):
     }.get(control.status)
     if transition_target is None:
         return control, controller_status
-    if _versioned_control(control):
-        return await _finish_versioned_transition(service, control)
     requested_state, stable_state = transition_target
 
     if controller_status is None:
@@ -1239,62 +1319,109 @@ async def _reconcile_control(service: WorkflowControlService, control):
 
 
 async def _finish_versioned_transition(service: WorkflowControlService, control):
-    """Finish durable intent without cancelling admitted work on RPC timeout."""
+    """Drain the admitted work while allowing a newer Reset to take over."""
     from core.container import container
-    from services.deployment.execution_control import transition_generation
+    from temporalio.client import WorkflowUpdateRPCTimeoutOrCancelledError
+    from services.deployment.execution_control import GenerationTransitionSuperseded, transition_generation
 
-    paused = control.status == "pausing"
-    runtime = container.workflow_service()
-    runtime.pause_deployment(control.workflow_id)
-    if paused:
-        schedules = await _set_cron_pause(control.workflow_id, paused=True, strict=True)
-        triggers = await runtime.update_trigger_pause_status(control.workflow_id, paused=True)
-    wrapper = container.temporal_client()
-    if wrapper is None or wrapper.client is None:
-        if container.settings().temporal_enabled:
-            raise TemporalControlUnavailable("temporal_control_unavailable")
-        result = {"controller_status": None, "controlled_executions": 0}
-    else:
-        async def admitted(status):
-            try:
-                await _broadcast_control(control, controller_status=status)
-            except Exception as exc:
-                logger.warning("Control admission status broadcast failed", workflow_id=control.workflow_id,
-                               error=str(exc))
-        result = await transition_generation(wrapper.client, control, paused=paused, on_admission=admitted)
-    details = {"controlled_executions": result["controlled_executions"]}
-    values: Dict[str, Any] = {}
-    if paused:
-        details.update(paused_schedules=schedules, paused_triggers=triggers)
-    else:
-        # The existing execution continuations are released before producers.
-        details["resumed_schedules"] = await _set_cron_pause(control.workflow_id, paused=False, strict=True)
-        details["resumed_queued_events"] = await runtime.resume_deployment(control.workflow_id)
-        details["resumed_triggers"] = await runtime.update_trigger_pause_status(control.workflow_id, paused=False)
-        values.update(CLEAR_PAUSE_REASON)
-        values["resource_manifest"] = {**(control.resource_manifest or {}),
-            "last_resumed_at": datetime.now(timezone.utc).isoformat()}
-    try:
-        control = await service.transition(control, expected_revision=control.revision,
-            from_statuses={control.status}, status="paused" if paused else "running",
-            values=values or None)
-    except ValueError as exc:
-        if str(exc) != "control_revision_conflict":
-            raise
+    intent = (control.id, control.generation, control.revision, control.status)
+    paused = intent[3] == "pausing"
+
+    async def latest_control():
         latest = await service.database.get_latest_workflow_control(control.workflow_id)
-        if latest is None or latest.generation != control.generation:
-            raise
-        return latest, result["controller_status"]
-    if not paused:
-        await _clear_failure_streak(service.database, control)
-    payload = await _broadcast_control(control, controller_status=result["controller_status"], extra=details)
-    from services.status_broadcaster import get_status_broadcaster
-    broadcaster = get_status_broadcaster()
-    await broadcaster.update_workflow_status(executing=bool(not paused and payload.get("in_flight_count")),
-        current_node=None, progress=0, workflow_id=control.workflow_id)
-    await broadcaster.update_deployment_status(is_running=True, status=control.status,
-        active_runs=payload.get("generation_in_flight_count", 0), workflow_id=control.workflow_id)
-    return control, result["controller_status"]
+        if latest is None:
+            raise RuntimeError("workflow_control_missing")
+        return latest
+
+    def owns(latest) -> bool:
+        return (latest.id, latest.generation, latest.revision, latest.status) == intent
+
+    async def ensure_current() -> None:
+        if not owns(await latest_control()):
+            raise GenerationTransitionSuperseded()
+
+    try:
+        runtime = container.workflow_service()
+        # Reset shares this short completion lock. It never waits for the
+        # activity drain; an older transition cannot gate or reopen a later
+        # generation's producers after Reset has claimed the durable row.
+        async with _control_completion_lock(control.workflow_id):
+            await ensure_current()
+            runtime.pause_deployment(control.workflow_id)
+            if paused:
+                schedules = await _set_cron_pause(control.workflow_id, paused=True, strict=True)
+                await ensure_current()
+                triggers = await runtime.update_trigger_pause_status(control.workflow_id, paused=True)
+        wrapper = container.temporal_client()
+        if wrapper is None or wrapper.client is None:
+            if container.settings().temporal_enabled:
+                raise TemporalControlUnavailable("temporal_control_unavailable")
+            result = {"controller_status": None, "controlled_executions": 0}
+        else:
+            async def admitted(status):
+                async with _control_completion_lock(control.workflow_id):
+                    await ensure_current()
+                    try:
+                        await _broadcast_control(control, controller_status=status)
+                    except Exception as exc:
+                        logger.warning("Control admission status broadcast failed", workflow_id=control.workflow_id,
+                                       error=str(exc))
+            result = await transition_generation(wrapper.client, control, paused=paused,
+                                                 on_admission=admitted, ensure_current=ensure_current)
+        async with _control_completion_lock(control.workflow_id):
+            await ensure_current()
+            details = {"controlled_executions": result["controlled_executions"]}
+            values: Dict[str, Any] = {}
+            if paused:
+                details.update(paused_schedules=schedules, paused_triggers=triggers)
+            else:
+                # Existing continuations are released before producers, and
+                # Reset cannot interleave with these producer mutations.
+                details["resumed_schedules"] = await _set_cron_pause(control.workflow_id, paused=False, strict=True)
+                await ensure_current()
+                details["resumed_queued_events"] = await runtime.resume_deployment(control.workflow_id)
+                await ensure_current()
+                details["resumed_triggers"] = await runtime.update_trigger_pause_status(control.workflow_id, paused=False)
+                await ensure_current()
+                values.update(CLEAR_PAUSE_REASON)
+                values["resource_manifest"] = {**(control.resource_manifest or {}),
+                    "last_resumed_at": datetime.now(timezone.utc).isoformat()}
+            control = await service.transition(control, expected_revision=intent[2],
+                from_statuses={intent[3]}, status="paused" if paused else "running", values=values or None)
+            if not paused:
+                await _clear_failure_streak(service.database, control)
+            payload = await _broadcast_control(control, controller_status=result["controller_status"], extra=details)
+            from services.status_broadcaster import get_status_broadcaster
+            broadcaster = get_status_broadcaster()
+            await broadcaster.update_workflow_status(executing=bool(not paused and payload.get("in_flight_count")),
+                current_node=None, progress=0, workflow_id=control.workflow_id)
+            await broadcaster.update_deployment_status(is_running=True, status=control.status,
+                active_runs=payload.get("generation_in_flight_count", 0), workflow_id=control.workflow_id)
+            return control, result["controller_status"]
+    except (Exception, asyncio.CancelledError) as exc:
+        latest = await latest_control()
+        if not owns(latest):
+            # Reset may terminate the execution or cancel this local poll
+            # before an Update produces an outcome. That is supersession,
+            # never a failed Reset or a successful pause acknowledgement.
+            logger.debug("Workflow control transition superseded", workflow_id=control.workflow_id,
+                         revision=intent[2], current_revision=latest.revision, state=latest.status)
+            return latest, None
+        if isinstance(exc, WorkflowUpdateRPCTimeoutOrCancelledError):
+            if isinstance(exc.__cause__, asyncio.CancelledError):
+                raise asyncio.CancelledError() from exc
+            # A bounded RPC poll can fail without rejecting the durable
+            # Update. Keep intent and closed admission; status can retry it.
+            logger.info("Workflow control acknowledgement remains pending", workflow_id=control.workflow_id,
+                        revision=intent[2], error_type=type(exc).__name__)
+            return latest, None
+        if str(exc) == "controller_execution_missing":
+            async with _control_completion_lock(control.workflow_id):
+                latest = await latest_control()
+                if not owns(latest):
+                    return latest, None
+                return await _fail_missing_controller(service, latest), None
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -1357,6 +1484,11 @@ async def mark_clean_shutdown() -> None:
     """Stamp the clean-shutdown marker (lifespan teardown hook)."""
     from core.container import container
 
+    tasks = list(_control_transition_tasks.values())
+    for task in tasks:
+        task.cancel()
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
     try:
         await container.database().set_cache_entry(_SHUTDOWN_STATE_CACHE_KEY, "clean")
     except Exception as exc:  # noqa: BLE001 — best-effort during teardown
@@ -2041,6 +2173,8 @@ async def handle_pause_workflow(data: Dict[str, Any], websocket: WebSocket) -> D
             **await _control_payload(control, controller_status=controller_status),
         }
     if control.status == "pausing":
+        if _versioned_control(control):
+            return await _await_versioned_transition(service, control)
         return {
             "success": False,
             "error": "workflow_control_transition_pending",
@@ -2050,18 +2184,19 @@ async def handle_pause_workflow(data: Dict[str, Any], websocket: WebSocket) -> D
     # client must not be able to dress its own pause up as an automatic one.
     reason_values = _automatic_pause_values(data) if websocket is None else None
     transition_kwargs: Dict[str, Any] = {"values": reason_values} if reason_values else {}
-    control = await service.transition(
-        control,
-        expected_revision=_expected_revision(data, control),
-        from_statuses={"running"},
-        status="pausing",
-        **transition_kwargs,
-    )
-    await _broadcast_control(control)
-    container.workflow_service().pause_deployment(workflow_id)
+    async with _control_completion_lock(workflow_id):
+        control = await service.transition(
+            control,
+            expected_revision=_expected_revision(data, control),
+            from_statuses={"running"},
+            status="pausing",
+            **transition_kwargs,
+        )
+        transition_task = _schedule_versioned_transition(service, control) if _versioned_control(control) else None
+        await _broadcast_control(control)
+        container.workflow_service().pause_deployment(workflow_id)
     if _versioned_control(control):
-        control, controller_status = await _finish_versioned_transition(service, control)
-        return {"success": True, **await _control_payload(control, controller_status=controller_status)}
+        return await _await_versioned_transition(service, control, task=transition_task)
     try:
         controller_status = await _update_controller_state(
             control,
@@ -2137,18 +2272,21 @@ async def handle_resume_workflow(data: Dict[str, Any], websocket: WebSocket) -> 
             **await _control_payload(control, controller_status=controller_status),
         }
     if control.status == "resuming":
+        if _versioned_control(control):
+            return await _await_versioned_transition(service, control)
         return {
             "success": False,
             "error": "workflow_control_transition_pending",
             **await _control_payload(control, controller_status=controller_status),
         }
-    control = await service.transition(
-        control, expected_revision=_expected_revision(data, control), from_statuses={"paused"}, status="resuming"
-    )
-    await _broadcast_control(control)
+    async with _control_completion_lock(workflow_id):
+        control = await service.transition(
+            control, expected_revision=_expected_revision(data, control), from_statuses={"paused"}, status="resuming"
+        )
+        transition_task = _schedule_versioned_transition(service, control) if _versioned_control(control) else None
+        await _broadcast_control(control)
     if _versioned_control(control):
-        control, controller_status = await _finish_versioned_transition(service, control)
-        return {"success": True, **await _control_payload(control, controller_status=controller_status)}
+        return await _await_versioned_transition(service, control, task=transition_task)
     resume_update_key = data.get("idempotency_key") or uuid.uuid4().hex
 
     async def _apply_resume_update(target):
@@ -2243,6 +2381,10 @@ async def handle_reset_workflow(data: Dict[str, Any], websocket: WebSocket) -> D
     workflow_id = data["workflow_id"]
     service = _control_service()
     current = await service.database.get_latest_workflow_control(workflow_id)
+    if data.get("expected_root_execution_id") and (
+        current is None or data["expected_root_execution_id"] != current.root_execution_id
+    ):
+        raise ValueError("control_generation_conflict")
     if current is None or current.status == "reset":
         # Workspace tasks also exist before Start and after a generation was
         # reset. Their own Temporal controller supplies the cleanup barrier.
@@ -2266,18 +2408,29 @@ async def handle_reset_workflow(data: Dict[str, Any], websocket: WebSocket) -> D
 
     # The completed-generation branch above only resets direct Workspace
     # tasks. Generation-wide cleanup below must not sweep a later Start.
-    if current.status != "resetting":
-        current = await service.transition(
-            current, expected_revision=_expected_revision(data, current),
-            from_statuses={"starting", "running", "pausing", "paused", "resuming", "failed"}, status="resetting",
-            values={"terminal_reason": "workflow_reset", "completed_at": datetime.now(timezone.utc)},
-        )
+    async with _control_completion_lock(workflow_id):
+        # Completion can win while Reset waits for this short lock. Reload
+        # before CAS and never let a delayed Reset sweep a later generation.
+        latest = await service.database.get_latest_workflow_control(workflow_id)
+        if latest is None or latest.id != current.id or latest.generation != current.generation:
+            raise ValueError("control_generation_conflict")
+        current = latest
+        if current.status != "resetting":
+            # A generation-scoped Reset supersedes Stop/Resume even when
+            # their stable acknowledgement advanced the revision in flight.
+            # Older clients keep their strict revision-only CAS contract.
+            expected_revision = current.revision if data.get("expected_root_execution_id") else _expected_revision(data, current)
+            current = await service.transition(
+                current, expected_revision=expected_revision,
+                from_statuses={"starting", "running", "pausing", "paused", "resuming", "failed"}, status="resetting",
+                values={"terminal_reason": "workflow_reset", "completed_at": datetime.now(timezone.utc)},
+            )
 
-    # Quiesce every producer before the final execution sweep. The local gate
-    # is synchronous, so no callback can be admitted while broadcasts or
-    # Temporal cleanup yield control.
-    _close_local_admission(workflow_id)
-    await _broadcast_control(current)
+        # The durable Reset revision supersedes socket-independent Stop
+        # polling. Admission closes before any cleanup/broadcast yields.
+        _close_local_admission(workflow_id)
+        _supersede_versioned_transitions(current)
+        await _broadcast_control(current)
 
     try:
         await _signal_controller(current, "reset")
@@ -2321,6 +2474,12 @@ async def handle_reset_workflow(data: Dict[str, Any], websocket: WebSocket) -> D
     # Controller, cron, and legacy local admission paths are now closed. This
     # final strict sweep therefore observes a fixed set of generation runs.
     terminated = await _terminate_generation_workflows(current, strict=True)
+    from core.container import container
+    from services.browser_reset import cleanup_generation_browser_tasks
+    wrapper = container.temporal_client()
+    cleaned_browser_tasks = await cleanup_generation_browser_tasks(
+        service.database, wrapper.client if wrapper is not None else None, current,
+    )
     workspace = await _reset_workspace_tasks(workflow_id, service.database, current, data)
 
     archived = await service.database.update_workflow_run_data_scope(
@@ -2353,6 +2512,7 @@ async def handle_reset_workflow(data: Dict[str, Any], websocket: WebSocket) -> D
     payload = await _broadcast_control(current, extra={
         "terminated_executions": terminated,
         "deleted_schedules": deleted_schedules,
+        "cleaned_browser_tasks": cleaned_browser_tasks,
         "local_cleanup_completed": local_cleanup_completed,
         "archived_nodes": node_state["archived_nodes"],
         "reset_nodes": node_state["reset_nodes"],
@@ -2362,6 +2522,7 @@ async def handle_reset_workflow(data: Dict[str, Any], websocket: WebSocket) -> D
         "idempotent": False,
         "terminated_executions": terminated,
         "deleted_schedules": deleted_schedules,
+        "cleaned_browser_tasks": cleaned_browser_tasks,
         "local_cleanup_completed": local_cleanup_completed,
         "archived_nodes": node_state["archived_nodes"],
         "reset_nodes": node_state["reset_nodes"],

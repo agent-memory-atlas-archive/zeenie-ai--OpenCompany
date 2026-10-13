@@ -53,9 +53,32 @@ describe('command palette workflow lifecycle capabilities', () => {
     expect(commands.map((command) => command.id)).not.toContain('run.start');
   });
 
-  it('suppresses lifecycle actions while a local mutation is pending', () => {
+  it('offers only Reset while a local Stop is pending', () => {
+    const reset = vi.fn();
     const commands = buildWorkflowLifecycleCommands(handlers(
       control({ can_pause: true, can_reset: true }),
+      { workflowControlPending: { action: 'pause', state: 'pausing' }, reset },
+    ));
+    expect(commands.map(command => command.id)).toEqual(['run.reset']);
+    commands[0].onRun();
+    expect(reset).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    { action: 'start' as const, state: 'starting' as const },
+    { action: 'resume' as const, state: 'resuming' as const },
+    { action: 'reset' as const, state: 'resetting' as const },
+  ])('suppresses lifecycle actions while $action is pending', (pending) => {
+    const commands = buildWorkflowLifecycleCommands(handlers(
+      control({ can_pause: true, can_reset: true }),
+      { workflowControlPending: pending },
+    ));
+    expect(commands).toEqual([]);
+  });
+
+  it('does not offer Reset during Stop without the server capability', () => {
+    const commands = buildWorkflowLifecycleCommands(handlers(
+      control({ can_reset: false }),
       { workflowControlPending: { action: 'pause', state: 'pausing' } },
     ));
     expect(commands).toEqual([]);

@@ -7,9 +7,10 @@ const auth = vi.hoisted(() => ({ isAuthenticated: true, isLoading: false }));
 vi.mock('../AuthContext', () => ({ useAuth: () => auth }));
 vi.mock('../../services/workflowApi', () => ({ workflowApi: {} }));
 
-import { WebSocketProvider, useWebSocket, useWebSocketActions, type WebSocketActions } from '../WebSocketContext';
+import { WebSocketProvider, WorkflowControlMutationSupersededError, useWebSocket, useWebSocketActions, type WebSocketActions } from '../WebSocketContext';
 import { useAppStore } from '../../store/useAppStore';
 import { useNodeStatusStore } from '../../stores/nodeStatusStore';
+import { useWorkflowControlStore } from '../../stores/workflowControlStore';
 
 // Exercise the installed PartySocket implementation; only its network peer
 // is simulated. Remote code 1000 and native error events really reconnect.
@@ -192,6 +193,139 @@ describe('WebSocket recovery and ownership', () => {
     });
     await expect(result).resolves.toMatchObject({ state: 'paused', revision: 5 });
     expect(latest().sent.filter(item => item.type === 'stop_chat_run')).toHaveLength(1);
+  });
+
+  it.each(['pause_workflow', 'stop_chat_run'])('lets Reset supersede a stuck %s using the admitted generation revision', async (stopType) => {
+    await mount();
+    await open();
+    const clear = vi.spyOn(useNodeStatusStore.getState(), 'clearWorkflow');
+    const notify = vi.fn();
+    actions.addEventListener('workflow_runtime_reset', notify);
+    const running = { workflow_id: 'browser', state: 'running', revision: 3, generation: 1,
+      root_execution_id: 'g1', can_pause: true, can_reset: true, in_flight_count: 1 };
+    act(() => latest().message({ type: 'workflow_control_status', data: running }));
+    let stop!: Promise<unknown>;
+    act(() => { stop = (stopType === 'pause_workflow'
+      ? actions.pauseWorkflow('browser', 3)
+      : actions.stopChatRun('browser', 3, 'r1')).catch(error => error); });
+    const stopRequest = latest().sent.find(item => item.type === stopType)!;
+    act(() => latest().message({ type: 'workflow_control_status', data: { ...running, state: 'pausing', revision: 4 } }));
+    let reset!: Promise<unknown>;
+    await act(async () => { reset = actions.resetWorkflow('browser', 3); });
+    const resetRequest = latest().sent.find(item => item.type === 'reset_workflow')!;
+    expect(resetRequest).toMatchObject({ expected_revision: 4, expected_root_execution_id: 'g1' });
+    await expect(stop).resolves.toBeInstanceOf(WorkflowControlMutationSupersededError);
+    expect(context.workflowControlPending.browser).toEqual({ action: 'reset', state: 'resetting' });
+    expect(useWorkflowControlStore.getState().pending.browser).toEqual({ action: 'reset', state: 'resetting' });
+    expect(clear).not.toHaveBeenCalled();
+    expect(notify).not.toHaveBeenCalled();
+    const resetting = { ...running, state: 'resetting', revision: 6, can_pause: false };
+    await act(async () => {
+      latest().message({ type: 'workflow_control_status', data: resetting });
+      latest().message({ request_id: stopRequest.request_id, success: true,
+        ...running, state: 'paused', revision: 5 });
+    });
+    expect(context.workflowControlStatuses.browser).toMatchObject({ state: 'resetting', revision: 6 });
+    expect(context.workflowControlPending.browser?.action).toBe('reset');
+    expect(latest().sent.some(item => item.type === 'get_workflow_control_status')).toBe(false);
+    await expect(actions.resumeWorkflow('browser', 6)).rejects.toThrow('already in progress');
+    await expect(actions.resetWorkflow('browser', 6)).rejects.toThrow('already in progress');
+    await act(async () => latest().message({ request_id: resetRequest.request_id, success: true,
+      ...running, state: 'ready', revision: 7, can_start: true, can_reset: false, in_flight_count: 0 }));
+    await expect(reset).resolves.toMatchObject({ state: 'ready', revision: 7 });
+    expect(context.workflowControlPending.browser).toBeUndefined();
+    expect(clear).toHaveBeenCalledWith('browser');
+    expect(notify).toHaveBeenCalledWith({ workflow_id: 'browser' });
+    act(() => latest().message({ type: 'workflow_control_status', data: { ...running, state: 'paused', revision: 5 } }));
+    expect(context.workflowControlStatuses.browser).toMatchObject({ state: 'ready', revision: 7 });
+  });
+
+  it('ignores an interrupted Stop status resync once Reset takes ownership', async () => {
+    await mount();
+    await open();
+    const running = { workflow_id: 'browser', state: 'running', revision: 3, generation: 1, root_execution_id: 'g1', can_reset: true };
+    act(() => latest().message({ type: 'workflow_control_status', data: running }));
+    let stop!: Promise<unknown>;
+    act(() => { stop = actions.pauseWorkflow('browser', 3).catch(error => error); });
+    const stopRequest = latest().sent.find(item => item.type === 'pause_workflow')!;
+    const pausing = { ...running, state: 'pausing', revision: 4 };
+    await act(async () => latest().message({ request_id: stopRequest.request_id, success: false,
+      error: 'workflow_control_transition_pending', status: pausing }));
+    const read = latest().sent.find(item => item.type === 'get_workflow_control_status')!;
+    let reset!: Promise<unknown>;
+    await act(async () => { reset = actions.resetWorkflow('browser', 3); });
+    await expect(stop).resolves.toBeInstanceOf(WorkflowControlMutationSupersededError);
+    const resetRequest = latest().sent.find(item => item.type === 'reset_workflow')!;
+    await act(async () => latest().message({ request_id: read.request_id, success: true,
+      ...running, state: 'paused', revision: 5 }));
+    expect(context.workflowControlStatuses.browser).toMatchObject({ state: 'pausing', revision: 4 });
+    expect(context.workflowControlPending.browser?.action).toBe('reset');
+    await act(async () => latest().message({ request_id: resetRequest.request_id, success: true,
+      ...running, state: 'ready', revision: 7 }));
+    await expect(reset).resolves.toMatchObject({ state: 'ready' });
+  });
+
+  it('does not apply pending Stop intent to a newer generation when Reset is pressed', async () => {
+    await mount();
+    await open();
+    const running = { workflow_id: 'browser', state: 'running', revision: 3, generation: 1, root_execution_id: 'g1', can_reset: true };
+    act(() => latest().message({ type: 'workflow_control_status', data: running }));
+    let stop!: Promise<unknown>;
+    act(() => { stop = actions.pauseWorkflow('browser', 3); });
+    const stopRequest = latest().sent.find(item => item.type === 'pause_workflow')!;
+    act(() => latest().message({ type: 'workflow_control_status', data: {
+      ...running, revision: 8, generation: 2, root_execution_id: 'g2',
+    } }));
+    await expect(actions.resetWorkflow('browser', 3)).rejects.toThrow('control_generation_conflict');
+    expect(latest().sent.some(item => item.type === 'reset_workflow')).toBe(false);
+    await act(async () => latest().message({ request_id: stopRequest.request_id, success: true,
+      ...running, state: 'paused', revision: 5 }));
+    await stop;
+    expect(context.workflowControlStatuses.browser).toMatchObject({ generation: 2, revision: 8 });
+  });
+
+  it.each(['pause_workflow', 'stop_chat_run', 'resume_workflow'])('recognizes a Reset from another tab superseding %s without another status request', async (type) => {
+    await mount();
+    await open();
+    const clear = vi.spyOn(useNodeStatusStore.getState(), 'clearWorkflow');
+    const status = { workflow_id: 'browser', state: type === 'resume_workflow' ? 'paused' : 'running',
+      revision: 3, generation: 1, root_execution_id: 'g1', can_reset: true };
+    act(() => latest().message({ type: 'workflow_control_status', data: status }));
+    let result!: Promise<unknown>;
+    act(() => {
+      result = (type === 'resume_workflow'
+        ? actions.resumeWorkflow('browser', 3)
+        : type === 'stop_chat_run'
+          ? actions.stopChatRun('browser', 3, 'r1')
+          : actions.pauseWorkflow('browser', 3)).catch(error => error);
+    });
+    const request = latest().sent.find(item => item.type === type)!;
+    await act(async () => latest().message({ request_id: request.request_id, success: true, superseded: true,
+      ...status, state: 'ready', revision: 7, can_start: true, can_reset: false }));
+    await expect(result).resolves.toBeInstanceOf(WorkflowControlMutationSupersededError);
+    expect(context.workflowControlStatuses.browser).toMatchObject({ state: 'ready', revision: 7 });
+    expect(context.workflowControlPending.browser).toBeUndefined();
+    expect(latest().sent.some(item => item.type === 'get_workflow_control_status')).toBe(false);
+    expect(clear).not.toHaveBeenCalled();
+  });
+
+  it('does not retry a Reset conflict or clear runtime state in a newer generation', async () => {
+    await mount();
+    await open();
+    const clear = vi.spyOn(useNodeStatusStore.getState(), 'clearWorkflow');
+    const running = { workflow_id: 'browser', state: 'running', revision: 3, generation: 1, root_execution_id: 'g1', can_reset: true };
+    act(() => latest().message({ type: 'workflow_control_status', data: running }));
+    let reset!: Promise<unknown>;
+    act(() => { reset = actions.resetWorkflow('browser', 3).catch(error => error.message); });
+    const resetRequest = latest().sent.find(item => item.type === 'reset_workflow')!;
+    const nextGeneration = { ...running, generation: 2, root_execution_id: 'g2', revision: 8 };
+    await act(async () => latest().message({ request_id: resetRequest.request_id, success: false,
+      error: 'control_revision_conflict', status: nextGeneration }));
+    const read = latest().sent.find(item => item.type === 'get_workflow_control_status')!;
+    await act(async () => latest().message({ request_id: read.request_id, success: true, status: nextGeneration }));
+    await expect(reset).resolves.toBe('control_revision_conflict');
+    expect(latest().sent.filter(item => item.type === 'reset_workflow')).toHaveLength(1);
+    expect(clear).not.toHaveBeenCalled();
   });
 
   it.each([false, true])('confirms an exact phone reset ID only after cleanup ends (resetting=%s)', async (workspaceResetting) => {

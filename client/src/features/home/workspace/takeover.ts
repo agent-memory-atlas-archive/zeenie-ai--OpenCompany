@@ -52,6 +52,7 @@ export function useTakeOver(employee: EmployeeSummary, surface: () => SurfaceCon
       pillToast(`You have control — ${employee.name} will wait`);
     } catch (error) {
       giveBack?.();
+      if (error instanceof Error && error.message === 'workflow_control_superseded') return;
       pillToast(controlErrorMessage(error), { tone: 'error' });
     } finally {
       setBusy(false);

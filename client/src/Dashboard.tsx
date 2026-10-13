@@ -736,6 +736,7 @@ const DashboardContent: React.FC = () => {
     try {
       await pauseWorkflow(workflowId, workflowControl.revision);
     } catch (error: any) {
+      if (error?.message === 'workflow_control_superseded') return;
       toast.error(error?.message || 'Unable to pause workflow');
     }
   };
@@ -743,7 +744,10 @@ const DashboardContent: React.FC = () => {
   const handleResumeWorkflow = async () => {
     if (!currentWorkflow?.id) return;
     try { await resumeWorkflow(currentWorkflow.id, workflowControl.revision); }
-    catch (error: any) { toast.error(error?.message || 'Unable to resume workflow'); }
+    catch (error: any) {
+      if (error?.message === 'workflow_control_superseded') return;
+      toast.error(error?.message || 'Unable to resume workflow');
+    }
   };
 
   const handleResetWorkflow = async () => {
@@ -754,7 +758,10 @@ const DashboardContent: React.FC = () => {
       setExecutionResult(null);
       setShowResult(false);
     }
-    catch (error: any) { toast.error(error?.message || 'Unable to reset workflow'); }
+    catch (error: any) {
+      if (error?.message === 'workflow_control_superseded') return;
+      toast.error(error?.message || 'Unable to reset workflow');
+    }
   };
 
   // Helper: fetch all node parameters from DB for export

@@ -52,6 +52,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import {
   isWorkflowControlTransitioning,
+  isWorkflowResetBlocked,
   type WorkflowControlPendingMutation,
   type WorkflowControlStatus,
 } from '../../contexts/WebSocketContext';
@@ -136,6 +137,7 @@ const TopToolbar: React.FC<TopToolbarProps> = ({
   const [tempName, setTempName] = useState(workflowName);
   const { user, logout } = useAuth();
   const hasPendingControlMutation = Boolean(workflowControlPending);
+  const resetBlocked = isWorkflowResetBlocked(workflowControlPending);
   const isAuthoritativeTransition = isWorkflowControlTransitioning(workflowControl);
   const canPauseWorkflow = workflowControl.can_pause || workflowControl.state === 'pausing';
   const canResumeWorkflow = workflowControl.can_resume || workflowControl.state === 'resuming';
@@ -492,7 +494,7 @@ const TopToolbar: React.FC<TopToolbarProps> = ({
           <ActionButton
             intent="stop"
             onClick={() => setResetOpen(true)}
-            disabled={hasPendingControlMutation}
+            disabled={resetBlocked}
             title={isRetryingReset
               ? 'Retry the interrupted reset transition'
               : 'Stop active work and reset this workflow'}
@@ -515,7 +517,7 @@ const TopToolbar: React.FC<TopToolbarProps> = ({
           </Badge>
         )}
 
-        <AlertDialog open={resetOpen} onOpenChange={setResetOpen}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Reset workflow execution?</AlertDialogTitle><AlertDialogDescription>This stops active work, cancels phone tasks, and archives the current generation. Reset waits for phone actions to finish cleaning up. Task history remains available. The workflow will remain stopped until you press Start.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Keep current execution</AlertDialogCancel><AlertDialogAction disabled={hasPendingControlMutation} onClick={onResetWorkflow}>{isRetryingReset ? 'Retry reset' : 'Reset workflow'}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
+        <AlertDialog open={resetOpen} onOpenChange={setResetOpen}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Reset workflow execution?</AlertDialogTitle><AlertDialogDescription>This stops active work, cancels phone tasks, and archives the current generation. Reset waits for phone actions to finish cleaning up. Task history remains available. The workflow will remain stopped until you press Start.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Keep current execution</AlertDialogCancel><AlertDialogAction disabled={resetBlocked} onClick={onResetWorkflow}>{isRetryingReset ? 'Retry reset' : 'Reset workflow'}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
 
         <ActionButton
           intent="save"
