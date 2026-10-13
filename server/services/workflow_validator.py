@@ -295,6 +295,7 @@ async def validate_workflow(
     # 4. Missing credentials. Warnings (a workflow can be saved with missing
     #    credentials and configured later — only at force=True execute does
     #    it become a runtime error).
+    graph = {"nodes": nodes, "edges": edges}
     for n in nodes:
         node_id = n.get("id")
         node_type = n.get("type", "")
@@ -312,6 +313,11 @@ async def validate_workflow(
                 }
             )
             continue
+
+        # Wiring the plugin states its node needs (BaseNode.validate_graph).
+        validate_graph = getattr(cls, "validate_graph", None)
+        if validate_graph is not None:
+            errors.extend(validate_graph(node_id, graph))
 
         # Param validation — prefer caller-supplied params, fall back to
         # node.data.parameters (rarely populated since params live in DB).

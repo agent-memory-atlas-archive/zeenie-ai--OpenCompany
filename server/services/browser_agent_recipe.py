@@ -17,6 +17,9 @@ BROWSER_AGENT_ROLE = (
 )
 
 
+BROWSER_TOOL_REQUIRED = "Browser AI Agent needs exactly one connected, saved Browser tool."
+
+
 def connected_browser_tools(graph: Mapping[str, Any], agent_id: str) -> set[str]:
     nodes = {node["id"]: node for node in graph.get("nodes", []) if node.get("id")}
     return {edge.get("source") for edge in graph.get("edges", [])
@@ -27,7 +30,7 @@ def connected_browser_tools(graph: Mapping[str, Any], agent_id: str) -> set[str]
 def browser_tool_id(graph: Mapping[str, Any], agent_id: str) -> str:
     tools = connected_browser_tools(graph, agent_id)
     if len(tools) != 1:
-        raise NodeUserError("Browser AI Agent needs exactly one connected, saved Browser tool.")
+        raise NodeUserError(BROWSER_TOOL_REQUIRED)
     return str(next(iter(tools)))
 
 
