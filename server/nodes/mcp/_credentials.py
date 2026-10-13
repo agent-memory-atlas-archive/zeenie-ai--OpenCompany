@@ -1,9 +1,10 @@
-"""Custom connectors in the credentials catalogue: no card of their own, one
-card per saved connector (``catalogue_entries``), built from the
-``_mcp_connector`` template in config/credential_providers.json and what was
-saved (``_store.py``). Each card is ``kind: "mcp"`` and carries ``mcp``: the
-server's address without credentials, how it signs in, the server's name,
-its tools with the owner's settings, and what a refresh found.
+"""Custom connectors in the credentials catalogue: the MCP server card, where
+one is added (``mcp`` in config/credential_providers.json, ``kind:
+"mcpAdd"``, never connected itself), and one card per saved connector
+(``catalogue_entries``), built from the ``_mcp_connector`` template there and
+what was saved (``_store.py``). Each saved one is ``kind: "mcp"`` and carries
+``mcp``: the server's address without credentials, how it signs in, the
+server's name, its tools with the owner's settings, and what a refresh found.
 """
 
 from __future__ import annotations

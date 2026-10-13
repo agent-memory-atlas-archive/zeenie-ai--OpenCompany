@@ -59,6 +59,7 @@ import GoogleCloud from '@lobehub/icons/es/GoogleCloud';
 import XAI from '@lobehub/icons/es/XAI';
 import ElevenLabs from '@lobehub/icons/es/ElevenLabs';
 import DeepL from '@lobehub/icons/es/DeepL';
+import MCP from '@lobehub/icons/es/MCP';
 
 type RawSvg = string;
 
@@ -171,6 +172,7 @@ const LOBEHUB_BRANDS: Readonly<Record<string, any>> = {
   xai: XAI,
   elevenlabs: ElevenLabs,
   deepl: DeepL,
+  mcp: MCP,
 };
 
 // The app's own mark (components/brand/geometry.ts) as `opencompany:mark`:

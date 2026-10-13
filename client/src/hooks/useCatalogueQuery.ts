@@ -144,7 +144,7 @@ export interface ServerProviderConfig {
   category: string;
   category_label: string;
   color: string;
-  kind: 'apiKey' | 'oauth' | 'qrPairing' | 'email' | 'browserProfiles' | 'mcp';
+  kind: 'apiKey' | 'oauth' | 'qrPairing' | 'email' | 'browserProfiles' | 'mcp' | 'mcpAdd';
   icon_ref?: string;
   fields?: ServerFieldDef[];
   ws?: { login: string; logout: string; status: string };

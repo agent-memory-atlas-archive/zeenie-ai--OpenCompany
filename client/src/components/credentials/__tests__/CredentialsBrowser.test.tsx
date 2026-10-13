@@ -120,6 +120,19 @@ describe('CredentialsBrowser', () => {
     expect(onConnect).not.toHaveBeenCalled();
   });
 
+  it('lists the MCP server card under Custom, and its Connect opens its page', () => {
+    const MCP_SERVER: ConsumerProvider = {
+      id: 'mcp', name: 'MCP server', category: 'custom', category_label: 'Custom', consumer_category: 'custom',
+      color: '', kind: 'mcpAdd', connected: false, publisher: 'OpenCompany', verified: true,
+      description: 'Connect any MCP server: its tools become an app your employees can use.',
+    };
+    const onConnect = vi.fn();
+    render(<ThemeProvider><CredentialsBrowser catalogue={catalogue([ENDPOINT, MCP_SERVER])} onConnect={onConnect} /></ThemeProvider>);
+    expect(screen.getByText('Connect any MCP server: its tools become an app your employees can use.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Connect MCP server' }));
+    expect(onConnect).toHaveBeenCalledWith('mcp', 'connect');
+  });
+
   it('has no Add where the host turns custom connectors off', () => {
     render(<ThemeProvider><CredentialsBrowser catalogue={catalogue()} onConnect={vi.fn()} customConnectors={false} /></ThemeProvider>);
     expect(screen.queryByRole('button', { name: 'Add' })).not.toBeInTheDocument();

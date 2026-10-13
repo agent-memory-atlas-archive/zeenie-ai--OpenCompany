@@ -103,6 +103,7 @@ function CredentialsSession({ visible, onClose, options }: Props & { options: Cr
             backLabel={options.categoryId === 'ai' ? 'All AI models' : 'All connectors'}
             onBack={allProviders}
             visible={visible}
+            onOpen={(id) => setSelection({ id, intent: 'manage' })}
           />
         )}
       </Modal>

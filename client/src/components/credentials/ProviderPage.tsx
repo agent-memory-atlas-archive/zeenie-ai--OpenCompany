@@ -39,9 +39,12 @@ export interface ProviderPageProps {
   showHeading?: boolean;
   /** Move focus to Back when the page appears (it replaced the list). */
   autoFocusBack?: boolean;
+  /** Show another provider's page (the MCP server card's page opens the
+   *  connector it added), once the refetched catalogue holds it. */
+  onOpen?: (providerId: string) => void;
 }
 
-export function ProviderPage({ view, selection, backLabel, onBack, visible, showHeading = false, autoFocusBack = false }: ProviderPageProps) {
+export function ProviderPage({ view, selection, backLabel, onBack, visible, showHeading = false, autoFocusBack = false, onOpen }: ProviderPageProps) {
   const showTechnicalSections = useShellMode() === 'dev';
   const provider = view.providers.find((p) => p.id === selection.id) ?? null;
   const config = useMemo(() => (provider ? rehydrateProvider(provider) : null), [provider]);
@@ -106,7 +109,13 @@ export function ProviderPage({ view, selection, backLabel, onBack, visible, show
               {provider.runs_locally && <span>Runs on this computer</span>}
             </div>
           </div>
-          <PanelRenderer config={config} visible={visible} showTechnicalSections={showTechnicalSections} onLeave={onBack} />
+          <PanelRenderer
+            config={config}
+            visible={visible}
+            showTechnicalSections={showTechnicalSections}
+            onLeave={onBack}
+            onOpen={onOpen && ((id) => void view.refetch().then(() => onOpen(id)))}
+          />
         </>
       )}
     </>
