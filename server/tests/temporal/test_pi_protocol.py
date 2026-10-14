@@ -6,6 +6,12 @@ from temporalio.exceptions import ApplicationError
 from services.temporal.pi_protocol import OperationLedger, canonical_digest, canonical_json
 
 
+@pytest.fixture(autouse=True)
+def receipt_checkpoint_patch(monkeypatch):
+    # Direct coordinator unit calls do not run inside a Temporal history.
+    monkeypatch.setattr("services.temporal.pi_workflow.workflow.patched", lambda _: True)
+
+
 def _request(epoch=1, **changes):
     payload = {"scope": {"workflow_id": "w"}, "turn": 0, "purpose": "assistant", "epoch": epoch, **changes}
     return {"id": "turn:0:model", "kind": "model", "payload": payload}

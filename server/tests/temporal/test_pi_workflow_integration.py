@@ -7,7 +7,6 @@ from __future__ import annotations
 import asyncio
 from collections import Counter
 from contextlib import nullcontext
-from datetime import timedelta
 from pathlib import Path
 import subprocess
 import sys
@@ -15,7 +14,7 @@ import os
 import tempfile
 from uuid import uuid4
 
-from temporalio import activity
+from temporalio import activity, workflow
 from temporalio.api.enums.v1 import EventType
 from temporalio.client import WorkflowHistory
 from temporalio.exceptions import ApplicationError
@@ -35,6 +34,46 @@ DRIVERS = Counter()
 FAULTS = Counter()
 CHECKPOINT_STARTED = asyncio.Event()
 CHECKPOINT_RELEASE = asyncio.Event()
+PARK_RETIRE_STARTED = asyncio.Event()
+PARK_RETIRE_RELEASE = asyncio.Event()
+PARKED_CHILD = {}
+
+
+async def _hold_parked_child(payload, result):
+    if (payload["scope"]["node_id"] == "child" and
+            "delegate-stop" in activity.info().workflow_id and result.get("status") == "parked"):
+        # Hold the Activity result, and therefore the only driver slot, until
+        # the child's admitted model receipt is durable. The coordinator must
+        # encounter the still-live parked driver during turn completion.
+        info = activity.info()
+        PARKED_CHILD.update(workflow_id=info.workflow_id, run_id=info.workflow_run_id)
+        PARK_RETIRE_STARTED.set()
+        await PARK_RETIRE_RELEASE.wait()
+    return result
+
+
+@workflow.defn(sandboxed=False, name="PiCodingAgentWorkflow")
+class ObservedPiCodingAgentWorkflow(PiCodingAgentWorkflow):
+    @workflow.run
+    async def run(self, context: dict | None = None) -> dict:
+        return await super().run(context)
+
+    @workflow.query
+    def receipt_checkpoint_status(self):
+        # Queries add no history commands: replay below uses the production
+        # class. Observe the ledger without changing its parked epoch fence.
+        return {"checkpointing": self._pi_checkpointing,
+            "model_receipt_completed": (self._pi.operations.get("turn:0:model") or {}).get("status") == "completed",
+            "driver_active": self._pi_driver is not None and not self._pi_driver.done()}
+
+
+async def _wait_for_child_receipt_checkpoint(client):
+    child = client.get_workflow_handle(PARKED_CHILD["workflow_id"], run_id=PARKED_CHILD["run_id"])
+    while True:
+        status = await child.query("receipt_checkpoint_status")
+        if status["checkpointing"] and status["model_receipt_completed"] and status["driver_active"]:
+            return
+        await asyncio.sleep(0.01)
 
 
 def _binding(name, node_type="pi_test_tool", node_id=None):
@@ -170,7 +209,7 @@ class ProtocolPeer:
             model_id = f"turn:{payload['turn']}:model"
             step = await operation(model_id, "model", {"purpose": "assistant"})
             if step is None:
-                return {"status": "parked"}
+                return await _hold_parked_child(payload, {"status": "parked"})
             await handle.execute_update("assistant_ready", {"turn": payload["turn"], "epoch": epoch,
                 "context_digest": payload["context_digest"], "binding_digest": payload["binding_digest"],
                 "calls": [{"call_index": index, "call_id": call["id"],
@@ -182,7 +221,7 @@ class ProtocolPeer:
                 identity = tool_operation_id(payload["turn"], index, call)
                 result = await operation(identity, "tool", {"call_index": index, "call_id": call["id"]})
                 if result is None:
-                    return {"status": "parked"}
+                    return await _hold_parked_child(payload, {"status": "parked"})
                 operations.append(identity)
                 results.append(result)
             projection = [*payload["messages"], step["assistant_message"], *results]
@@ -234,11 +273,18 @@ async def _scenario(environment, mode, *, actual=False):
     RELEASE.clear()
     CHECKPOINT_STARTED.clear()
     CHECKPOINT_RELEASE.clear()
-    workflows = [PiCodingAgentWorkflow, AgentWorkflow]
+    PARK_RETIRE_STARTED.clear()
+    PARK_RETIRE_RELEASE.clear()
+    PARKED_CHILD.clear()
+    workflows = [ObservedPiCodingAgentWorkflow, AgentWorkflow]
     if actual:
         from services.temporal.pi_activities import PiDriverActivities
+        class RetiringPiDriverActivities(PiDriverActivities):
+            @activity.defn(name="coding.pi_drive_turn")
+            async def drive_turn(self, payload):
+                return await _hold_parked_child(payload, await super().drive_turn(payload))
         client = LostResponseClient(environment.client, mode) if mode.startswith("fault-") else environment.client
-        peer = PiDriverActivities(client).drive_turn
+        peer = RetiringPiDriverActivities(client).drive_turn
     else:
         peer = ProtocolPeer(environment.client).drive
     from services.temporal.pi_activities import PiControlActivities, pi_put_blob
@@ -252,28 +298,54 @@ async def _scenario(environment, mode, *, actual=False):
             "pi_local_control_version": 1, "pi_local_control_revision": 0},
             id=f"pi-{mode}-{uuid4().hex}", task_queue=QUEUE)
         if mode in {"stop", "model-stop", "delegate-stop", "task-wait"}:
+            checkpoint = None
             try:
-                await asyncio.wait_for(STARTED.wait(), 30)
-            except TimeoutError:
-                print(f"Pi start timeout: {(await handle.query('execution_control_status'))}", flush=True)
-                print(f"Pi workflow status: {(await handle.describe()).status}", flush=True)
-                raise
-            stop = {"state": "paused", "revision": 1}
-            if mode == "task-wait":
-                description = await handle.describe()
-                assert all(item.activity_type.name != "coding.pi_drive_turn"
-                    for item in description.raw_description.pending_activities), "Durable wait must release the driver slot"
-            await handle.execute_update("set_control_state", stop)
-            checkpoint = asyncio.create_task(handle.execute_update("wait_for_checkpoint", stop))
-            RELEASE.set()
-            stopped = await asyncio.wait_for(checkpoint, 15)
-            assert stopped["checkpoint"] and stopped["pi_driver_checkpoint"]
-            assert (await handle.query("operation_status", {"epoch": stopped["pi_driver_epoch"] - 1}))["status"] == "park"
-            if not actual:
-                assert DRIVERS["active"] == 0
-            await asyncio.sleep(0.1)
-            assert COUNTS["A"] == (1 if mode == "stop" else 0) and COUNTS["B"] == 0
-            await handle.execute_update("set_control_state", {"state": "running", "revision": 2})
+                try:
+                    await asyncio.wait_for(STARTED.wait(), 30)
+                except TimeoutError:
+                    print(f"Pi start timeout: {(await handle.query('execution_control_status'))}", flush=True)
+                    print(f"Pi workflow status: {(await handle.describe()).status}", flush=True)
+                    raise
+                stop = {"state": "paused", "revision": 1}
+                if mode == "task-wait":
+                    description = await handle.describe()
+                    assert all(item.activity_type.name != "coding.pi_drive_turn"
+                        for item in description.raw_description.pending_activities), "Durable wait must release the driver slot"
+                await handle.execute_update("set_control_state", stop)
+                checkpoint = asyncio.create_task(handle.execute_update("wait_for_checkpoint", stop))
+                if mode == "delegate-stop":
+                    await asyncio.wait_for(PARK_RETIRE_STARTED.wait(), 15)
+                    assert COUNTS["llm:child"] == 1
+                    if not actual:
+                        assert DRIVERS["active"] == 1, "The parked child must still occupy the sole driver slot"
+                    RELEASE.set()
+                    await asyncio.wait_for(_wait_for_child_receipt_checkpoint(environment.client), 15)
+                    assert not checkpoint.done(), "Stop must await the still-live parked driver"
+                    paused_effects = {name: COUNTS[name] for name in ("llm:agent", "llm:child", "A", "B", "T")}
+                    assert paused_effects == {"llm:agent": 1, "llm:child": 1, "A": 0, "B": 0, "T": 0}
+                    PARK_RETIRE_RELEASE.set()
+                else:
+                    RELEASE.set()
+                stopped = await asyncio.wait_for(checkpoint, 15)
+                assert stopped["checkpoint"] and stopped["pi_driver_checkpoint"]
+                assert (await handle.query("operation_status", {"epoch": stopped["pi_driver_epoch"] - 1}))["status"] == "park"
+                if not actual:
+                    assert DRIVERS["active"] == 0
+                await asyncio.sleep(0.1)
+                assert COUNTS["A"] == (1 if mode == "stop" else 0) and COUNTS["B"] == 0
+                if mode == "delegate-stop":
+                    stopped_effects = {name: COUNTS[name] for name in paused_effects}
+                    assert stopped_effects == paused_effects, (
+                        "Receipt reconstruction must admit no new model or tool effects while paused",
+                        {"before": paused_effects, "after": stopped_effects, "all_counters": dict(COUNTS)})
+                    assert COUNTS["llm:child"] == 1
+                await handle.execute_update("set_control_state", {"state": "running", "revision": 2})
+            finally:
+                RELEASE.set()
+                PARK_RETIRE_RELEASE.set()
+                if checkpoint is not None and not checkpoint.done():
+                    checkpoint.cancel()
+                    await asyncio.gather(checkpoint, return_exceptions=True)
         elif mode == "checkpoint-stop":
             await asyncio.wait_for(CHECKPOINT_STARTED.wait(), 15)
             stop = {"state": "paused", "revision": 1}
@@ -288,12 +360,21 @@ async def _scenario(environment, mode, *, actual=False):
             await handle.execute_update("set_control_state", {"state": "running", "revision": 2})
         result = await asyncio.wait_for(handle.result(), 25)
         histories = []
+        child_histories = []
         run_id = handle.first_execution_run_id
         while run_id:
             history = await environment.client.get_workflow_handle(handle.id, run_id=run_id).fetch_history()
             histories.append(history)
             run_id = next((event.workflow_execution_continued_as_new_event_attributes.new_execution_run_id
                 for event in history.events if event.event_type == EventType.EVENT_TYPE_WORKFLOW_EXECUTION_CONTINUED_AS_NEW), None)
+        if mode.startswith("delegate"):
+            for history in histories:
+                for event in history.events:
+                    if event.event_type == EventType.EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_STARTED:
+                        child = event.child_workflow_execution_started_event_attributes.workflow_execution
+                        child_histories.append(await environment.client.get_workflow_handle(
+                            child.workflow_id, run_id=child.run_id).fetch_history())
+            assert child_histories, "Replay must include the delegated child's checkpoint history"
     if mode == "large-overflow":
         assert result["success"] is False and result["error_type"] == "AgentContinuationTooLarge", result
         assert COUNTS["clear"] == COUNTS["failed_phase"] == COUNTS["llm:agent"] == 1
@@ -337,8 +418,9 @@ async def _scenario(environment, mode, *, actual=False):
             assert carried["_pi_checkpoint"]["config_digest"]
             assert carried["_agent_resume"]["prepared_payload"]["pi_harness_version"] == 1
             assert carried["pi_local_control_revision"] == 0
-    for history in histories:
-        replay = await Replayer(workflows=workflows).replay_workflow(WorkflowHistory.from_json(history.workflow_id, history.to_json()))
+    for history in [*histories, *child_histories]:
+        replay = await Replayer(workflows=[PiCodingAgentWorkflow, AgentWorkflow]).replay_workflow(
+            WorkflowHistory.from_json(history.workflow_id, history.to_json()))
         assert replay.replay_failure is None
 
 
@@ -363,7 +445,12 @@ async def _main():
         return value
     pi_blobs.put_blob = put
     pi_blobs.get_blob = get
-    async with await WorkflowEnvironment.start_time_skipping() as environment:
+    # The time-skipping server is unavailable on Windows. An explicitly
+    # supplied cached CLI exercises the same workflow and replay assertions.
+    cli = os.environ.get("TEMPORAL_TEST_CLI")
+    environment = (await WorkflowEnvironment.start_local(dev_server_existing_path=cli)
+                   if cli else await WorkflowEnvironment.start_time_skipping())
+    async with environment:
         with environment.auto_time_skipping_disabled():
             focused = os.environ.get("PI_TEST_ACTUAL_SCENARIO")
             if focused:

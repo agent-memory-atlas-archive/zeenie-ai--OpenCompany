@@ -7,13 +7,11 @@ SDK maintenance never occupies a business action or a child concurrency permit.
 
 from __future__ import annotations
 
-import asyncio
 from datetime import timedelta
 from typing import Any
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
-from temporalio.exceptions import ApplicationError
 from temporalio.workflow import ActivityCancellationType
 
 from .agent_workflow import AgentWorkflow, LLM_STEP_TIMEOUT, LLM_STEP_HEARTBEAT_TIMEOUT, LLM_STEP_RETRY
@@ -43,6 +41,7 @@ class PiCodingAgentWorkflow(AgentWorkflow):
         self._pi_detached = False
         self._pi_checkpoint = (context or {}).get("_pi_checkpoint")
         self._pi_checkpointing = False
+        self._pi_receipt_checkpointing = False
         self._pi_ready = False
         self._pi_validations: dict[str, dict] = {}
         self._pi_stop_pending = False
@@ -53,10 +52,10 @@ class PiCodingAgentWorkflow(AgentWorkflow):
         if status["state"] == "paused" or status["producers_held"]:
             self._pi_stop_pending = True
             terminal = await self._stop_driver()
-            if (terminal or {}).get("status") == "completed" and self._pi_checkpointing:
-                # A DB snapshot write can finish concurrently with this Update.
-                # Let the main task accept that already completed round before
-                # fencing its epoch; no paid operation is admitted here.
+            if self._pi_checkpointing and ((terminal or {}).get("status") == "completed" or self._pi_receipt_checkpointing):
+                # An older driver can park concurrently with round completion.
+                # Drain its receipt-only reconstruction before fencing the epoch;
+                # no paid operation is admitted by that reconstruction.
                 await workflow.wait_condition(lambda: not self._pi_checkpointing)
             self._pi.epoch += 1
         return {**self._execution_control.status(), "pi_driver_checkpoint": self._pi_driver is None,
@@ -150,6 +149,7 @@ class PiCodingAgentWorkflow(AgentWorkflow):
             # occupying private capacity while native cleanup drains children.
             await self._stop_driver(cancel=True)
             self._pi_checkpointing = False
+            self._pi_receipt_checkpointing = False
 
     async def _clear_failed_skills(self, context):
         await workflow.execute_activity("agent.skill.clear", {"workflow_id": context.get("workflow_id"),
@@ -167,7 +167,7 @@ class PiCodingAgentWorkflow(AgentWorkflow):
         return fields
 
     async def _start_driver(self) -> None:
-        if self._pi_stop_pending:
+        if self._pi_stop_pending and not self._pi_receipt_checkpointing:
             await self._wait_until_resumed()
             self._pi_stop_pending = False
         if self._pi_driver is not None:
@@ -320,7 +320,12 @@ class PiCodingAgentWorkflow(AgentWorkflow):
         wires = await self._collect_tool_receipts(messages)
         if len(wires) != len(self._pi_calls):
             raise conflict("Pi complete turn is missing a tool receipt")
+        expected = set(self._pi.expected)
+        receipt_checkpoint = workflow.patched("pi-paused-receipt-checkpoint-v1")
+        if receipt_checkpoint and any((self._pi.operations.get(identity) or {}).get("status") != "completed" for identity in expected):
+            raise conflict("Pi checkpoint did not consume every recorded operation")
         self._pi_checkpointing = True
+        self._pi_receipt_checkpointing = receipt_checkpoint
         # Completion is bookkeeping, not a new paid action. It must also run
         # while paused so admitted results are saved before a checkpoint parks.
         while True:
@@ -337,10 +342,14 @@ class PiCodingAgentWorkflow(AgentWorkflow):
                 self._pi_driver = None
             if result.get("status") == "completed":
                 break
-            self._pi_checkpointing = False
-            await self._wait_until_resumed()
-            self._pi_checkpointing = True
-        expected = set(self._pi.expected)
+            # Stop may already have told this driver to park before completion
+            # began. All effects now have receipts, so reconstruct the checkpoint
+            # while admission is closed instead of holding an action until Resume.
+            if not receipt_checkpoint:
+                # Histories recorded before the fix waited for Resume here.
+                self._pi_checkpointing = False
+                await self._wait_until_resumed()
+                self._pi_checkpointing = True
         if result.get("epoch") != self._pi.epoch or result.get("scope") != self._pi_request["scope"] or result.get("turn") != self._pi.turn or result.get("config_digest") != self._pi_request["config_digest"] or result.get("binding_digest") != self._pi_request["binding_digest"]:
             raise conflict("Pi checkpoint belongs to a stale driver or different configuration")
         consumed = result.get("consumed_operations")
@@ -366,6 +375,7 @@ class PiCodingAgentWorkflow(AgentWorkflow):
         self._pi_request = {}
         self._pi.parked = True
         self._pi_checkpointing = False
+        self._pi_receipt_checkpointing = False
 
     async def _before_runtime_rollover(self):
         if self._pi_driver is not None or self._pi_request or self._pi.operations or self._pi.expected or self._pi_checkpointing:
